@@ -23,24 +23,31 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      # Inputs go through the environment, never interpolated into the script text.
       PR: ${{ inputs.pr_number }}
+      REQUIREMENT: ${{ inputs.requirement }}
+      REFRESH: ${{ inputs.refresh }}
     steps:
+      - name: Validate inputs
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "pr_number must be numeric"; exit 1; }
+          [[ "$REFRESH" =~ ^(edit|dispatch|rerun)$ ]] || { echo "refresh must be edit, dispatch or rerun"; exit 1; }
       - name: Upload report
         run: |
-          rid=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "[.[]|select(.draft and .name==\"QA PR #$PR\")][0].id")
+          rid=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[]|select(.draft and .name==\"QA PR #$PR\")|.id" | head -1)
           aid=$(gh api "repos/$GITHUB_REPOSITORY/releases/$rid" --jq '.assets[]|select(.name=="candidate.json")|.id')
           cid=$(gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$aid" --jq .id)
-          name="report-actions-$GITHUB_RUN_ID.json"
-          printf '{"schemaVersion":1,"candidateId":"%s","requirement":"%s","outcome":"passed","actor":"github-actions"}' "$cid" "${{ inputs.requirement }}" > "$name"
+          name="report-actions-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          CID="$cid" node -e 'console.log(JSON.stringify({schemaVersion:1,candidateId:process.env.CID,requirement:process.env.REQUIREMENT,outcome:"passed",actor:"github-actions"}))' > "$name"
           gh api "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$rid/assets?name=$name" -X POST -H "Content-Type: application/json" --input "$name" --jq .id
       - name: Refresh gate
         run: |
           head_ref=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.ref)
-          if [ "${{ inputs.refresh }}" = "edit" ]; then
-            body=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .body)
+          if [ "$REFRESH" = "edit" ]; then
+            body=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.body // ""')
             gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" -X PATCH -f body="$body
-          <!-- qa:refresh=actions-$GITHUB_RUN_ID -->" --jq .updated_at
-          elif [ "${{ inputs.refresh }}" = "rerun" ]; then
+          <!-- qa:refresh=actions-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT -->" --jq .updated_at
+          elif [ "$REFRESH" = "rerun" ]; then
             head_sha=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
             run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/qa-gate.yml/runs?event=pull_request&head_sha=$head_sha&per_page=1" --jq ".workflow_runs[0].id")
             echo "rerunning qa-gate run $run_id for $head_sha"

@@ -1,5 +1,6 @@
 {
   "releaseBranchPrefix": "release/",
   "releaseLabel": "release",
+  "releaseFiles": ["VERSION"],
   "required": ["windows/persistence", "windows/device-feel"]
 }

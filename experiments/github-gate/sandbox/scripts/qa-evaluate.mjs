@@ -1,10 +1,17 @@
 // Experiment evaluator for Release QA Task 0.2. Reads candidate/report/exception records from a
 // draft release named "QA PR #<n>" and fails the job unless the current PR head has a
 // complete, matching set of passing reports (or authorized exceptions). Never emits neutral/skipped.
+//
+// NOT SAFE for untrusted PR authors: for `pull_request` the workflow file comes from the PR's
+// test-merge commit, so a PR can replace this job. See docs/decisions/github-gate.md.
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 
-const gh = (...args) => JSON.parse(execFileSync('gh', ['api', ...args], { encoding: 'utf8' }));
+const ghRaw = (...args) => execFileSync('gh', ['api', ...args], { encoding: 'utf8' });
+const gh = (...args) => JSON.parse(ghRaw(...args));
+// Paginated list endpoints: one JSON object per line via --jq '.[]', so every page is read.
+const ghList = (path) =>
+  ghRaw('--paginate', path, '--jq', '.[]').split('\n').filter(Boolean).map((line) => JSON.parse(line));
 const repo = process.env.GITHUB_REPOSITORY;
 const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
 const eventName = process.env.GITHUB_EVENT_NAME;
@@ -39,21 +46,23 @@ const policy = JSON.parse(
 );
 
 // Release intent comes from branch, label AND changed version metadata, so removing a label cannot bypass QA.
-const files = gh(`repos/${repo}/pulls/${prNumber}/files?per_page=100`).map((f) => f.filename);
+const files = ghList(`repos/${repo}/pulls/${prNumber}/files?per_page=100`).map((f) => f.filename);
 const reasons = [];
 if (pr.head.ref.startsWith(policy.releaseBranchPrefix)) reasons.push('release branch');
 if (pr.labels.some((l) => l.name === policy.releaseLabel)) reasons.push('release label');
-if (files.includes('VERSION')) reasons.push('VERSION changed');
-say(`- release intent: ${reasons.length ? reasons.join(', ') : 'none'}`);
+const versionFiles = files.filter((f) => policy.releaseFiles.includes(f));
+if (versionFiles.length) reasons.push(`release file changed: ${versionFiles.join(', ')}`);
+say(`- release intent: ${reasons.length ? reasons.join('; ') : 'none'}`);
 if (!reasons.length) finish(true, 'not a release PR; normal policy applies');
 
-const releases = gh(`repos/${repo}/releases?per_page=100`);
+const draftName = `QA PR #${prNumber}`;
+const releases = ghList(`repos/${repo}/releases?per_page=100`);
 say(`- releases visible to token: ${releases.length} (drafts: ${releases.filter((r) => r.draft).length})`);
-const draft = releases.find((r) => r.draft && r.name === `QA PR #${prNumber}`);
+const draft = releases.find((r) => r.draft && r.name === draftName);
 if (!draft) finish(false, 'manual check required: no candidate release record for this PR');
 
 const assetJson = (asset) =>
-  JSON.parse(execFileSync('gh', ['api', '-H', 'Accept: application/octet-stream', `repos/${repo}/releases/assets/${asset.id}`], { encoding: 'utf8' }));
+  JSON.parse(ghRaw('-H', 'Accept: application/octet-stream', `repos/${repo}/releases/assets/${asset.id}`));
 const candidateAsset = draft.assets.find((a) => a.name === 'candidate.json');
 if (!candidateAsset) finish(false, 'manual check required: no active candidate selected');
 const candidate = assetJson(candidateAsset);
@@ -67,6 +76,8 @@ if (candidate.sourceSha !== pr.head.sha) {
 
 const reports = draft.assets.filter((a) => a.name.startsWith('report-')).map((a) => ({ ...assetJson(a), uploader: a.uploader?.login }))
   .filter((r) => r.candidateId === candidate.id);
+const unknown = [...new Set(reports.map((r) => r.requirement))].filter((k) => !policy.required.includes(k));
+if (unknown.length) say(`- ignoring results for requirements not in policy.required: ${unknown.join(', ')}`);
 const missing = [];
 for (const key of policy.required) {
   const mine = reports.filter((r) => r.requirement === key);
@@ -87,6 +98,20 @@ for (const asset of draft.assets.filter((a) => a.name.startsWith('exception-')))
 }
 
 const unresolved = missing.filter((m) => !authorized.has(m.replace(/ \(failed attempt present\)$/, '')));
+
+// Re-read identities immediately before passing: a candidate replaced, or a head/base moved, while this
+// job ran must not be approved by a stale snapshot. This narrows the race; publication must still revalidate.
+const revalidate = () => {
+  const head2 = gh(`repos/${repo}/pulls/${prNumber}`).head.sha;
+  const tip2 = gh(`repos/${repo}/branches/${pr.base.ref}`).commit.sha;
+  const cand2 = gh(`repos/${repo}/releases/${draft.id}`).assets.find((a) => a.name === 'candidate.json');
+  const cid2 = cand2 ? assetJson(cand2).id : null;
+  if (head2 !== pr.head.sha || tip2 !== baseTip || cid2 !== candidate.id) {
+    finish(false, 'state changed during evaluation (head, base or candidate); evaluate again');
+  }
+};
+
 if (unresolved.length) finish(false, `manual check required: ${unresolved.join(', ')}`);
+revalidate();
 if (missing.length) finish(true, `APPROVED WITH EXCEPTIONS for ${missing.join(', ')}`);
 finish(true, `all ${policy.required.length} required results present for candidate ${candidate.id}`);

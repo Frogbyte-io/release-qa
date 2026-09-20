@@ -18,7 +18,7 @@ The design needs these changes from what the spec assumed. Each is backed by an 
    - `gh run rerun` of the existing `pull_request` run from an Actions job using only `GITHUB_TOKEN` and `actions: write`. Reruns evaluate live state, but GitHub limits reruns to 30 days.
 5. **These do not work as refresh mechanisms:** a PR-body edit made with `GITHUB_TOKEN` (no run started: 20 runs before, 20 after) and a `workflow_dispatch` run of the gate (it completed successfully on the PR head SHA, but the PR's rollup ignored it and `mergeStateStatus` stayed `BLOCKED`).
 6. **Preparing a new candidate must block first.** Replacing a candidate at the same source SHA left the old green check in place: the PR stayed `CLEAN` until an evaluation reran. `prepare-candidate.sh` therefore withdraws the active candidate, refreshes, waits for a blocking result, and only then selects the new candidate.
-7. **Release intent must not depend on a label alone.** Removing the `release` label from a PR with no other release signal made it pass as a non-release PR. The evaluator also treats a release branch prefix or a changed `VERSION` file as release intent; a PR that changes `VERSION` stayed gated after label removal.
+7. **Release intent must not depend on a label alone.** Removing the `release` label from a PR with no other release signal made it pass as a non-release PR. The evaluator also treats a release branch prefix or a changed file listed in `policy.releaseFiles` (here `VERSION`) as release intent; a PR that changes `VERSION` stayed gated after label removal. Changed files are read across all pages, so a PR touching more than 100 files cannot hide the version file.
 8. **Exception authority comes from the verified uploader of the release asset, checked against repository permission at evaluation time.** A record claiming actor `octocat` but uploaded by an admin was accepted on the uploader's authority; the evaluator ignores the claimed name. Rejection of a non-maintainer uploader was not exercised.
 9. **Merge with `--match-head-commit`.** A wrong expected head was rejected ("Head branch was modified"); the correct head merged.
 
@@ -36,7 +36,7 @@ The design needs these changes from what the spec assumed. Each is backed by an 
 | Two simultaneous submissions | Both uploads stored under unique names; both counted |
 | Only a `blocked` result for a requirement | Failed: requirement treated as missing |
 | Evaluator cancelled mid-run | Check concluded `cancelled`; PR stayed `BLOCKED` |
-| Exception by admin uploader | `APPROVED WITH EXCEPTIONS` (job success; the check title cannot say so, only the job summary/log) |
+| Exception by admin uploader | `APPROVED WITH EXCEPTIONS` in the job summary/log only. The required check is an ordinary green `release-qa`, so **an exception is indistinguishable from complete QA in the merge view** (see [Not proven](#not-proven)) |
 | Candidate built against an older base tip | Failed: `target branch moved` |
 | Base advanced under a green PR, non-strict | PR stayed `CLEAN` with green check |
 | Same, strict required checks | `BEHIND` |
@@ -56,6 +56,8 @@ SHA association: for `pull_request`, `GITHUB_SHA` is GitHub's test-merge commit 
 
 ## Trust boundary
 
+**The gate as built is not safe against untrusted PR authors.** The sandbox workflow has `contents: write`, and any same-repository PR can replace the job body with `exit 0` under the same `release-qa` name. Treat it as a proof of mechanism, and treat fork release PRs as out of scope until a maintainer-side evaluation path is proven.
+
 For `pull_request` the workflow definition comes from the PR's test-merge commit, so a PR can edit `qa-gate.yml` itself. The sandbox mitigates the evaluator script (it is checked out from the target branch) but **not** the workflow file. This was not tested. Candidate mitigations: `CODEOWNERS` plus required review for `.github/workflows/`, or a `pull_request_target` variant that reports a commit status on the PR head. Neither has been exercised; choose and prove one before relying on the gate against untrusted PR authors.
 
 ## Not proven
@@ -64,7 +66,9 @@ For `pull_request` the workflow definition comes from the PR's test-merge commit
 - **Refresh beyond 30 days.** By construction the `edited` path creates a new run and does not depend on run age, but no evaluation was actually aged past the rerun window.
 - **Deployment-event refresh.** Not needed once `edited` was proven; not tested.
 - **Private repositories and plans.** The sandbox is public in a free-plan organization. Rulesets and required checks on private repositories on the same plan were not tested; verify before adopting a private consumer such as Dot X.
-- **Concurrent-evaluator races.** An evaluator that started before a candidate replacement and finished after it was not provoked. Publication must revalidate independently, as the design already requires.
+- **Concurrent-evaluator races.** The evaluator now re-reads the PR head, target tip and active candidate immediately before passing, which narrows the window. The race itself (an evaluator that started before a candidate replacement and finishes after it) was not provoked, so the narrowing is unmeasured. Publication must still revalidate independently, as the design requires.
+- **Exceptions distinguishable in the merge view.** Whether a separate non-required check run or commit status (created with `GITHUB_TOKEN`, `checks: write`) can show `approved with exceptions` next to the green required check was not tested. Task 3.3 must provide this; until then an exception looks identical to a complete pass in required-check results.
+- **Lost concurrent edits.** `refresh.sh` reads then patches the whole PR body; the REST API has no conditional update, so an edit landing between the two calls can be overwritten. Task 3.3 must design around this.
 - **Custom check title.** A workflow job cannot title its result `approved with exceptions`. Whether a Check Runs API call using `GITHUB_TOKEN` with `checks: write` can, while still satisfying the required check name, was not tested.
 
 ## Reproducing

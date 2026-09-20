@@ -7,10 +7,15 @@ tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
 uid() { node -e "console.log(require('crypto').randomUUID())"; }
 pr_head() { gh api "repos/$REPO/pulls/$1" --jq .head.sha; }
 
-# Echo the id of the draft release "QA PR #n", creating it when absent.
+# Serialize a record with a real JSON encoder: key=value pairs, values starting with "[" are parsed as JSON.
+json() { node -e '
+const o={};for(const a of process.argv.slice(1)){const i=a.indexOf("=");const k=a.slice(0,i),v=a.slice(i+1);o[k]=v.startsWith("[")?JSON.parse(v):/^[0-9]+$/.test(v)&&k==="schemaVersion"?Number(v):v}
+process.stdout.write(JSON.stringify(o))' "$@"; }
+
+# Echo the id of the draft release "QA PR #n", creating it when absent. Reads every page of releases.
 draft_id() {
   local n="$1" id
-  id="$(gh api "repos/$REPO/releases?per_page=100" --jq "[.[]|select(.draft and .name==\"QA PR #$n\")][0].id // empty")"
+  id="$(gh api --paginate "repos/$REPO/releases?per_page=100" --jq ".[]|select(.draft and .name==\"QA PR #$n\")|.id" | sed -n 1p)"
   if [ -z "$id" ]; then
     id="$(gh api "repos/$REPO/releases" -X POST -f tag_name="qa-pr-$n" -f name="QA PR #$n" -F draft=true -f body="QA records for PR #$n" --jq .id)"
   fi
@@ -31,6 +36,6 @@ asset_ids() { # release_id name_regex
 }
 
 current_candidate_id() { # release_id
-  local aid; aid="$(asset_ids "$1" '^candidate[.]json$' | head -1)"
+  local aid; aid="$(asset_ids "$1" '^candidate[.]json$' | sed -n 1p)"
   [ -n "$aid" ] && gh api -H "Accept: application/octet-stream" "repos/$REPO/releases/assets/$aid" --jq .id
 }
