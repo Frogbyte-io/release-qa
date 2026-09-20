@@ -1,0 +1,10 @@
+node_modules/
+target/
+dist/
+*.log
+.DS_Store
+# experiment evidence: only curated summaries are committed
+experiments/**/output/
+app-icon.png
+# Tauri regenerates these schemas on every build
+examples/**/src-tauri/gen/

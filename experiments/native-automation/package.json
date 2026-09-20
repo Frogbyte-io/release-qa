@@ -1,0 +1,13 @@
+{
+  "name": "release-qa-native-automation-experiment",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Throwaway experiment: drive an unchanged packaged Tauri app through an external WebDriver",
+  "type": "module",
+  "scripts": {
+    "attempts": "node run-attempts.mjs"
+  },
+  "dependencies": {
+    "webdriverio": "9.31.9"
+  }
+}

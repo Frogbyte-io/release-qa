@@ -1,0 +1,5 @@
+body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }
+label { display: block; margin-bottom: 4px; }
+input { width: 100%; box-sizing: border-box; padding: 6px; }
+.row { display: flex; gap: 8px; margin: 12px 0; }
+output { font-weight: 600; }

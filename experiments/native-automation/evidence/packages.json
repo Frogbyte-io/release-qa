@@ -1,0 +1,49 @@
+{
+  "note": "SHA-256 of the distributable and of the installed file that users actually run. The build-tree binary is NOT the shipped file. Windows: verified byte for byte that the two differ only in the bundle-type marker (UNK vs NSS). Linux: the hashes differ and the build log shows the packager patching the binary with bundle type deb; the differing bytes were not inspected.",
+  "windows": {
+    "installer": {
+      "file": "Release QA Smoke_0.1.0_x64-setup.exe",
+      "format": "NSIS",
+      "bytes": 1822657,
+      "sha256": "f2e9663903d3345f11e3b2bba3ecfd18a688b7c5124b3ad7186e63af248ff5dd"
+    },
+    "installedBinary": {
+      "path": "release-qa-tauri-smoke.exe (installed with /S /D=<dir>)",
+      "sha256": "8db9f967b949d039d6a5e6194f8136cb2948f8f6e767279f31b5c0283095e4b5"
+    },
+    "buildTreeBinary": {
+      "path": "target/release/release-qa-tauri-smoke.exe",
+      "sha256": "b1f6566f47c16245a34c6ea873cf09355d8eaeabed18d82baf1d9c679b435c44",
+      "differsFromInstalledBy": "3 bytes at offset 6286560 (bundle-type marker UNK vs NSS)"
+    },
+    "drivers": {
+      "msedgedriver.exe": {
+        "version": "153.0.4234.48",
+        "sha256": "4ae19c1db425d12f30952bc6b02abf4e61a84f82b33bb17721b4150fafc0402e",
+        "zipSha256": "c8eaaff2271ecde46de207f5dc73e6bdd274502e88ea4f293c27631be94d7fb9"
+      },
+      "tauri-driver": "2.0.6 (cargo install --locked)"
+    }
+  },
+  "linux": {
+    "package": {
+      "file": "Release QA Smoke_0.1.0_amd64.deb",
+      "format": "deb",
+      "bytes": 2794338,
+      "sha256": "3e785299c185c3fca524c3dd4a8ad66fd0bbb30672fd5db0967b235ca9833203"
+    },
+    "installedBinary": {
+      "path": "/usr/bin/release-qa-tauri-smoke (apt-get install ./file.deb)",
+      "sha256": "618eb56fdbc15323f5ea6fcdaf4e704e4f07c7324721647b15af1e399074a620"
+    },
+    "buildTreeBinary": {
+      "path": "target/release/release-qa-tauri-smoke",
+      "sha256": "7491faf83425b885b40a70247795f7eeef6406994476f0b8977a35b047a7d8f5",
+      "differsFromInstalled": "hashes differ; cause not inspected"
+    },
+    "drivers": {
+      "webkit2gtk-driver": "2.52.6-0ubuntu0.24.04.1 (apt)",
+      "tauri-driver": "2.0.6 (cargo install --locked)"
+    }
+  }
+}
