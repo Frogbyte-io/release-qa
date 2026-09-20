@@ -1,0 +1,84 @@
+{
+  "attempt": 7,
+  "ok": true,
+  "valueTried": "attempt-7-e7507228 åäö ✓",
+  "totalMs": 2827,
+  "steps": [
+    {
+      "name": "clean profile",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "no app process before launch",
+      "ok": true,
+      "ms": 5
+    },
+    {
+      "name": "launch 1",
+      "ok": true,
+      "ms": 782
+    },
+    {
+      "name": "type + Save shows value",
+      "ok": true,
+      "ms": 173
+    },
+    {
+      "name": "value on disk (independent read)",
+      "ok": true,
+      "ms": 0,
+      "detail": "/root/.local/share/dev.frogbyte.releaseqa.smoke/setting.txt"
+    },
+    {
+      "name": "app process exited after session end",
+      "ok": true,
+      "detail": "gone"
+    },
+    {
+      "name": "end session 1",
+      "ok": true,
+      "ms": 10
+    },
+    {
+      "name": "launch 2 (restart) shows persisted value",
+      "ok": true,
+      "ms": 832
+    },
+    {
+      "name": "Clear removes value and file",
+      "ok": true,
+      "ms": 68
+    },
+    {
+      "name": "app process exited after session end",
+      "ok": true,
+      "detail": "gone"
+    },
+    {
+      "name": "end session 2",
+      "ok": true,
+      "ms": 9
+    },
+    {
+      "name": "launch 3 (restart) shows cleared state",
+      "ok": true,
+      "ms": 873
+    },
+    {
+      "name": "app process exited after session end",
+      "ok": true,
+      "detail": "gone"
+    },
+    {
+      "name": "end session 3",
+      "ok": true,
+      "ms": 54
+    },
+    {
+      "name": "cleanup",
+      "ok": true,
+      "detail": "nothing left running"
+    }
+  ]
+}

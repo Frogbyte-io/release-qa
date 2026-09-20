@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Release QA Smoke</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Release QA Smoke</h1>
+      <label for="setting-input">Setting value</label>
+      <input id="setting-input" name="setting-input" type="text" autocomplete="off" />
+      <div class="row">
+        <button id="save-button" type="button">Save</button>
+        <button id="clear-button" type="button">Clear</button>
+      </div>
+      <p>Saved value: <output id="saved-value" data-testid="saved-value"></output></p>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

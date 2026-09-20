@@ -1,0 +1,94 @@
+{
+  "attempt": 2,
+  "ok": true,
+  "valueTried": "attempt-2-e862eb90 åäö ✓",
+  "totalMs": 10732,
+  "steps": [
+    {
+      "name": "no app process before launch",
+      "ok": true,
+      "ms": 830
+    },
+    {
+      "name": "clean profile",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "driver port is free",
+      "ok": true,
+      "ms": 1
+    },
+    {
+      "name": "launch 1",
+      "ok": true,
+      "ms": 907
+    },
+    {
+      "name": "type + Save shows value",
+      "ok": true,
+      "ms": 748
+    },
+    {
+      "name": "value on disk (independent read)",
+      "ok": true,
+      "ms": 0,
+      "detail": "%USERPROFILE%\\AppData\\Roaming\\dev.frogbyte.releaseqa.smoke\\setting.txt"
+    },
+    {
+      "name": "app process exited after session end",
+      "ok": true,
+      "detail": "gone"
+    },
+    {
+      "name": "end session 1",
+      "ok": true,
+      "ms": 1057
+    },
+    {
+      "name": "launch 2 (restart) shows persisted value",
+      "ok": true,
+      "ms": 1994
+    },
+    {
+      "name": "Clear removes value and file",
+      "ok": true,
+      "ms": 68
+    },
+    {
+      "name": "app process exited after session end",
+      "ok": true,
+      "detail": "gone"
+    },
+    {
+      "name": "end session 2",
+      "ok": true,
+      "ms": 1032
+    },
+    {
+      "name": "launch 3 (restart) shows cleared state",
+      "ok": true,
+      "ms": 1846
+    },
+    {
+      "name": "screenshots are not stale (saved and restarted differ from cleared)",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "app process exited after session end",
+      "ok": true,
+      "detail": "gone"
+    },
+    {
+      "name": "end session 3",
+      "ok": true,
+      "ms": 1184
+    },
+    {
+      "name": "cleanup",
+      "ok": true,
+      "detail": "driver exited"
+    }
+  ]
+}

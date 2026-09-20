@@ -1,0 +1,15 @@
+{
+  "name": "release-qa-tauri-smoke",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Independent packaged Tauri consumer used to prove Release QA automation",
+  "scripts": {
+    "tauri": "tauri",
+    "icons": "node scripts/make-icon.mjs && tauri icon app-icon.png",
+    "build:windows": "tauri build --bundles nsis",
+    "build:linux": "tauri build --bundles deb"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5"
+  }
+}

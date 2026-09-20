@@ -1,0 +1,17 @@
+{
+  "when": "2026-09-20T18:23:22.549Z",
+  "os": "linux 5.15.167.4-microsoft-standard-WSL2 x64",
+  "app": {
+    "path": "/usr/bin/release-qa-tauri-smoke",
+    "sha256": "618eb56fdbc15323f5ea6fcdaf4e704e4f07c7324721647b15af1e399074a620"
+  },
+  "tauriDriver": "tauri-driver v2.0.6:",
+  "nativeDriver": {
+    "path": "/usr/bin/WebKitWebDriver",
+    "version": "webkit2gtk-driver 2.52.6-0ubuntu0.24.04.1"
+  },
+  "display": ":99",
+  "webdriverio": "9.31.9",
+  "node": "v22.23.2",
+  "webview2": "n/a"
+}

@@ -1,0 +1,16 @@
+{
+  "when": "2026-09-20T18:13:39.167Z",
+  "os": "win32 10.0.26200 x64",
+  "app": {
+    "path": "D:\\release-qa-work\\install\\release-qa-tauri-smoke.exe",
+    "sha256": "8db9f967b949d039d6a5e6194f8136cb2948f8f6e767279f31b5c0283095e4b5"
+  },
+  "tauriDriver": "tauri-driver v2.0.6:",
+  "nativeDriver": {
+    "path": "D:\\release-qa-work\\tools\\msedgedriver.exe",
+    "version": "Microsoft Edge WebDriver 153.0.4234.48 (cf31d6623d8718e7a3c3e181e55e59c1aae57a73)"
+  },
+  "webdriverio": "9.31.9",
+  "node": "v24.13.0",
+  "webview2": "153.0.4234.48"
+}

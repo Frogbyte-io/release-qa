@@ -1,0 +1,79 @@
+{
+  "env": {
+    "when": "2026-09-20T18:51:45.431Z",
+    "os": "linux 5.15.167.4-microsoft-standard-WSL2 x64",
+    "app": {
+      "path": "/usr/bin/release-qa-tauri-smoke",
+      "sha256": "618eb56fdbc15323f5ea6fcdaf4e704e4f07c7324721647b15af1e399074a620"
+    },
+    "tauriDriver": {
+      "path": "/root/.cargo/bin/tauri-driver",
+      "sha256": "0f4d1c9c71432f1fc7601798fe741fbaaadfa86d65e42faef218067c945ca88f",
+      "reportedVersion": "tauri-driver v2.0.6"
+    },
+    "nativeDriver": {
+      "path": "/usr/bin/WebKitWebDriver",
+      "sha256": "488118541ba1dbeaca658073af84322900485b9435bc4fbb43eb1faf21db8b70",
+      "reportedVersion": "webkit2gtk-driver 2.52.6-0ubuntu0.24.04.1"
+    },
+    "display": ":99",
+    "webdriverio": "9.31.9",
+    "node": "v22.23.2",
+    "webview2": "n/a"
+  },
+  "attempts": 10,
+  "passed": 10,
+  "failed": 0,
+  "results": [
+    {
+      "attempt": 1,
+      "ok": true,
+      "totalMs": 5143
+    },
+    {
+      "attempt": 2,
+      "ok": true,
+      "totalMs": 4386
+    },
+    {
+      "attempt": 3,
+      "ok": true,
+      "totalMs": 4291
+    },
+    {
+      "attempt": 4,
+      "ok": true,
+      "totalMs": 4347
+    },
+    {
+      "attempt": 5,
+      "ok": true,
+      "totalMs": 4587
+    },
+    {
+      "attempt": 6,
+      "ok": true,
+      "totalMs": 4311
+    },
+    {
+      "attempt": 7,
+      "ok": true,
+      "totalMs": 4356
+    },
+    {
+      "attempt": 8,
+      "ok": true,
+      "totalMs": 4240
+    },
+    {
+      "attempt": 9,
+      "ok": true,
+      "totalMs": 4286
+    },
+    {
+      "attempt": 10,
+      "ok": true,
+      "totalMs": 4255
+    }
+  ]
+}
