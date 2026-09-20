@@ -28,7 +28,7 @@
       "name": "value on disk (independent read)",
       "ok": true,
       "ms": 1,
-      "detail": "C:\\Users\\ananords\\AppData\\Roaming\\dev.frogbyte.releaseqa.smoke\\setting.txt"
+      "detail": "%USERPROFILE%\\AppData\\Roaming\\dev.frogbyte.releaseqa.smoke\\setting.txt"
     },
     {
       "name": "app process exited after session end",

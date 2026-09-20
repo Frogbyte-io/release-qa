@@ -1,0 +1,40 @@
+{
+  "note": "SHA-256 of every screenshot each attempt captured. A saved or restarted screenshot identical to the cleared one is a stale capture (the readout is blank in both).",
+  "summary": {
+    "attempts": 10,
+    "savedEqualsCleared": 0,
+    "restartedEqualsCleared": 0
+  },
+  "screenshots": {
+    "attempt-1-1-saved.png": "8bbc9dc6b52cb23122a716ca03a75f153eebf62a5026fea3ab58a4b5dbf56e11",
+    "attempt-1-2-restarted.png": "a76a4c10f1656b235253460ad67de1355395d8d63f1de30d2b1752f6653a288a",
+    "attempt-1-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-2-1-saved.png": "66e1b996094b9c4f33584a9fd35b42111bf4254a20608e393f8519a6878d908d",
+    "attempt-2-2-restarted.png": "95ec0a5497ee65d5136464627b9a36c4d15048a01464ef3f811416d6e0445a0f",
+    "attempt-2-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-3-1-saved.png": "8e0768bd1505d9190aec275f17414f8d8bc66cdb0e0bfc22115a595c54af3816",
+    "attempt-3-2-restarted.png": "af005f81e7150f5cc054923778eeb9bd62c206cbc11a1798fa667db6d8dace68",
+    "attempt-3-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-4-1-saved.png": "7ab87ee9ce616a2631c2b8f6ac34123a21ea632b66516ec0d4ece2d1a65d0673",
+    "attempt-4-2-restarted.png": "a9b3fc4ea0089dae2ca5f1fc32039ff3467163083d61a4e91cb14e0fa7d9bc27",
+    "attempt-4-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-5-1-saved.png": "653d5b188da14e781d93efddf6cdb702d699416febe158eea08dcac68f188fca",
+    "attempt-5-2-restarted.png": "49e831662d9bf2458c5dbc05e61472af31d6f093a207a8f2d389cab8d9c0fcc8",
+    "attempt-5-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-6-1-saved.png": "9f761fce0a844d60d6366cdfd33098b566d6e5a5750365f8dd59d34b5d8ce716",
+    "attempt-6-2-restarted.png": "ba9024e78fef71256ad45f3702f7e9ca8a24d7f64c688bfdea7135846816fd61",
+    "attempt-6-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-7-1-saved.png": "c3586cf1a190446712c37b583aa8229ee788bd88570b4ec72e1e936ac8bc9300",
+    "attempt-7-2-restarted.png": "4ffd90a3037b9c421fdebd72df7ff6e70dfdc83e4cfc2b1ea074d2afe1c2cca3",
+    "attempt-7-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-8-1-saved.png": "abcbbf876a2e64a33cec5e422a57346c866a500d2a36f751577c5e58e56f6e2f",
+    "attempt-8-2-restarted.png": "e7ee53992f34038170a7df53f4749780fa66f15102dbd5473feb4c656d1d870b",
+    "attempt-8-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-9-1-saved.png": "ae176128dcaed8a07ebfff3969f29fac26f9604f0002c58ea25356c9f498ff69",
+    "attempt-9-2-restarted.png": "52b93d62b8381b06bc93d8a911420707e48a858a43f745c784de9c67345f7ee2",
+    "attempt-9-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4",
+    "attempt-10-1-saved.png": "2cbd32bcd31756dd71382994660ecf5f0841781056be6d10915f9adb99815c30",
+    "attempt-10-2-restarted.png": "6c68500d85072e37da6191cb7726de8c110fe53d480ba7af4f417a403a161157",
+    "attempt-10-3-cleared.png": "490b4fdfeafe972e0c15e8f21eaac99d7cde1f47c833e3d562c394d76dc140c4"
+  }
+}

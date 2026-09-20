@@ -6,13 +6,16 @@ Drives the **unchanged, installed** sample app (`examples/tauri-smoke`) through 
 
 ## Windows
 
-Prerequisites: Node 22+, Rust, the Tauri prerequisites, and an `msedgedriver.exe` **matching the installed WebView2 runtime version** (`reg query "HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" /v pv`, download from `https://msedgedriver.microsoft.com/<version>/edgedriver_win64.zip`).
+Prerequisites: Node 22+, Rust, the Tauri prerequisites, and an `msedgedriver.exe` **matching the installed WebView2 runtime version** (the `pv` value under `HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`, or the same key under `HKCU\Software\Microsoft\EdgeUpdate\Clients` for a per-user install; the harness checks those two and `HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients`, and records `unknown` if none exists; download the driver from `https://msedgedriver.microsoft.com/<version>/edgedriver_win64.zip`).
 
 ```powershell
-cargo install tauri-driver --locked --version 2.0.6
-cd examples\tauri-smoke; npm ci; npm run build:windows
-& ".\src-tauri\target\release\bundle\nsis\Release QA Smoke_0.1.0_x64-setup.exe" /S /D=D:\some\install\dir
-cd ..\..\experiments\native-automation; npm ci
+$ErrorActionPreference = 'Stop'   # stop on the first failing cmdlet
+function Check { if ($LASTEXITCODE -ne 0) { throw "failed with exit code $LASTEXITCODE" } }   # native commands do not stop on their own
+cargo install tauri-driver --locked --version 2.0.6; Check
+cd examples\tauri-smoke; npm ci; Check; npm run build:windows; Check
+# Do not run an installer left over from an earlier build: the harness would test a stale package.
+& ".\src-tauri\target\release\bundle\nsis\Release QA Smoke_0.1.0_x64-setup.exe" /S /D=D:\some\install\dir; Check
+cd ..\..\experiments\native-automation; npm ci; Check
 $env:APP_EXE = 'D:\some\install\dir\release-qa-tauri-smoke.exe'
 $env:NATIVE_DRIVER = 'D:\path\to\msedgedriver.exe'
 $env:COUNT = '10'; node run-attempts.mjs
@@ -32,4 +35,4 @@ APP_EXE=/usr/bin/release-qa-tauri-smoke NATIVE_DRIVER=/usr/bin/WebKitWebDriver C
   xvfb-run -a -s "-screen 0 1280x1024x24" node run-attempts.mjs
 ```
 
-Environment variables: `APP_EXE`, `NATIVE_DRIVER` (required); `TAURI_DRIVER`, `COUNT` (default 10), `OUT` (default `output/<timestamp>`, git-ignored), `SETTLE_MS` (screenshot settle delay, default 500).
+Environment variables: `APP_EXE`, `NATIVE_DRIVER` (required); `TAURI_DRIVER` (default `tauri-driver`, resolved from `PATH`), `COUNT` (default 10, must be a positive integer), `OUT` (default `output/<timestamp>`, git-ignored), `SETTLE_MS` (screenshot settle delay, default 500).

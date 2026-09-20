@@ -1,28 +1,33 @@
 {
-  "attempt": 9,
+  "attempt": 7,
   "ok": true,
-  "valueTried": "attempt-9-e12021de åäö ✓",
-  "totalMs": 9406,
+  "valueTried": "attempt-7-5decf01b åäö ✓",
+  "totalMs": 9887,
   "steps": [
     {
+      "name": "no app process before launch",
+      "ok": true,
+      "ms": 780
+    },
+    {
       "name": "clean profile",
+      "ok": true,
+      "ms": 0
+    },
+    {
+      "name": "driver port is free",
       "ok": true,
       "ms": 1
     },
     {
-      "name": "no app process before launch",
-      "ok": true,
-      "ms": 798
-    },
-    {
       "name": "launch 1",
       "ok": true,
-      "ms": 881
+      "ms": 1079
     },
     {
       "name": "type + Save shows value",
       "ok": true,
-      "ms": 746
+      "ms": 880
     },
     {
       "name": "value on disk (independent read)",
@@ -38,17 +43,17 @@
     {
       "name": "end session 1",
       "ok": true,
-      "ms": 979
+      "ms": 932
     },
     {
       "name": "launch 2 (restart) shows persisted value",
       "ok": true,
-      "ms": 1551
+      "ms": 1698
     },
     {
       "name": "Clear removes value and file",
       "ok": true,
-      "ms": 60
+      "ms": 68
     },
     {
       "name": "app process exited after session end",
@@ -58,12 +63,12 @@
     {
       "name": "end session 2",
       "ok": true,
-      "ms": 921
+      "ms": 904
     },
     {
       "name": "launch 3 (restart) shows cleared state",
       "ok": true,
-      "ms": 1629
+      "ms": 1505
     },
     {
       "name": "screenshots are not stale (saved and restarted differ from cleared)",
@@ -78,12 +83,12 @@
     {
       "name": "end session 3",
       "ok": true,
-      "ms": 993
+      "ms": 994
     },
     {
       "name": "cleanup",
       "ok": true,
-      "detail": "nothing left running"
+      "detail": "driver exited"
     }
   ]
 }

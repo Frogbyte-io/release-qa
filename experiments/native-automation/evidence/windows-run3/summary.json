@@ -1,0 +1,79 @@
+{
+  "env": {
+    "when": "2026-09-20T18:49:48.586Z",
+    "os": "win32 10.0.26200 x64",
+    "app": {
+      "path": "D:\\release-qa-work\\install\\release-qa-tauri-smoke.exe",
+      "sha256": "8db9f967b949d039d6a5e6194f8136cb2948f8f6e767279f31b5c0283095e4b5"
+    },
+    "tauriDriver": {
+      "path": "%USERPROFILE%\\.cargo\\bin\\tauri-driver.exe",
+      "sha256": "61de00257e7b1b5d2aa1326d21cd914a3590a030fd3339a8caad2c75873e9e1e",
+      "reportedVersion": "tauri-driver v2.0.6"
+    },
+    "nativeDriver": {
+      "path": "D:\\release-qa-work\\tools\\msedgedriver.exe",
+      "sha256": "4ae19c1db425d12f30952bc6b02abf4e61a84f82b33bb17721b4150fafc0402e",
+      "reportedVersion": "Microsoft Edge WebDriver 153.0.4234.48 (cf31d6623d8718e7a3c3e181e55e59c1aae57a73)"
+    },
+    "display": "interactive Windows session",
+    "webdriverio": "9.31.9",
+    "node": "v24.13.0",
+    "webview2": "153.0.4234.48"
+  },
+  "attempts": 10,
+  "passed": 10,
+  "failed": 0,
+  "results": [
+    {
+      "attempt": 1,
+      "ok": true,
+      "totalMs": 10878
+    },
+    {
+      "attempt": 2,
+      "ok": true,
+      "totalMs": 10732
+    },
+    {
+      "attempt": 3,
+      "ok": true,
+      "totalMs": 9459
+    },
+    {
+      "attempt": 4,
+      "ok": true,
+      "totalMs": 10802
+    },
+    {
+      "attempt": 5,
+      "ok": true,
+      "totalMs": 9801
+    },
+    {
+      "attempt": 6,
+      "ok": true,
+      "totalMs": 9608
+    },
+    {
+      "attempt": 7,
+      "ok": true,
+      "totalMs": 9887
+    },
+    {
+      "attempt": 8,
+      "ok": true,
+      "totalMs": 9984
+    },
+    {
+      "attempt": 9,
+      "ok": true,
+      "totalMs": 10307
+    },
+    {
+      "attempt": 10,
+      "ok": true,
+      "totalMs": 10063
+    }
+  ]
+}

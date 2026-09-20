@@ -22,7 +22,10 @@
         "sha256": "4ae19c1db425d12f30952bc6b02abf4e61a84f82b33bb17721b4150fafc0402e",
         "zipSha256": "c8eaaff2271ecde46de207f5dc73e6bdd274502e88ea4f293c27631be94d7fb9"
       },
-      "tauri-driver": "2.0.6 (cargo install --locked)"
+      "tauri-driver": {
+        "version": "2.0.6 (cargo install --locked)",
+        "executableSha256": "61de00257e7b1b5d2aa1326d21cd914a3590a030fd3339a8caad2c75873e9e1e"
+      }
     }
   },
   "linux": {
@@ -42,8 +45,14 @@
       "differsFromInstalled": "hashes differ; cause not inspected"
     },
     "drivers": {
-      "webkit2gtk-driver": "2.52.6-0ubuntu0.24.04.1 (apt)",
-      "tauri-driver": "2.0.6 (cargo install --locked)"
+      "webkit2gtk-driver": {
+        "package": "2.52.6-0ubuntu0.24.04.1 (apt)",
+        "WebKitWebDriverSha256": "488118541ba1dbeaca658073af84322900485b9435bc4fbb43eb1faf21db8b70"
+      },
+      "tauri-driver": {
+        "version": "2.0.6 (cargo install --locked)",
+        "executableSha256": "0f4d1c9c71432f1fc7601798fe741fbaaadfa86d65e42faef218067c945ca88f"
+      }
     }
   }
 }
