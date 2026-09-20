@@ -12,6 +12,8 @@ The runs used the harness as it stood at the time, so their records differ by de
 | `*-run2` | Adds the 500 ms screenshot settle, the staleness step and the `display` field. |
 | `*-run3` | The committed `run-attempts.mjs`: run of record. Adds the driver executable paths and hashes and confirmation that the driver exited. |
 
+Runs 1 and 2 record `tauriDriver` as the raw line from `cargo install --list`, so the value ends in a colon (`tauri-driver v2.0.6:`); the colon is a parsing artifact, not part of the version. Run 3 records the executable and a stripped `reportedVersion`.
+
 A run is never regenerated to match a later script. `linux-run1/stale-example-*.png` show a stale restart screenshot (blank readout) next to the cleared-state screenshot it is identical to.
 
 The account name was redacted from recorded Windows paths (`%USERPROFILE%`).
