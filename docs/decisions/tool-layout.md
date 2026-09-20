@@ -9,7 +9,7 @@ These defaults come from the plan's proposals and the Stage 0 results ([native a
 | Area | Decision | Basis |
 | --- | --- | --- |
 | Repository | `Frogbyte-io/release-qa`, public | Created and made public before Stage 0 |
-| Runtime | Node.js 22. `.node-version` is `22`; `engines.node` is `>=22.12.0` | The harness ran on Node 22.23.2 (Linux) and 24.13.0 (Windows). CI pins the version in `.node-version` |
+| Runtime | Node.js 22. `.node-version` pins **22.23.2** exactly; `engines.node` is the floor `>=22.12.0` | The harness ran on Node 22.23.2 (Linux) and 24.13.0 (Windows). CI installs the version in `.node-version`; bump it deliberately |
 | Package manager | npm workspaces, one root `package-lock.json` | Plan default; nothing in Stage 0 contradicted it |
 | Language and test | TypeScript 7.0.2, Vitest 5.0.1, `@types/node` 22.20.4, all pinned exactly | Verified together in this change: `npm run typecheck` and `npm test` pass, and a deliberate type error fails the typecheck |
 | Native driver (sample apps) | WebdriverIO 9.31.9 `remote()` API + external `tauri-driver` 2.0.6; Edge WebDriver on Windows, `WebKitWebDriver` on Linux | Proven on the sample: 60/60 attempts across three runs per platform |
@@ -31,7 +31,7 @@ docs/decisions/               decision records
 
 `examples/tauri-smoke` stays outside the workspace on purpose. The packages tested in Stage 0 were built with its own `package-lock.json`, and hoisting its build tooling into a root lockfile would change that resolution without a re-test. Revisit when the sample is consumed by the runner's own tests.
 
-`packages/qa/tsconfig.json` sets `noEmit`. The CLI needs a build step (emit or bundle), which Task 2.2 decides when there is a CLI to build. `bin` is intentionally absent from `package.json` until then.
+`packages/qa/tsconfig.json` sets `noEmit`. The CLI needs a build step (emit or bundle), which Task 2.2 decides when there is a CLI to build. `bin`, `main` and `exports` are intentionally absent from `package.json` until then: the source is TypeScript that Node cannot load directly, so nothing should be able to import the package before it has a build output.
 
 ## Stage 0 commands and where they go
 
@@ -48,7 +48,7 @@ The repeatable smoke check for now is `experiments/native-automation/run-attempt
 
 ## CI
 
-`.github/workflows/ci.yml` runs `npm ci`, `npm run typecheck` and `npm test` on `ubuntu-24.04` and `windows-2025` with the Node version from `.node-version`. It has read-only permissions and no secrets. It tests tool logic only; packaged-app GUI runs need a designated machine and are not in CI. The runner labels are pinned by name, not `latest`, so a baseline change is a reviewed edit.
+`.github/workflows/ci.yml` runs `npm ci`, `npm run typecheck` and `npm test` on `ubuntu-24.04` and `windows-2025` with the Node version from `.node-version`. It has read-only permissions, no secrets, a 15-minute job timeout, and its actions pinned to commit SHAs (bumped by hand; no Dependabot is configured). It tests tool logic only; packaged-app GUI runs need a designated machine and are not in CI. The runner labels are pinned by name, not `latest`, so a baseline change is a reviewed edit.
 
 ## Not settled
 

@@ -4,7 +4,6 @@
   "version": "0.0.0",
   "description": "Release QA runner, contracts, reports and GitHub integration",
   "type": "module",
-  "main": "./src/index.ts",
   "engines": {
     "node": ">=22.12.0"
   },
