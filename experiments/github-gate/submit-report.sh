@@ -7,5 +7,5 @@ rid="$(draft_id "$n")"
 cid="${4:-$(current_candidate_id "$rid")}"
 actor="$(gh api user --jq .login)"
 upload_json "$rid" "report-$(uid).json" \
-  "$(json schemaVersion=1 candidateId="$cid" requirement="$req" outcome="$outcome" actor="$actor")" >/dev/null
+  "$(json schemaVersion:=1 candidateId="$cid" requirement="$req" outcome="$outcome" actor="$actor")" >/dev/null
 echo "submitted $req=$outcome for $cid"

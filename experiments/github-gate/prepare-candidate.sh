@@ -16,5 +16,5 @@ case "$blocked" in
 esac
 base="$(gh api "repos/$REPO/branches/$(gh api "repos/$REPO/pulls/$n" --jq .base.ref)" --jq .commit.sha)"
 cid="cand-$(uid)"
-upload_json "$rid" candidate.json "$(json schemaVersion=1 id="$cid" sourceSha="$head" baseSha="$base")" >/dev/null
+upload_json "$rid" candidate.json "$(json schemaVersion:=1 id="$cid" sourceSha="$head" baseSha="$base")" >/dev/null
 echo "$cid"

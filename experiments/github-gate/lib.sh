@@ -7,9 +7,17 @@ tmpdir="$(mktemp -d)"; trap 'rm -rf "$tmpdir"' EXIT
 uid() { node -e "console.log(require('crypto').randomUUID())"; }
 pr_head() { gh api "repos/$REPO/pulls/$1" --jq .head.sha; }
 
-# Serialize a record with a real JSON encoder: key=value pairs, values starting with "[" are parsed as JSON.
+# Serialize a record with a real JSON encoder. Arguments: key=string, key:=raw-json (numbers/booleans), key[]=string (array item).
+# Nothing is inferred from a value's content, so a reason such as "[urgent]" stays a string.
 json() { node -e '
-const o={};for(const a of process.argv.slice(1)){const i=a.indexOf("=");const k=a.slice(0,i),v=a.slice(i+1);o[k]=v.startsWith("[")?JSON.parse(v):/^[0-9]+$/.test(v)&&k==="schemaVersion"?Number(v):v}
+const o={};
+for(const a of process.argv.slice(1)){
+  let m;
+  if((m=a.match(/^([^=:[]+):=(.*)$/s))) o[m[1]]=JSON.parse(m[2]);
+  else if((m=a.match(/^([^=:[]+)\[\]=(.*)$/s))) (o[m[1]]??=[]).push(m[2]);
+  else if((m=a.match(/^([^=:[]+)=(.*)$/s))) o[m[1]]=m[2];
+  else throw new Error("bad json() argument: "+a);
+}
 process.stdout.write(JSON.stringify(o))' "$@"; }
 
 # Echo the id of the draft release "QA PR #n", creating it when absent. Reads every page of releases.
