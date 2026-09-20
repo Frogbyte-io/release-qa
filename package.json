@@ -1,0 +1,17 @@
+{
+  "name": "release-qa",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Release QA: a desktop dashboard and CLI for release verification of packaged applications",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}
