@@ -9,4 +9,20 @@ The first targets are Tauri applications on Windows and Linux, with Dot X as the
 - [Design and agreed decisions](docs/superpowers/specs/2026-09-20-release-qa-design.md)
 - [Implementation plan](docs/superpowers/plans/2026-09-20-release-qa.md)
 
-This repository currently contains planning documents only. The first implementation stage proves packaged Tauri automation and GitHub merge-gate behavior before building the rest of the tool.
+## Status
+
+Stage 0 (proving the assumptions) is under way; the tool itself is not built yet. Results so far:
+
+- [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. The Dot X feasibility check is still open.
+- [GitHub merge gate](docs/decisions/github-gate.md): a no-service required check works, with documented design changes and unproven items.
+- [Tool layout and defaults](docs/decisions/tool-layout.md): runtime, package manager, baselines and repository structure.
+
+## Development
+
+Requires Node.js 22.12 or newer.
+
+```sh
+npm ci
+npm run typecheck
+npm test
+```

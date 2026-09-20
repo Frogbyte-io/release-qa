@@ -1,0 +1,6 @@
+{
+  "name": "@frogbyte-io/release-qa-desktop",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Windows QA dashboard (Electron + Vue). Reserved: dependencies are added in Stage 5."
+}
