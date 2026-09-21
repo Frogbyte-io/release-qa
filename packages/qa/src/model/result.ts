@@ -119,7 +119,7 @@ function readEnvironment(c: Collector, value: unknown, path: string): MeasuredEn
   } as MeasuredEnvironment;
 }
 
-function readAttempt(c: Collector, value: unknown, path: string): Attempt | undefined {
+export function readAttempt(c: Collector, value: unknown, path: string): Attempt | undefined {
   const rec = c.record(value, path, ATTEMPT_SPEC);
   if (rec === undefined) return undefined;
   const id = c.id(rec.id, at(path, 'id'));

@@ -1,4 +1,5 @@
 import type { Candidate } from './candidate.ts';
+import { canonical, compare } from './canonical.ts';
 import type { Exception } from './exception.ts';
 import type { EnvironmentProfile } from './project.ts';
 import { profileOf, type Requirement, type RequirementKey } from './requirement.ts';
@@ -214,16 +215,4 @@ function applyExceptions(input: EvaluationInput, unmet: readonly Reason[], ignor
     if (covering !== undefined) excusedBy.set(reason, covering.id);
   }
   return excusedBy;
-}
-
-const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-
-/** JSON with sorted keys, so two structurally equal values compare equal whatever their key order. */
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (typeof value === 'object' && value !== null) {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => compare(a, b));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'undefined';
 }
