@@ -1,0 +1,279 @@
+/** Machine-readable reasons a record was rejected. The CLI and UI display these, so they are stable names. */
+export type IssueCode =
+  | 'invalid-type'
+  | 'missing-field'
+  | 'unknown-field'
+  | 'unknown-schema-version'
+  | 'empty'
+  | 'too-long'
+  | 'invalid-characters'
+  | 'invalid-value'
+  | 'out-of-range'
+  | 'malformed-id'
+  | 'malformed-key'
+  | 'malformed-hash'
+  | 'malformed-timestamp'
+  | 'unsafe-path'
+  | 'duplicate'
+  | 'unknown-reference'
+  | 'mismatch';
+
+export interface ValidationIssue {
+  code: IssueCode;
+  /** Location of the offending value, e.g. `artifacts[1].sha256`; the empty string is the record itself. */
+  path: string;
+  message: string;
+}
+
+export class ValidationError extends Error {
+  readonly issues: readonly ValidationIssue[];
+  constructor(issues: readonly ValidationIssue[]) {
+    super(`invalid record: ${issues.map((i) => `${i.path || '<root>'}: ${i.code}`).join(', ') || 'no details'}`);
+    this.name = 'ValidationError';
+    this.issues = issues;
+  }
+}
+
+export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: ValidationError };
+
+export const SCHEMA_VERSION = 1;
+
+export const at = (parent: string, key: string): string => (parent ? `${parent}.${key}` : key);
+export const item = (parent: string, index: number): string => `${parent}[${index}]`;
+
+const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const PROFILE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const NAME = /^[a-z][a-z0-9-]{0,63}$/;
+const REQUIREMENT_KEY = /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,127}$/;
+const GIT_SHA = /^[0-9a-f]{40}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+const TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,9})?Z$/;
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+// Characters Windows refuses in a path segment, plus both separators. Includes ":" (drive prefixes, NTFS streams).
+const RESERVED_CHARACTERS = /[<>:"/\\|?*]/;
+
+// Control characters are found by character code so the source contains no raw control bytes.
+const TAB = 9;
+const LINE_FEED = 10;
+const CARRIAGE_RETURN = 13;
+function hasControlCharacter(s: string, allowTabsAndLineBreaks = false): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code >= 0x20 && code !== 0x7f) continue;
+    if (allowTabsAndLineBreaks && (code === TAB || code === LINE_FEED || code === CARRIAGE_RETURN)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** One file or directory name as it must be safe on every supported OS. "." and ".." fail the trailing-dot rule. */
+function unsafeSegment(segment: string): boolean {
+  return (
+    segment.length > 255 ||
+    RESERVED_CHARACTERS.test(segment) ||
+    hasControlCharacter(segment) ||
+    /[. ]$/.test(segment) ||
+    WINDOWS_DEVICE.test(segment.split('.')[0] ?? '')
+  );
+}
+
+export type FieldSpec = { required: readonly string[]; optional?: readonly string[] };
+
+/** Collects every problem in a record instead of stopping at the first, and never throws on bad input. */
+export class Collector {
+  readonly issues: ValidationIssue[] = [];
+
+  add(code: IssueCode, path: string, message: string): void {
+    this.issues.push({ code, path, message });
+  }
+
+  /** Checks that `value` is a plain object with exactly the allowed fields. */
+  record(value: unknown, path: string, spec: FieldSpec): Record<string, unknown> | undefined {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      this.add('invalid-type', path, 'expected an object');
+      return undefined;
+    }
+    const rec = value as Record<string, unknown>;
+    const allowed = new Set([...spec.required, ...(spec.optional ?? [])]);
+    for (const key of Object.keys(rec)) if (!allowed.has(key)) this.add('unknown-field', at(path, key), `unknown field "${key}"`);
+    for (const key of spec.required) if (rec[key] === undefined) this.add('missing-field', at(path, key), `missing field "${key}"`);
+    return rec;
+  }
+
+  /** Free text: non-empty after trimming, bounded, and without control characters. */
+  text(value: unknown, path: string, options: { max?: number; multiline?: boolean } = {}): string | undefined {
+    const s = this.string(value, path);
+    if (s === undefined) return undefined;
+    if (s.trim() === '') return this.fail('empty', path, 'must not be empty');
+    if ((options.max ?? 200) < s.length) return this.fail('too-long', path, `longer than ${options.max ?? 200} characters`);
+    if (hasControlCharacter(s, options.multiline === true)) return this.fail('invalid-characters', path, 'contains control characters');
+    return s;
+  }
+
+  id(value: unknown, path: string): string | undefined {
+    return this.matching(value, path, ID, 'malformed-id', 'expected letters, digits, ".", "_" or "-", starting with a letter or digit');
+  }
+
+  profileId(value: unknown, path: string): string | undefined {
+    return this.matching(value, path, PROFILE_ID, 'malformed-id', 'expected a lower-case profile id');
+  }
+
+  /** A short lower-case name such as a capability or marker. */
+  name(value: unknown, path: string): string | undefined {
+    return this.matching(value, path, NAME, 'malformed-id', 'expected a lower-case name of letters, digits and "-"');
+  }
+
+  requirementKey(value: unknown, path: string): `${string}/${string}` | undefined {
+    if (typeof value !== 'string') return this.fail('invalid-type', path, 'expected a string');
+    if (!REQUIREMENT_KEY.test(value)) return this.fail('malformed-key', path, 'expected "<profile>/<scenario>"');
+    return value as `${string}/${string}`;
+  }
+
+  gitSha(value: unknown, path: string): string | undefined {
+    return this.hash(value, path, GIT_SHA, '40 lower-case hex characters');
+  }
+
+  sha256(value: unknown, path: string): string | undefined {
+    return this.hash(value, path, SHA256, '64 lower-case hex characters');
+  }
+
+  /** A positive integer that is safe to handle as a JavaScript number. */
+  int(value: unknown, path: string): number | undefined {
+    if (typeof value !== 'number' || Number.isNaN(value)) return this.fail('invalid-type', path, 'expected a number');
+    if (!Number.isSafeInteger(value) || value < 1) return this.fail('out-of-range', path, 'expected a positive integer');
+    return value;
+  }
+
+  oneOf<T extends string>(value: unknown, path: string, allowed: readonly T[]): T | undefined {
+    if (typeof value !== 'string') return this.fail('invalid-type', path, 'expected a string');
+    if (!(allowed as readonly string[]).includes(value)) return this.fail('invalid-value', path, `expected one of ${allowed.join(', ')}`);
+    return value as T;
+  }
+
+  /** ISO-8601 UTC, e.g. `2026-09-20T12:00:00Z`. A local time or offset is rejected because ordering would depend on it. */
+  timestamp(value: unknown, path: string): string | undefined {
+    const s = this.string(value, path);
+    if (s === undefined) return undefined;
+    const m = TIMESTAMP.exec(s);
+    if (m) {
+      const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+      const d = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+      const real = d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+      if (real && hour < 24 && minute < 60 && second < 60) return s;
+    }
+    return this.fail('malformed-timestamp', path, 'expected ISO-8601 UTC such as 2026-09-20T12:00:00Z');
+  }
+
+  /** A single file name as found inside an archive or release: no directories, no Windows traps. */
+  fileName(value: unknown, path: string): string | undefined {
+    const s = this.string(value, path);
+    if (s === undefined) return undefined;
+    if (s.trim() === '') return this.fail('empty', path, 'must not be empty');
+    return unsafeSegment(s) ? this.fail('unsafe-path', path, 'not a plain file name') : s;
+  }
+
+  /** A relative path with `/` separators that cannot leave its directory and is valid on every supported OS. */
+  relativePath(value: unknown, path: string): string | undefined {
+    const s = this.string(value, path);
+    if (s === undefined) return undefined;
+    if (s.trim() === '') return this.fail('empty', path, 'must not be empty');
+    // A leading "/" or a "//" leaves an empty segment, so this also rejects absolute paths.
+    const unsafe = s.split('/').some((segment) => segment === '' || unsafeSegment(segment));
+    return unsafe ? this.fail('unsafe-path', path, 'must be a relative path that stays inside its directory') : s;
+  }
+
+  /** A Git branch name in a conservative subset. */
+  branchName(value: unknown, path: string): string | undefined {
+    const s = this.string(value, path);
+    if (s === undefined) return undefined;
+    if (s.trim() === '') return this.fail('empty', path, 'must not be empty');
+    const ok = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(s) && !s.includes('..') && !s.includes('//') && !/[/.]$/.test(s) && !s.endsWith('.lock');
+    return ok ? s : this.fail('invalid-value', path, 'not a valid branch name');
+  }
+
+  /** Returns a dense copy, so holes in a sparse array are validated as missing values instead of being skipped. */
+  array(value: unknown, path: string, options: { min?: number } = {}): unknown[] | undefined {
+    if (!Array.isArray(value)) return this.fail('invalid-type', path, 'expected an array');
+    if ((options.min ?? 0) > value.length) return this.fail('empty', path, `expected at least ${options.min} item(s)`);
+    return Array.from(value as unknown[]);
+  }
+
+  /** Flags the second and later occurrence of a value. Entries whose value failed earlier checks are skipped. */
+  unique(entries: ReadonlyArray<{ value: string | undefined; path: string }>): void {
+    const seen = new Set<string>();
+    for (const { value, path } of entries) {
+      if (value === undefined) continue;
+      if (seen.has(value)) this.add('duplicate', path, `"${value}" appears more than once`);
+      seen.add(value);
+    }
+  }
+
+  private string(value: unknown, path: string): string | undefined {
+    return typeof value === 'string' ? value : this.fail('invalid-type', path, 'expected a string');
+  }
+
+  private matching(value: unknown, path: string, pattern: RegExp, code: IssueCode, message: string): string | undefined {
+    const s = this.string(value, path);
+    if (s === undefined) return undefined;
+    if (s.trim() === '') return this.fail('empty', path, 'must not be empty');
+    return pattern.test(s) ? s : this.fail(code, path, message);
+  }
+
+  private hash(value: unknown, path: string, pattern: RegExp, expected: string): string | undefined {
+    if (typeof value !== 'string') return this.fail('invalid-type', path, 'expected a string');
+    return pattern.test(value) ? value : this.fail('malformed-hash', path, `expected ${expected}`);
+  }
+
+  private fail(code: IssueCode, path: string, message: string): undefined {
+    this.add(code, path, message);
+    return undefined;
+  }
+}
+
+/** Describes any value for an error message without ever throwing (bigint and cyclic values break JSON.stringify). */
+function describe(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? typeof value;
+  } catch {
+    return `a value of type ${typeof value}`;
+  }
+}
+
+/** Runs a parse and turns anything that escapes, such as an object whose getters throw, into a validation failure. */
+function guarded<T>(parse: () => ParseResult<T>): ParseResult<T> {
+  try {
+    return parse();
+  } catch {
+    return failure([{ code: 'invalid-type', path: '', message: 'the value could not be read' }]);
+  }
+}
+
+/**
+ * Parses a schema-versioned record. A record that declares any version other than 1 is rejected on that
+ * ground alone: its other fields may mean something different, so they are not inspected.
+ */
+export function parseVersioned<T>(input: unknown, spec: FieldSpec, read: (c: Collector, rec: Record<string, unknown>) => T): ParseResult<T> {
+  return guarded(() => {
+    if (typeof input === 'object' && input !== null && !Array.isArray(input) && 'schemaVersion' in input) {
+      const declared = (input as { schemaVersion: unknown }).schemaVersion;
+      if (declared !== SCHEMA_VERSION) {
+        return failure([{ code: 'unknown-schema-version', path: 'schemaVersion', message: `unsupported schema version ${describe(declared)}; this tool reads version ${SCHEMA_VERSION}` }]);
+      }
+    }
+    return parseUnversioned(input, { ...spec, required: ['schemaVersion', ...spec.required] }, read);
+  });
+}
+
+/** Parses a record embedded in a versioned one, or an internal record that carries no version of its own. */
+export function parseUnversioned<T>(input: unknown, spec: FieldSpec, read: (c: Collector, rec: Record<string, unknown>) => T): ParseResult<T> {
+  return guarded(() => {
+    const c = new Collector();
+    const rec = c.record(input, '', spec);
+    const value = rec === undefined ? undefined : read(c, rec);
+    return c.issues.length === 0 ? { ok: true, value: value as T } : failure(c.issues);
+  });
+}
+
+function failure(issues: readonly ValidationIssue[]): { ok: false; error: ValidationError } {
+  return { ok: false, error: new ValidationError(issues) };
+}
