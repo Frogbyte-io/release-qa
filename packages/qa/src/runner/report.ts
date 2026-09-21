@@ -27,9 +27,14 @@ export function renderReport(report: Report, options: RenderOptions = {}): Rende
   return { json: `${JSON.stringify(redacted, null, 2)}\n`, html: renderHtml(redacted, report, options) };
 }
 
+/** More passes than any real input needs; hitting it means the secrets and the marker keep re-creating each other. */
+const MAX_REDACTION_PASSES = 50;
+
 /**
- * Replaces every secret in one pass, longest first, so text it inserts is never searched again. The marker is
- * chosen so that it cannot itself contain a secret; if none of the markers qualifies it refuses rather than leak.
+ * Replaces secrets longest first, in whole passes, and repeats until no secret is left: a replacement can
+ * join with its neighbours into another configured secret, and a single pass would leave that one behind. The
+ * marker is chosen so that it cannot itself contain a secret, so repeating never garbles it. If no marker
+ * qualifies, or the passes do not converge, it refuses rather than leak.
  */
 function redactor(redact: readonly string[]): (text: string) => string {
   const secrets = redact.filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
@@ -37,7 +42,15 @@ function redactor(redact: readonly string[]): (text: string) => string {
   const marker = MARKERS.find((m) => !secrets.some((secret) => m.includes(secret)));
   if (marker === undefined) throw new RangeError('every redaction marker would contain a configured secret');
   const pattern = new RegExp(secrets.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
-  return (text) => text.replace(pattern, () => marker);
+  return (text) => {
+    let current = text;
+    for (let pass = 0; pass < MAX_REDACTION_PASSES; pass++) {
+      const next = current.replace(pattern, () => marker);
+      if (next === current) return current;
+      current = next;
+    }
+    throw new RangeError('redaction did not converge; the secrets and the marker keep re-creating each other');
+  };
 }
 
 /** A deep copy with `fn` applied to every string value. Keys and non-strings are left alone. */

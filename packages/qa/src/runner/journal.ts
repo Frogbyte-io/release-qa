@@ -78,15 +78,26 @@ export async function appendEvent(runDir: string, event: RunEvent, ops: { open: 
   const needsNewline = existing !== undefined && existing.length > 0 && !existing.endsWith('\n');
   const handle = await ops.open(path, 'a');
   try {
-    // writeFile keeps writing until every byte is out. A single write() may accept fewer bytes than it was given,
-    // which would leave a truncated record behind an "appended" result.
-    await handle.writeFile(`${needsNewline ? '\n' : ''}${JSON.stringify(valid)}\n`, 'utf8');
+    await writeFully(handle, Buffer.from(`${needsNewline ? '\n' : ''}${JSON.stringify(valid)}\n`, 'utf8'));
     await handle.sync();
   } finally {
     await handle.close();
   }
   if (existing === undefined) await syncDirectory(runDir);
   return { ok: true, status: 'appended' };
+}
+
+/**
+ * A single write() may accept fewer bytes than it was given, which would leave a truncated record behind an
+ * "appended" result. Keep writing until every byte is out, and fail loudly if the filesystem stops making progress.
+ */
+async function writeFully(handle: Awaited<ReturnType<typeof open>>, bytes: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset);
+    if (bytesWritten === 0) throw new Error(`append made no progress after ${offset} of ${bytes.length} bytes`);
+    offset += bytesWritten;
+  }
 }
 
 /**

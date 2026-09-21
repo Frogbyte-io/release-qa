@@ -157,6 +157,14 @@ describe('redaction', () => {
     expect(actor).toMatch(/^a-\[[A-Za-z#*]+\]-b$|^a-[#*█…]+-b$/);
   });
 
+  test('a replacement that forms another configured secret across its boundary is redacted too', () => {
+    const { json } = renderReport(report({ actor: 'Xabcdefghijklmnopqrstuvwxyz' }), { redact: ['abcdefghijklmnopqrstuvwxyz', 'X[redacted]'] });
+    const actor: string = JSON.parse(json).actor;
+    expect(actor).not.toContain('X[');
+    expect(actor).not.toContain('abcdefghijklmnopqrstuvwxyz');
+    expect(actor).toBe('[redacted]');
+  });
+
   test('matches a secret literally, whatever regular-expression characters it contains', () => {
     const { json } = renderReport(report({ actor: 'axb a.b*(c)[d] a.b*(c)[d]' }), { redact: ['a.b*(c)[d]'] });
     expect(JSON.parse(json).actor).toBe('axb [redacted] [redacted]');

@@ -48,17 +48,20 @@ describe('appending and reading', () => {
     expect(state.attempts.map((a) => [a.id, a.outcome])).toEqual([['attempt-of-ev-3', 'failed']]);
   });
 
-  test('an append the filesystem only partly accepts is still written completely before it reports success', async () => {
-    // A real write may accept fewer bytes than asked. Only the first half of each write() call is taken here.
-    const partialWrites = (async (...args: Parameters<typeof open>) => {
+  /**
+   * An opener whose handles accept at most `limit(remaining)` bytes per write() call, and count those calls.
+   * appendEvent must therefore keep writing until every byte is out, and must notice when it cannot progress.
+   */
+  const throttledOpen = (limit: (remaining: number) => number) => {
+    const calls = { writes: 0 };
+    const opener = (async (...args: Parameters<typeof open>) => {
       const handle = await open(...args);
       return new Proxy(handle, {
         get(target, property) {
           if (property === 'write') {
-            return async (data: string) => {
-              const bytes = Buffer.from(data);
-              const { bytesWritten } = await target.write(bytes.subarray(0, Math.ceil(bytes.length / 2)));
-              return { bytesWritten, buffer: data };
+            return async (buffer: Buffer, offset: number, length: number) => {
+              calls.writes++;
+              return target.write(buffer, offset, limit(length));
             };
           }
           const value = Reflect.get(target, property);
@@ -66,12 +69,24 @@ describe('appending and reading', () => {
         },
       });
     }) as unknown as typeof open;
+    return { opener, calls };
+  };
 
-    expect(await appendEvent(runDir, checkpoint('ev-1', 'installed'), { open: partialWrites })).toEqual({ ok: true, status: 'appended' });
+  test('an append the filesystem only partly accepts is still written completely before it reports success', async () => {
+    const { opener, calls } = throttledOpen((remaining) => Math.max(1, Math.ceil(remaining / 2)));
+    expect(await appendEvent(runDir, checkpoint('ev-1', 'installed'), { open: opener })).toEqual({ ok: true, status: 'appended' });
+    expect(calls.writes).toBeGreaterThan(1); // the throttled handle really was used, and more than one call was needed
     const state = await readRun(runDir);
     expect(ids(state.events)).toEqual(['ev-1']);
     expect(state.truncated).toBeNull();
     expect(state.corrupt).toEqual([]);
+  });
+
+  test('a filesystem that accepts no bytes makes the append fail instead of hanging or reporting success', async () => {
+    const { opener } = throttledOpen(() => 0);
+    await expect(appendEvent(runDir, checkpoint('ev-1', 'installed'), { open: opener })).rejects.toThrow(/no progress/);
+    const state = await readRun(runDir);
+    expect(ids(state.events)).toEqual([]);
   });
 
   test('rejects an invalid event without writing anything', async () => {
