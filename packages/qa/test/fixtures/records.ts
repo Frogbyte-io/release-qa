@@ -4,7 +4,8 @@ import type { Artifact, Candidate } from '../../src/model/candidate.ts';
 import type { Exception } from '../../src/model/exception.ts';
 import type { Project } from '../../src/model/project.ts';
 import type { Requirement } from '../../src/model/requirement.ts';
-import type { Report } from '../../src/model/result.ts';
+import type { EligibleReport, AuthorizedException } from '../../src/model/evaluate.ts';
+import type { Report, UploadProvenance } from '../../src/model/result.ts';
 
 export const SHA1 = {
   source: '1'.repeat(40),
@@ -107,4 +108,19 @@ export function exception(overrides: Partial<Exception> = {}): Exception {
     createdAt: '2026-09-20T12:00:00Z',
     ...overrides,
   };
+}
+
+export function provenance(overrides: Partial<UploadProvenance> = {}): UploadProvenance {
+  return { uploader: 'tester', uploadedAt: '2026-09-20T12:00:00Z', assetId: 900, ...overrides };
+}
+
+/** A report as the GitHub layer hands it over: verified, with the uploader recorded. */
+export function eligible(reportOverrides: Partial<Report> = {}, provenanceOverrides: Partial<UploadProvenance> = {}): EligibleReport {
+  const r = report(reportOverrides);
+  return { report: r, provenance: provenance({ uploader: r.actor, ...provenanceOverrides }) };
+}
+
+export function authorized(exceptionOverrides: Partial<Exception> = {}, authorizedToApprove = true): AuthorizedException {
+  const e = exception(exceptionOverrides);
+  return { exception: e, authority: { login: 'maintainer', authorized: authorizedToApprove } };
 }
