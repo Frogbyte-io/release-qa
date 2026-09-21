@@ -31,3 +31,17 @@ export {
 export { eventDigest, parseRunEvent, type AttemptRecorded, type Checkpoint, type RunEvent, type RunStarted, type UploadAcknowledged } from './runner/events.ts';
 export { appendEvent, JournalError, readRun, writeSummary, type AppendResult, type JournalErrorCode, type RunState } from './runner/journal.ts';
 export { renderReport, type RenderedReport, type RenderOptions } from './runner/report.ts';
+export { defaultProbes, inspectEnvironment, type EnvironmentProbes, type InspectedEnvironment } from './runner/environment.ts';
+export {
+  AssertionFailure,
+  executeScenario,
+  type ExecutionContext,
+  type Lifecycle,
+  type Phase,
+  type ResultReason,
+  type RunContext,
+  type Scenario,
+  type ScenarioEvent,
+  type ScenarioResult,
+} from './runner/execute.ts';
+export { checkTestRoot, designateTestRoot, resetDirtyEnvironment, type CleanupFailure, type OwnedResource, type TestRootCheck } from './runner/resources.ts';
