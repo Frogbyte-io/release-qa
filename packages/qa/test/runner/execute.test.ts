@@ -68,6 +68,21 @@ describe('blocked: prerequisites that are not met', () => {
     expect(result.missing).toEqual(['audio', 'display']);
   });
 
+  test('a scenario that needs a real desktop is blocked on a virtual display, which does satisfy a plain display need', async () => {
+    const virtual = { display: async () => true, audio: async () => true, describeDisplay: async () => ({ kind: 'virtual' as const, detail: 'Xvfb on :99' }) };
+    const needsReal = await arrange({ probes: virtual });
+    const blocked = await executeScenario(needsReal.context, scenarioOf({ requirement: requirement({ key: `${hostOs()}/persistence`, capabilities: ['real-display'] }) }));
+    expect(blocked).toMatchObject({ outcome: 'blocked', reason: 'capability-missing', missing: ['real-display'] });
+    expect(needsReal.calls).toEqual([]);
+
+    const real = { ...virtual, describeDisplay: async () => ({ kind: 'real' as const, detail: 'x11 session' }) };
+    const onRealDesktop = await arrange({ probes: real });
+    expect((await executeScenario(onRealDesktop.context, scenarioOf({ requirement: requirement({ key: `${hostOs()}/persistence`, capabilities: ['real-display'] }) }))).outcome).toBe('passed');
+
+    const needsAny = await arrange({ probes: virtual });
+    expect((await executeScenario(needsAny.context, scenarioOf({ requirement: requirement({ key: `${hostOs()}/persistence`, capabilities: ['display'] }) }))).outcome).toBe('passed');
+  });
+
   test('does not need a capability the scenario never asked for', async () => {
     const { context } = await arrange({ probes: { display: async () => false, audio: async () => false } });
     expect((await executeScenario(context, scenarioOf())).outcome).toBe('passed');

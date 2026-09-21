@@ -9,7 +9,7 @@ These defaults come from the plan's proposals and the Stage 0 results ([native a
 | Area | Decision | Basis |
 | --- | --- | --- |
 | Repository | `Frogbyte-io/release-qa`, public | Created and made public before Stage 0 |
-| Runtime | Node.js 22. `.node-version` pins **22.23.2** exactly; `engines.node` is the floor `>=22.12.0` | The harness ran on Node 22.23.2 (Linux) and 24.13.0 (Windows). CI installs the version in `.node-version`; bump it deliberately |
+| Runtime | Node.js 22. `.node-version` pins **22.23.2** exactly; `engines.node` is the floor `>=22.18.0` | The harness ran on Node 22.23.2 (Linux) and 24.13.0 (Windows). 22.18.0 is the first 22.x with type stripping on by default and without an experimental warning (per Node's changelog). CI installs the version in `.node-version`; bump it deliberately |
 | Package manager | npm workspaces, one root `package-lock.json` | Plan default; nothing in Stage 0 contradicted it |
 | Language and test | TypeScript 7.0.2, Vitest 5.0.1, `@types/node` 22.20.4, all pinned exactly | Verified together in this change: `npm run typecheck` and `npm test` pass, and a deliberate type error fails the typecheck |
 | Native driver (sample apps) | WebdriverIO 9.31.9 `remote()` API + external `tauri-driver` 2.0.6; Edge WebDriver on Windows, `WebKitWebDriver` on Linux | Proven on the sample: 60/60 attempts across three runs per platform |
@@ -31,7 +31,7 @@ docs/decisions/               decision records
 
 `examples/tauri-smoke` stays outside the workspace on purpose. The packages tested in Stage 0 were built with its own `package-lock.json`, and hoisting its build tooling into a root lockfile would change that resolution without a re-test. Revisit when the sample is consumed by the runner's own tests.
 
-`packages/qa/tsconfig.json` sets `noEmit`. The CLI needs a build step (emit or bundle), which Task 2.2 decides when there is a CLI to build. `bin`, `main` and `exports` are intentionally absent from `package.json` until then: the source is TypeScript that Node cannot load directly, so nothing should be able to import the package before it has a build output.
+**No build step (decided in Task 2.2).** Node 22.18 or newer runs the TypeScript directly by stripping types, so the CLI is `node packages/qa/src/cli/bin.ts`. That only works while the source uses *erasable* syntax (no enums, namespaces or constructor parameter properties), which `erasableSyntaxOnly` in `tsconfig.json` enforces at typecheck time, and `test/no-build.test.ts` loads the package under plain Node on every CI runner. `packages/qa/tsconfig.json` keeps `noEmit`. This suits running from a checkout; **a published or installed distribution would still need a build or bundle**, and `bin`, `main` and `exports` stay out of `package.json` until that is decided.
 
 ## Stage 0 commands and where they go
 

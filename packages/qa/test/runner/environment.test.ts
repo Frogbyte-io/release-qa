@@ -53,6 +53,45 @@ describe('inspectEnvironment', () => {
     expect(profileMismatch).toContain(hostArch());
   });
 
+  describe('the kind of display', () => {
+    const withDisplay = (kind: 'none' | 'virtual' | 'real' | 'unknown', detail = 'test') => ({
+      display: async () => kind !== 'none',
+      audio: async () => false,
+      describeDisplay: async () => ({ kind, detail }),
+    });
+
+    test.each([
+      ['a real desktop', 'real', ['display', 'real-display']],
+      ['a virtual display', 'virtual', ['display']],
+      ['a display of unknown kind', 'unknown', ['display']],
+      ['no display', 'none', []],
+    ] as const)('%s gives the capabilities %j', async (_label, kind, capabilities) => {
+      const inspected = await inspectEnvironment(hostProfile(), withDisplay(kind, 'why'));
+      expect(inspected.environment.capabilities).toEqual(capabilities);
+      expect(inspected.display).toEqual({ kind, detail: 'why' });
+    });
+
+    test('a probe that only says yes or no is a display of unknown kind, never a real one', async () => {
+      const inspected = await inspectEnvironment(hostProfile(), probes(true, false));
+      expect(inspected.display.kind).toBe('unknown');
+      expect(inspected.environment.capabilities).toEqual(['display']);
+    });
+
+    test('a display description that throws before it returns a promise is also no display', async () => {
+      const describeDisplay = (): Promise<never> => { throw new Error('thrown synchronously'); };
+      const inspected = await inspectEnvironment(hostProfile(), { display: async () => true, audio: async () => false, describeDisplay });
+      expect(inspected.display.kind).toBe('none');
+      expect(inspected.environment.capabilities).toEqual([]);
+    });
+
+    test('a display probe that throws is no display', async () => {
+      const broken = { display: async () => true, audio: async () => false, describeDisplay: async (): Promise<never> => { throw new Error('boom'); } };
+      const inspected = await inspectEnvironment(hostProfile(), broken);
+      expect(inspected.display.kind).toBe('none');
+      expect(inspected.environment.capabilities).toEqual([]);
+    });
+  });
+
   test('the default probes answer with a boolean and never throw, whatever this machine has', async () => {
     expect(typeof (await defaultProbes.display())).toBe('boolean');
     expect(typeof (await defaultProbes.audio())).toBe('boolean');
