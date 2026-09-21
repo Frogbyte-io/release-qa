@@ -65,12 +65,21 @@ describe.each(parsers)('%s: behaviour common to every record', (_name, parse, bu
     expectIssue(parse({ ...(build() as object), surprise: 1 }), 'surprise', 'unknown-field');
   });
 
-  test('parses a report written on Windows (CRLF line endings) the same as one written on Linux', () => {
-    const text = JSON.stringify(build(), null, 2);
-    const windows = parse(JSON.parse(text.replace(/\n/g, '\r\n')));
-    const linux = parse(JSON.parse(text));
-    expect(windows).toEqual(linux);
-    expectValid(windows);
+  // The contract is "never throws", so values that JSON.stringify or property access cannot handle must not escape.
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  const hostile = new Proxy({}, { has: () => { throw new Error('boom'); }, get: () => { throw new Error('boom'); }, ownKeys: () => { throw new Error('boom'); } });
+  test.each([
+    ['a bigint', { schemaVersion: 1n }],
+    ['a circular object', { schemaVersion: circular }],
+  ])('names the unsupported version precisely when the schema version is %s', (_label, input) => {
+    expect(() => parse(input)).not.toThrow();
+    expectIssue(parse(input), 'schemaVersion', 'unknown-schema-version');
+  });
+
+  test('does not throw for an object that throws when it is read', () => {
+    expect(() => parse(hostile)).not.toThrow();
+    expectIssue(parse(hostile), '', 'invalid-type');
   });
 });
 
@@ -123,6 +132,10 @@ describe('candidate', () => {
     expectIssue(parseCandidate(candidate({ artifacts: [artifact({ name })] })), 'artifacts[0].name', 'unsafe-path');
   });
 
+  test.each(['<', '>', '"', '|', '?', '*'])('rejects an artifact file name containing the Windows-reserved character %j', (ch) => {
+    expectIssue(parseCandidate(candidate({ artifacts: [artifact({ name: `setup${ch}.exe` })] })), 'artifacts[0].name', 'unsafe-path');
+  });
+
   test('accepts an installer name with spaces, as produced by real packagers', () => {
     expectValid(parseCandidate(candidate({ artifacts: [artifact({ name: 'Release QA Smoke_0.1.0_x64-setup.exe' })] })));
   });
@@ -173,6 +186,10 @@ describe('requirement', () => {
 
   test('rejects an unknown execution mode', () => {
     expectIssue(parseRequirement(broken(requirement(), 'mode', 'semi-automatic')), 'mode', 'invalid-value');
+  });
+
+  test('validates every slot of a sparse capabilities array', () => {
+    expectIssue(parseRequirement(requirement({ capabilities: new Array<string>(2) })), 'capabilities[0]', 'invalid-type');
   });
 
   test('rejects an empty title', () => {
@@ -263,6 +280,15 @@ describe('report', () => {
     expectValid(parseReport(report({ attempts: [{ ...attempt, retryOf: 'attempt-from-elsewhere' }] })));
   });
 
+  test('validates every slot of a sparse attempts array', () => {
+    expectIssue(parseReport(report({ attempts: new Array(1) as never })), 'attempts[0]', 'invalid-type');
+  });
+
+  test('rejects a line break in a single-line text field, on any platform', () => {
+    expectIssue(parseReport(report({ actor: 'x\ry' })), 'actor', 'invalid-characters');
+    expectIssue(parseReport(report({ machineId: 'x\ny' })), 'machineId', 'invalid-characters');
+  });
+
   test('rejects a report with no attempts', () => {
     expectIssue(parseReport(report({ attempts: [] })), 'attempts', 'empty');
   });
@@ -276,7 +302,22 @@ describe('report', () => {
     expectIssue(parseReport(broken(report(), 'attempts.0.outcome', 'kinda-passed')), 'attempts[0].outcome', 'invalid-value');
   });
 
-  test.each([['../secret.png'], ['/etc/passwd'], ['evidence\\a.png'], ['a/../../b.png']])('rejects the unsafe evidence path %j', (path) => {
+  test.each([
+    ['../secret.png'],
+    ['/etc/passwd'],
+    ['evidence\\a.png'],
+    ['a/../../b.png'],
+    ['evidence/trace:secret'], // NTFS alternate data stream
+    ['evidence/CON/x.png'], // Windows device name as a directory
+    ['evidence/nul.txt'],
+    ['evidence/x./y.png'], // trailing dot in a directory
+    ['evidence/x /y.png'], // trailing space in a directory
+    ['evidence/a?b.png'],
+    ['evidence/a*b.png'],
+    ['evidence/a<b>.png'],
+    ['evidence/a|b.png'],
+    ['evidence/a"b.png'],
+  ])('rejects the unsafe evidence path %j', (path) => {
     const attempt = { ...report().attempts[0]!, evidence: [path] };
     expectIssue(parseReport(report({ attempts: [attempt] })), 'attempts[0].evidence[0]', 'unsafe-path');
   });
@@ -341,6 +382,10 @@ describe('exception', () => {
       expectIssue(parseException(exception({ createdAt })), 'createdAt', 'malformed-timestamp');
     },
   );
+
+  test('accepts a multi-line reason with Windows or Unix line endings', () => {
+    expectValid(parseException(exception({ reason: 'first line\r\nsecond line\nthird line' })));
+  });
 
   test('accepts a timestamp with fractional seconds', () => {
     expectValid(parseException(exception({ createdAt: '2026-09-20T12:00:00.123Z' })));
