@@ -185,7 +185,10 @@ export async function spawnOwned(root: string, label: string, command: string, a
   const hasExited = (): boolean => exited || child.exitCode !== null || child.signalCode !== null;
   if (hasExited()) return child;
   if (identity === undefined) {
-    // Alive but not identifiable: it cannot be owned safely, so it is not left running.
+    // A child that has just exited is briefly unreadable (on Linux a zombie) before its exit is reported: give it a
+    // moment. One that is still there afterwards cannot be owned safely, so it is not left running.
+    await Promise.race([new Promise<void>((resolveExit) => child.once('exit', () => resolveExit())), sleep(500)]);
+    if (hasExited()) return child;
     child.kill('SIGKILL');
     throw new Error(`could not identify the process started for "${label}"; it was stopped`);
   }
@@ -201,14 +204,6 @@ export async function spawnOwned(root: string, label: string, command: string, a
 
 async function cleanProcess(resource: Extract<OwnedResource, { kind: 'process' }>, options: Required<CleanupOptions>): Promise<CleanupFailure | undefined> {
   const { pid } = resource;
-  if (!isAlive(pid)) return undefined;
-  const now = await options.identityOf(pid);
-  if (now === undefined) {
-    // It may have exited while its identity was being read; otherwise it is alive and unidentifiable: hands off.
-    return isAlive(pid) ? { resource, reason: 'identity-unknown' } : undefined;
-  }
-  if (now !== resource.identity) return undefined; // the pid was reused: the process this run owned is already gone
-
   const waitUntilGone = async (ms: number): Promise<boolean> => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
@@ -217,6 +212,18 @@ async function cleanProcess(resource: Extract<OwnedResource, { kind: 'process' }
     }
     return !isAlive(pid);
   };
+  /**
+   * A process that answers "alive" but has no readable identity has either just exited (on Linux it is a zombie until
+   * its parent reaps it) or cannot be identified at all. Only the second is left alone and reported, so the first is
+   * given a moment to finish leaving.
+   */
+  const unidentifiable = async (): Promise<CleanupFailure | undefined> => ((await waitUntilGone(500)) ? undefined : { resource, reason: 'identity-unknown' });
+
+  if (!isAlive(pid)) return undefined;
+  const now = await options.identityOf(pid);
+  if (now === undefined) return unidentifiable();
+  if (now !== resource.identity) return undefined; // the pid was reused: the process this run owned is already gone
+
   /** A signal that could not be delivered is only harmless if the process turned out to be gone anyway. */
   const send = async (signal?: NodeJS.Signals): Promise<boolean> => {
     try {
@@ -235,7 +242,7 @@ async function cleanProcess(resource: Extract<OwnedResource, { kind: 'process' }
   // Forcing is the dangerous step: during the grace period the process may have exited and its pid been reused,
   // so it is identified again immediately before, and only the very same process is ever forced.
   const again = await options.identityOf(pid);
-  if (again === undefined) return isAlive(pid) ? { resource, reason: 'identity-unknown' } : undefined;
+  if (again === undefined) return unidentifiable();
   if (again !== resource.identity) return undefined;
   if (!(await send('SIGKILL'))) return stillRunning;
   return (await waitUntilGone(2000)) ? undefined : stillRunning;

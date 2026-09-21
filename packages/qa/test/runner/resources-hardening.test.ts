@@ -66,6 +66,34 @@ describe('forcing a process that ignores the polite request', () => {
     expect(isAlive(child.pid as number)).toBe(true);
   });
 
+  // On Linux a process that has just exited is briefly a zombie: it still answers "alive" but has no readable
+  // identity. That is a process on its way out, not one that cannot be identified.
+  test('does not report a process as unidentifiable when it is gone a moment later', async () => {
+    const root = await makeTestRoot();
+    const child = startUnrelatedProcess();
+    await recordOwned(root, { kind: 'process', pid: child.pid as number, identity: 'original', label: 'leaving' });
+    setTimeout(() => child.kill('SIGKILL'), 100);
+
+    const result = await cleanupOwnedResources(root, { graceMs: 100, identityOf: async () => undefined });
+
+    expect(result.failures).toEqual([]);
+    expect(await readLedger(root)).toEqual([]);
+  });
+
+  test('does not report a process as unidentifiable when it is gone a moment after the grace period', async () => {
+    const root = await makeTestRoot();
+    const child = startUnrelatedProcess();
+    await recordOwned(root, { kind: 'process', pid: child.pid as number, identity: 'original', label: 'leaving' });
+    const { kill } = fakeKill();
+    let lookups = 0;
+    setTimeout(() => child.kill('SIGKILL'), 250);
+
+    const result = await cleanupOwnedResources(root, { graceMs: 100, escalate: true, kill, identityOf: async () => (++lookups === 1 ? 'original' : undefined) });
+
+    expect(result.failures).toEqual([]);
+    expect(await readLedger(root)).toEqual([]);
+  });
+
   test('does not escalate at all where the operating system has no polite request', async () => {
     const root = await makeTestRoot();
     const child = startUnrelatedProcess();

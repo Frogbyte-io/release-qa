@@ -134,8 +134,9 @@ describe('spawning owned processes', () => {
 
   test('the identity of a live process is stable and differs between processes', async () => {
     const a = startUnrelatedProcess();
-    // A start time has the granularity of the operating system's clock (10 ms on Linux); two processes started in the
-    // same tick share one, which is harmless because an identity is only ever compared under the same pid.
+    // A start time has the granularity of the operating system's clock (10 ms on Linux), so two processes started in
+    // the same tick would share one and this test would fail for the wrong reason. Cleanup never relies on identities
+    // differing across pids: it only compares one pid's identity with what was recorded for that same pid.
     await new Promise((resolve) => setTimeout(resolve, 100));
     const b = startUnrelatedProcess();
     const first = await processIdentity(a.pid as number);
