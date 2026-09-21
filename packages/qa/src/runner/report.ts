@@ -13,7 +13,8 @@ export interface RenderedReport {
   html: string;
 }
 
-const REDACTED = '[redacted]';
+/** Tried in order; the first that contains none of the configured secrets is used. */
+const MARKERS = ['[redacted]', '[REDACTED]', '[removed]', '###', '█', '…'];
 const KNOWN_OUTCOMES = new Set(['passed', 'failed', 'blocked', 'cancelled', 'interrupted']);
 
 /**
@@ -22,9 +23,21 @@ const KNOWN_OUTCOMES = new Set(['passed', 'failed', 'blocked', 'cancelled', 'int
  * The output is a pure function of the input: no dates, no randomness.
  */
 export function renderReport(report: Report, options: RenderOptions = {}): RenderedReport {
-  const secrets = (options.redact ?? []).filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
-  const redacted = mapStrings(report, (s) => secrets.reduce((text, secret) => text.split(secret).join(REDACTED), s));
-  return { json: `${JSON.stringify(redacted, null, 2)}\n`, html: renderHtml(redacted, options) };
+  const redacted = mapStrings(report, redactor(options.redact ?? []));
+  return { json: `${JSON.stringify(redacted, null, 2)}\n`, html: renderHtml(redacted, report, options) };
+}
+
+/**
+ * Replaces every secret in one pass, longest first, so text it inserts is never searched again. The marker is
+ * chosen so that it cannot itself contain a secret; if none of the markers qualifies it refuses rather than leak.
+ */
+function redactor(redact: readonly string[]): (text: string) => string {
+  const secrets = redact.filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
+  if (secrets.length === 0) return (text) => text;
+  const marker = MARKERS.find((m) => !secrets.some((secret) => m.includes(secret)));
+  if (marker === undefined) throw new RangeError('every redaction marker would contain a configured secret');
+  const pattern = new RegExp(secrets.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  return (text) => text.replace(pattern, () => marker);
 }
 
 /** A deep copy with `fn` applied to every string value. Keys and non-strings are left alone. */
@@ -40,7 +53,8 @@ function mapStrings<T>(value: T, fn: (s: string) => string): T {
 const escape = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-function renderHtml(report: Report, options: RenderOptions): string {
+/** `report` is the redacted report that is shown; `original` is the same report before redaction. */
+function renderHtml(report: Report, original: Report, options: RenderOptions): string {
   const environment = report.environment;
   const facts: Array<[string, string]> = [
     ['Report', report.id],
@@ -81,7 +95,7 @@ ${facts.map(([name, value]) => `<dt>${escape(name)}</dt><dd>${escape(value)}</dd
 <table>
 <thead><tr><th>Requirement</th><th>Outcome</th><th>Attempt</th><th>Retry of</th><th>Evidence</th></tr></thead>
 <tbody>
-${report.attempts.map((attempt) => renderAttempt(attempt, limit)).join('\n')}
+${report.attempts.map((attempt, i) => renderAttempt(attempt, original.attempts[i], limit)).join('\n')}
 </tbody>
 </table>
 </body>
@@ -89,20 +103,28 @@ ${report.attempts.map((attempt) => renderAttempt(attempt, limit)).join('\n')}
 `;
 }
 
-function renderAttempt(attempt: Attempt, limit: number): string {
+function renderAttempt(attempt: Attempt, original: Attempt | undefined, limit: number): string {
   const outcomeClass = KNOWN_OUTCOMES.has(attempt.outcome) ? attempt.outcome : 'unknown';
-  const shown = attempt.evidence.slice(0, limit).map(renderEvidence);
+  // A path that redaction rewrote no longer names a real file, so it must not become a link.
+  const shown = attempt.evidence.slice(0, limit).map((path, i) => renderEvidence(path, original?.evidence[i] !== path));
   const hidden = attempt.evidence.length - shown.length;
   if (hidden > 0) shown.push(`<span>${hidden} more not shown</span>`);
   return `<tr><td>${escape(attempt.requirement)}</td><td class="outcome-${outcomeClass}">${escape(attempt.outcome)}</td><td>${escape(attempt.id)}</td><td>${escape(attempt.retryOf ?? '')}</td><td>${shown.join('<br>')}</td></tr>`;
 }
 
 /** A relative link when the path is safe; otherwise the text alone, so a hostile path can never become a URL. */
-function renderEvidence(path: string): string {
-  const safe = new Collector().relativePath(path, '') !== undefined;
-  if (!safe) return `<span class="unsafe">${escape(path)} (not linked)</span>`;
-  const href = path.split('/').map(encodeURIComponent).join('/');
-  return `<a href="${escape(href)}">${escape(path)}</a>`;
+function renderEvidence(path: string, rewrittenByRedaction: boolean): string {
+  const href = rewrittenByRedaction || new Collector().relativePath(path, '') === undefined ? undefined : encodeHref(path);
+  return href === undefined ? `<span class="unsafe">${escape(path)} (not linked)</span>` : `<a href="${escape(href)}">${escape(path)}</a>`;
+}
+
+/** Percent-encodes each segment. Text with a lone surrogate cannot be encoded, and then it is not linked. */
+function encodeHref(path: string): string | undefined {
+  try {
+    return path.split('/').map(encodeURIComponent).join('/');
+  } catch {
+    return undefined;
+  }
 }
 
 function evidenceLimit(value: number | undefined): number {

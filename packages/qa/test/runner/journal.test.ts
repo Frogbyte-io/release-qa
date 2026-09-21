@@ -48,6 +48,32 @@ describe('appending and reading', () => {
     expect(state.attempts.map((a) => [a.id, a.outcome])).toEqual([['attempt-of-ev-3', 'failed']]);
   });
 
+  test('an append the filesystem only partly accepts is still written completely before it reports success', async () => {
+    // A real write may accept fewer bytes than asked. Only the first half of each write() call is taken here.
+    const partialWrites = (async (...args: Parameters<typeof open>) => {
+      const handle = await open(...args);
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === 'write') {
+            return async (data: string) => {
+              const bytes = Buffer.from(data);
+              const { bytesWritten } = await target.write(bytes.subarray(0, Math.ceil(bytes.length / 2)));
+              return { bytesWritten, buffer: data };
+            };
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    }) as unknown as typeof open;
+
+    expect(await appendEvent(runDir, checkpoint('ev-1', 'installed'), { open: partialWrites })).toEqual({ ok: true, status: 'appended' });
+    const state = await readRun(runDir);
+    expect(ids(state.events)).toEqual(['ev-1']);
+    expect(state.truncated).toBeNull();
+    expect(state.corrupt).toEqual([]);
+  });
+
   test('rejects an invalid event without writing anything', async () => {
     const result = await appendEvent(runDir, { ...runStarted(), id: '../x' });
     expect(rejection(result)).toBe('invalid-event');
@@ -165,6 +191,22 @@ describe('out-of-order delivery', () => {
     expect(ids(state.events)).toEqual(['ev-1', 'ev-2', 'ev-3']);
   });
 
+  test('a chain whose root is missing is ordered by its links even when it arrived in reverse', async () => {
+    await appendAll(checkpoint('ev-3', 'mapping-saved', 'ev-2'), checkpoint('ev-2', 'installed', 'ev-1'));
+    const state = await readRun(runDir);
+    expect(ids(state.events)).toEqual(['ev-2', 'ev-3']);
+    expect(state.missingPredecessors).toEqual([{ eventId: 'ev-2', prev: 'ev-1' }]);
+    expect(state.cyclic).toEqual([]);
+  });
+
+  test('an event that follows a cycle is reported with it instead of being silently unplaceable', async () => {
+    const lines = [checkpoint('ev-a', 'x', 'ev-b'), checkpoint('ev-b', 'y', 'ev-a'), checkpoint('ev-c', 'z', 'ev-a'), runStarted('ev-1')].map((e) => JSON.stringify(e));
+    await writeFile(logPath(), `${lines.join('\n')}\n`);
+    const state = await readRun(runDir);
+    expect(state.cyclic.sort()).toEqual(['ev-a', 'ev-b', 'ev-c']);
+    expect(ids(state.events)).toEqual(['ev-1', 'ev-a', 'ev-b', 'ev-c']);
+  });
+
   test('a predecessor cycle terminates and is reported', async () => {
     const a = JSON.stringify(checkpoint('ev-a', 'x', 'ev-b'));
     const b = JSON.stringify(checkpoint('ev-b', 'y', 'ev-a'));
@@ -198,6 +240,15 @@ describe('pending and synced uploads', () => {
     const state = await readRun(runDir);
     expect(state.pending).toEqual(['ev-1']);
     expect(state.synced).toEqual([]);
+    expect(state.ackMismatches).toEqual(['ev-1']);
+  });
+
+  test('a wrong-digest acknowledgement stays visible even when a later acknowledgement verifies the event', async () => {
+    const attempt = attemptRecorded('ev-1');
+    await appendAll(attempt, acknowledged('ack-wrong', attempt, 'f'.repeat(64)), acknowledged('ack-right', attempt));
+    const state = await readRun(runDir);
+    expect(state.synced).toEqual(['ev-1']);
+    expect(state.pending).toEqual([]);
     expect(state.ackMismatches).toEqual(['ev-1']);
   });
 

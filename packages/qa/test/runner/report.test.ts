@@ -76,6 +76,36 @@ describe('HTML export', () => {
     },
   );
 
+  test('an evidence path with a lone surrogate is shown as text and does not stop the export', () => {
+    const lone = `e/${String.fromCharCode(0xd800)}.png`;
+    let rendered: ReturnType<typeof renderReport> | undefined;
+    expect(() => { rendered = renderReport(report({ attempts: [attempt('a1', { evidence: [lone, 'e/fine.png'] })] })); }).not.toThrow();
+    expect(rendered?.html).toContain('href="e/fine.png"');
+    expect(rendered?.html).toContain('not linked');
+    expect(() => JSON.parse(rendered?.json ?? '')).not.toThrow();
+  });
+
+  test.each([
+    ['zero', 0, 0, '5 more not shown'],
+    ['negative', -3, 0, '5 more not shown'],
+    ['fractional', 1.9, 1, '4 more not shown'],
+    ['NaN', Number.NaN, 5, undefined],
+    ['Infinity', Number.POSITIVE_INFINITY, 5, undefined],
+  ])('treats an evidence limit of %s sensibly', (_label, maxEvidencePerAttempt, links, note) => {
+    const evidence = ['e/1.png', 'e/2.png', 'e/3.png', 'e/4.png', 'e/5.png'];
+    const { html } = renderReport(report({ attempts: [attempt('a1', { evidence })] }), { maxEvidencePerAttempt });
+    expect(html.match(/<a href=/g) ?? []).toHaveLength(links);
+    if (note === undefined) expect(html).not.toContain('more not shown');
+    else expect(html).toContain(note);
+  });
+
+  test('shows which attempt a retry follows, escaped', () => {
+    const { html } = renderReport(report({ attempts: [attempt('a2', { retryOf: 'a1' }), attempt('a3', { retryOf: '<b>x</b>' })] }));
+    expect(html).toContain('<td>a1</td>');
+    expect(html).toContain('&lt;b&gt;x&lt;/b&gt;');
+    expect(html).not.toContain('<b>');
+  });
+
   test('limits the evidence links shown per attempt and says how many were left out', () => {
     const evidence = ['e/1.png', 'e/2.png', 'e/3.png', 'e/4.png', 'e/5.png'];
     const r = report({ attempts: [attempt('a1', { evidence })] });
@@ -117,6 +147,33 @@ describe('redaction', () => {
   test('redacts every secret and ignores empty entries instead of looping or blanking the report', () => {
     const { json } = renderReport(report({ actor: 'alpha-SECRET1-beta-SECRET2' }), { redact: ['', 'SECRET1', 'SECRET2'] });
     expect(JSON.parse(json).actor).toBe('alpha-[redacted]-beta-[redacted]');
+  });
+
+  test('a secret that occurs inside the redaction marker cannot reappear in the output or garble the marker', () => {
+    const { json } = renderReport(report({ actor: 'a-SECRET-b' }), { redact: ['SECRET', 'red'] });
+    const actor: string = JSON.parse(json).actor;
+    expect(actor).not.toContain('SECRET');
+    expect(actor).not.toContain('red');
+    expect(actor).toMatch(/^a-\[[A-Za-z#*]+\]-b$|^a-[#*█…]+-b$/);
+  });
+
+  test('matches a secret literally, whatever regular-expression characters it contains', () => {
+    const { json } = renderReport(report({ actor: 'axb a.b*(c)[d] a.b*(c)[d]' }), { redact: ['a.b*(c)[d]'] });
+    expect(JSON.parse(json).actor).toBe('axb [redacted] [redacted]');
+  });
+
+  test('refuses to render when no marker can be chosen that avoids every secret, instead of leaking', () => {
+    const everything = ['[redacted]', '[REDACTED]', '[removed]', '###', '█', '…'];
+    expect(() => renderReport(report(), { redact: everything })).toThrow(RangeError);
+  });
+
+  test('does not link an evidence path that redaction rewrote, because the rewritten file does not exist', () => {
+    const { html } = renderReport(report({ attempts: [attempt('a1', { evidence: ['logs/SECRETNAME.txt', 'logs/ok.txt'] })] }), { redact: ['SECRETNAME'] });
+    expect(html).not.toContain('SECRETNAME');
+    expect(html).toContain('href="logs/ok.txt"');
+    expect(html).not.toMatch(/href="logs\/\[/);
+    expect(html).toContain('[redacted]');
+    expect(html).toContain('not linked');
   });
 
   test('redacts the longest secret first so a shorter one cannot leave part of it behind', () => {

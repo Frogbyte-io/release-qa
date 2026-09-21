@@ -36,13 +36,13 @@ export interface RunState {
   conflicts: string[];
   /** Events whose predecessor has not arrived (out-of-order delivery). Kept, and placed after the ordered ones. */
   missingPredecessors: Array<{ eventId: string; prev: string }>;
-  /** Events caught in a predecessor cycle. */
+  /** Events caught in a predecessor cycle, or that follow one, so they can never be placed. */
   cyclic: string[];
   /** Events with no verified acknowledgement yet, in causal order. */
   pending: string[];
   /** Events whose acknowledgement matched their digest. */
   synced: string[];
-  /** Events the server acknowledged with a different digest than the local one. They stay pending. */
+  /** Events for which the server acknowledged a different digest than the local one, even if another acknowledgement later matched. */
   ackMismatches: string[];
   /** Acknowledgements for event ids this journal does not contain. */
   orphanAcks: string[];
@@ -57,7 +57,7 @@ export interface RunState {
  * The same id with the same content is a no-op (a replay). The same id with different content is refused and
  * the original is left untouched.
  */
-export async function appendEvent(runDir: string, event: RunEvent): Promise<AppendResult> {
+export async function appendEvent(runDir: string, event: RunEvent, ops: { open: typeof open } = { open }): Promise<AppendResult> {
   const parsed = parseRunEvent(event);
   if (!parsed.ok) return { ok: false, error: new JournalError('invalid-event', parsed.error.message) };
   const valid = parsed.value;
@@ -76,9 +76,11 @@ export async function appendEvent(runDir: string, event: RunEvent): Promise<Appe
   // A crash can leave a final record without its newline. Terminate it first so the new event starts on its
   // own line; the partial record then shows up as a corrupt line instead of swallowing the new event.
   const needsNewline = existing !== undefined && existing.length > 0 && !existing.endsWith('\n');
-  const handle = await open(path, 'a');
+  const handle = await ops.open(path, 'a');
   try {
-    await handle.write(`${needsNewline ? '\n' : ''}${JSON.stringify(valid)}\n`);
+    // writeFile keeps writing until every byte is out. A single write() may accept fewer bytes than it was given,
+    // which would leave a truncated record behind an "appended" result.
+    await handle.writeFile(`${needsNewline ? '\n' : ''}${JSON.stringify(valid)}\n`, 'utf8');
     await handle.sync();
   } finally {
     await handle.close();
@@ -158,42 +160,40 @@ function scan(text: string): Scan {
   return { events, truncated, corrupt, conflicts: [...conflicts].sort(compare) };
 }
 
-/** Orders events by their predecessor links. Events that cannot be placed keep file order at the end. */
+/**
+ * Orders events by their predecessor links. An event whose predecessor never arrived is treated as a root, so it
+ * and the events that follow it are still ordered by their links. What cannot be placed even then is in a
+ * predecessor cycle or follows one, and keeps file order at the end.
+ */
 function orderCausally(events: readonly RunEvent[]): { ordered: RunEvent[]; missingPredecessors: RunState['missingPredecessors']; cyclic: string[] } {
   const known = new Set(events.map((e) => e.id));
   const placed = new Set<string>();
   const ordered: RunEvent[] = [];
-  let remaining = [...events];
 
-  for (let progress = true; progress; ) {
-    progress = false;
-    const stillWaiting: RunEvent[] = [];
-    for (const event of remaining) {
-      if (event.prev === undefined || placed.has(event.prev)) {
-        ordered.push(event);
-        placed.add(event.id);
-        progress = true;
-      } else {
-        stillWaiting.push(event);
+  /** Places every event that is a root or follows a placed event, repeating until nothing more can be placed. */
+  const place = (pending: readonly RunEvent[], isRoot: (event: RunEvent) => boolean): RunEvent[] => {
+    let remaining = [...pending];
+    for (let progress = true; progress; ) {
+      progress = false;
+      const waiting: RunEvent[] = [];
+      for (const event of remaining) {
+        if (isRoot(event) || (event.prev !== undefined && placed.has(event.prev))) {
+          ordered.push(event);
+          placed.add(event.id);
+          progress = true;
+        } else {
+          waiting.push(event);
+        }
       }
+      remaining = waiting;
     }
-    remaining = stillWaiting;
-  }
+    return remaining;
+  };
 
-  const byId = new Map(remaining.map((e) => [e.id, e]));
-  const inCycle = (start: RunEvent): boolean => {
-    let current: RunEvent | undefined = start;
-    for (let steps = 0; steps <= remaining.length && current?.prev !== undefined; steps++) {
-      current = byId.get(current.prev);
-      if (current?.id === start.id) return true;
-    }
-    return false;
-  };
-  return {
-    ordered: [...ordered, ...remaining],
-    missingPredecessors: remaining.flatMap((e) => (e.prev !== undefined && !known.has(e.prev) ? [{ eventId: e.id, prev: e.prev }] : [])),
-    cyclic: remaining.filter(inCycle).map((e) => e.id),
-  };
+  const unplaced = place(events, (e) => e.prev === undefined);
+  const missingPredecessors = unplaced.flatMap((e) => (e.prev !== undefined && !known.has(e.prev) ? [{ eventId: e.id, prev: e.prev }] : []));
+  const stuck = place(unplaced, (e) => e.prev !== undefined && !known.has(e.prev));
+  return { ordered: [...ordered, ...stuck], missingPredecessors, cyclic: stuck.map((e) => e.id) };
 }
 
 /**
@@ -210,12 +210,11 @@ function trackSync(events: readonly RunEvent[]): Pick<RunState, 'pending' | 'syn
   for (const event of events) {
     if (event.type === 'upload-acknowledged') continue;
     const forThis = acks.filter((a) => a.eventId === event.id);
-    if (forThis.some((a) => a.digest === eventDigest(event))) {
-      synced.push(event.id);
-    } else {
-      pending.push(event.id);
-      if (forThis.length > 0) ackMismatches.push(event.id);
-    }
+    const digest = eventDigest(event);
+    // A wrong-digest acknowledgement stays visible even when another one verifies the event.
+    if (forThis.some((a) => a.digest !== digest)) ackMismatches.push(event.id);
+    if (forThis.some((a) => a.digest === digest)) synced.push(event.id);
+    else pending.push(event.id);
   }
   const orphanAcks = [...new Set(acks.filter((a) => !ids.has(a.eventId)).map((a) => a.eventId))].sort(compare);
   return { pending, synced, ackMismatches, orphanAcks };
