@@ -2,9 +2,12 @@
 // ownership could touch, or fail to stop, the wrong process.
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { acquireTestRoot, cleanupOwnedResources, processIdentity, readLedger, recordOwned, spawnOwned } from '../../src/runner/resources.ts';
 import { cleanUpProcessesAndRoots, eventually, isAlive, makeTestRoot, startUnrelatedProcess, trackProcess } from '../fixtures/processes.ts';
+
+// Reading a process's identity starts PowerShell on Windows, which can take seconds on a busy CI runner.
+vi.setConfig({ testTimeout: 30_000 });
 
 afterEach(cleanUpProcessesAndRoots);
 

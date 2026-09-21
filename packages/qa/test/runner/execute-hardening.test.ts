@@ -2,16 +2,18 @@
 // environment that was not properly cleaned.
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { executeScenario } from '../../src/runner/execute.ts';
 import { processIdentity, readDirty, readLedger } from '../../src/runner/resources.ts';
 import { arrange, lifecycleOf, never, scenarioOf, sleep } from '../fixtures/execution.ts';
 import { cleanUpProcessesAndRoots, eventually, isAlive, makeTempDir, startUnrelatedProcess } from '../fixtures/processes.ts';
 
+// Reading a process's identity starts PowerShell on Windows, which can take seconds on a busy CI runner.
+vi.setConfig({ testTimeout: 30_000 });
+
 afterEach(cleanUpProcessesAndRoots);
 
 const exists = (path: string) => stat(path).then(() => true, () => false);
-const sleeper = ['-e', 'setInterval(() => {}, 1000)'];
 
 describe('fail closed: an environment that may be dirty is never reused', () => {
   test('when the dirty marker cannot be written, this process still refuses the next run', async () => {
@@ -276,4 +278,3 @@ describe('one run at a time per test root', () => {
   });
 });
 
-void sleeper;

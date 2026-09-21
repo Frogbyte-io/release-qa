@@ -2,48 +2,19 @@ import assert from 'node:assert';
 import { getEventListeners } from 'node:events';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
-import { AssertionFailure, executeScenario, type ExecutionContext, type Lifecycle, type Scenario, type ScenarioEvent } from '../../src/runner/execute.ts';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { AssertionFailure, executeScenario } from '../../src/runner/execute.ts';
 import { readDirty, readLedger, resetDirtyEnvironment, spawnOwned } from '../../src/runner/resources.ts';
 import { candidate, requirement } from '../fixtures/records.ts';
+import { arrange, lifecycleOf, never, scenarioOf, started } from '../fixtures/execution.ts';
 import { cleanUpProcessesAndRoots, eventually, hostOs, hostProfile, isAlive, makeTempDir, makeTestRoot, startUnrelatedProcess, trackProcess } from '../fixtures/processes.ts';
+
+// Reading a process's identity starts PowerShell on Windows, which can take seconds on a busy CI runner.
+vi.setConfig({ testTimeout: 30_000 });
 
 afterEach(cleanUpProcessesAndRoots);
 
 const sleeper = ['-e', 'setInterval(() => {}, 1000)'];
-const never = () => new Promise<void>(() => {});
-
-function lifecycleOf(calls: string[], overrides: Partial<Lifecycle> = {}): Lifecycle {
-  const record = (name: string) => async () => { calls.push(name); };
-  return { install: record('install'), reset: record('reset'), launch: record('launch'), cleanup: record('cleanup'), ...overrides };
-}
-
-async function arrange(overrides: Partial<ExecutionContext> = {}) {
-  const testRoot = await makeTestRoot();
-  const calls: string[] = [];
-  const events: ScenarioEvent[] = [];
-  const controller = new AbortController();
-  const context: ExecutionContext = {
-    candidate: candidate(),
-    profile: hostProfile(),
-    testRoot,
-    signal: controller.signal,
-    emit: (event) => { events.push(event); },
-    lifecycle: lifecycleOf(calls),
-    probes: { display: async () => true, audio: async () => true },
-    timeouts: { phaseMs: 2000, stepsMs: 2000, cleanupMs: 2000 },
-    ...overrides,
-  };
-  return { testRoot, calls, events, controller, context };
-}
-
-const scenarioOf = (overrides: Partial<Scenario> = {}): Scenario => ({
-  id: 'persistence',
-  requirement: requirement({ key: `${hostOs()}/persistence` }),
-  steps: async () => {},
-  ...overrides,
-});
-const started = (events: readonly ScenarioEvent[]) => events.filter((e) => e.status === 'started').map((e) => e.phase);
 
 describe('a passing run', () => {
   test('runs the phases in order, emits an event for each, and cleans up', async () => {

@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   checkTestRoot,
   cleanupOwnedResources,
@@ -16,6 +16,9 @@ import {
   TEST_ROOT_MARKER,
 } from '../../src/runner/resources.ts';
 import { cleanUpProcessesAndRoots, eventually, isAlive, makeTempDir, makeTestRoot, startUnrelatedProcess, trackProcess } from '../fixtures/processes.ts';
+
+// Reading a process's identity starts PowerShell on Windows, which can take seconds on a busy CI runner.
+vi.setConfig({ testTimeout: 30_000 });
 
 afterEach(cleanUpProcessesAndRoots);
 
@@ -131,6 +134,9 @@ describe('spawning owned processes', () => {
 
   test('the identity of a live process is stable and differs between processes', async () => {
     const a = startUnrelatedProcess();
+    // A start time has the granularity of the operating system's clock (10 ms on Linux); two processes started in the
+    // same tick share one, which is harmless because an identity is only ever compared under the same pid.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const b = startUnrelatedProcess();
     const first = await processIdentity(a.pid as number);
     expect(first).toBeDefined();
