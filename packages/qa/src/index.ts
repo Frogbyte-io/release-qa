@@ -17,3 +17,14 @@ export {
   type UploadProvenance,
 } from './model/result.ts';
 export { ValidationError, type IssueCode, type ParseResult, type ValidationIssue } from './model/validate.ts';
+export {
+  evaluate,
+  type AuthorizedException,
+  type EligibleReport,
+  type Evaluation,
+  type EvaluationInput,
+  type Ignored,
+  type IgnoredReason,
+  type Reason,
+  type RetryResolution,
+} from './model/evaluate.ts';
