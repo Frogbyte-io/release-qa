@@ -48,7 +48,8 @@ const ARCH_NAMES: Record<string, string> = { x64: 'x86_64', arm64: 'aarch64' };
 
 /** Measures this machine. A probe that throws means the capability is absent, never a crash of the run. */
 export async function inspectEnvironment(profile: EnvironmentProfile, probes: EnvironmentProbes = defaultProbes, toolVersion = '0.0.0'): Promise<InspectedEnvironment> {
-  const has = async (probe: () => Promise<boolean>): Promise<boolean> => probe().catch(() => false);
+  // Run inside a promise so a probe that throws before returning one is caught too, not only one that rejects.
+  const has = (probe: () => Promise<boolean>): Promise<boolean> => Promise.resolve().then(probe).catch(() => false);
   const [display, audio] = await Promise.all([has(() => probes.display()), has(() => probes.audio())]);
 
   const os = OS_NAMES[platform()] ?? platform();

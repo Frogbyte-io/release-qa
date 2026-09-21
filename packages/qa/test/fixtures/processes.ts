@@ -2,7 +2,7 @@
 // of them is ever handed to the code under test unless a test does so on purpose.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { arch, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EnvironmentProfile } from '../../src/model/project.ts';
 import { designateTestRoot } from '../../src/runner/resources.ts';
@@ -13,6 +13,15 @@ const roots: string[] = [];
 /** A process unrelated to the runner, standing in for someone's real application. */
 export function startUnrelatedProcess(script = 'setInterval(() => {}, 1000)'): ChildProcess {
   const child = spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
+  // A failed spawn must fail one test, not crash the whole worker with an unhandled 'error' event.
+  child.on('error', () => undefined);
+  started.push(child);
+  return child;
+}
+
+/** Registers a process started some other way (for example by spawnOwned) so it is stopped after the test. */
+export function trackProcess(child: ChildProcess): ChildProcess {
+  child.on('error', () => undefined);
   started.push(child);
   return child;
 }
@@ -51,18 +60,29 @@ export async function makeTempDir(prefix: string): Promise<string> {
 }
 
 export async function cleanUpProcessesAndRoots(): Promise<void> {
-  for (const child of started) {
+  const children = started.splice(0);
+  for (const child of children) {
     try {
       child.kill('SIGKILL');
     } catch {
       /* already gone */
     }
   }
-  started.length = 0;
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+  // On Windows a child that is still exiting can hold a directory open, so wait for each to be gone first.
+  await Promise.all(
+    children.map((child) => (child.exitCode !== null || child.signalCode !== null ? undefined : new Promise<void>((resolve) => { child.once('exit', () => resolve()); setTimeout(resolve, 3000); }))),
+  );
+  // Every removal is attempted, whatever any other one does.
+  await Promise.allSettled(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 }
 
 export const hostOs = (): 'windows' | 'linux' => (process.platform === 'win32' ? 'windows' : 'linux');
 
+/** The architecture name the runner reports for this machine (x64 is x86_64, arm64 is aarch64). */
+export const hostArch = (): string => (arch() === 'x64' ? 'x86_64' : arch() === 'arm64' ? 'aarch64' : arch());
+
+/** An architecture that is not this machine's, for tests of a mismatch. */
+export const otherArch = (): string => (hostArch() === 'x86_64' ? 'aarch64' : 'x86_64');
+
 /** The profile of the machine the tests are running on. */
-export const hostProfile = (): EnvironmentProfile => ({ id: hostOs(), os: hostOs(), arch: 'x86_64' });
+export const hostProfile = (): EnvironmentProfile => ({ id: hostOs(), os: hostOs(), arch: hostArch() as EnvironmentProfile['arch'] });

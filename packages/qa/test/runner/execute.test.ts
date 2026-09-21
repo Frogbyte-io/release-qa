@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { AssertionFailure, executeScenario, type ExecutionContext, type Lifecycle, type Scenario, type ScenarioEvent } from '../../src/runner/execute.ts';
 import { readDirty, readLedger, resetDirtyEnvironment, spawnOwned } from '../../src/runner/resources.ts';
 import { candidate, requirement } from '../fixtures/records.ts';
-import { cleanUpProcessesAndRoots, eventually, hostOs, hostProfile, isAlive, makeTempDir, makeTestRoot, startUnrelatedProcess } from '../fixtures/processes.ts';
+import { cleanUpProcessesAndRoots, eventually, hostOs, hostProfile, isAlive, makeTempDir, makeTestRoot, startUnrelatedProcess, trackProcess } from '../fixtures/processes.ts';
 
 afterEach(cleanUpProcessesAndRoots);
 
@@ -115,6 +115,7 @@ describe('a dirty environment', () => {
   test('refuses the next run while a process from an earlier run is still owned, and leaves that process alone', async () => {
     const { context, calls, testRoot } = await arrange();
     const leftover = await spawnOwned(testRoot, 'earlier helper', process.execPath, sleeper, { stdio: 'ignore' });
+    trackProcess(leftover);
 
     const refused = await executeScenario(context, scenarioOf());
 
@@ -126,6 +127,7 @@ describe('a dirty environment', () => {
   test('accepts runs again once the environment has been reset', async () => {
     const { context, testRoot } = await arrange();
     const leftover = await spawnOwned(testRoot, 'earlier helper', process.execPath, sleeper, { stdio: 'ignore' });
+    trackProcess(leftover);
     expect((await executeScenario(context, scenarioOf())).outcome).toBe('blocked');
 
     await resetDirtyEnvironment(testRoot, { graceMs: 300 });

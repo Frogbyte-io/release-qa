@@ -1,7 +1,7 @@
-import { arch, release } from 'node:os';
+import { release } from 'node:os';
 import { describe, expect, test } from 'vitest';
 import { defaultProbes, inspectEnvironment } from '../../src/runner/environment.ts';
-import { hostOs, hostProfile } from '../fixtures/processes.ts';
+import { hostArch, hostOs, hostProfile, otherArch } from '../fixtures/processes.ts';
 
 const probes = (display: boolean, audio: boolean) => ({ display: async () => display, audio: async () => audio });
 
@@ -10,7 +10,7 @@ describe('inspectEnvironment', () => {
     const { environment } = await inspectEnvironment(hostProfile(), probes(true, true), '1.2.3');
     expect(environment.os).toBe(hostOs());
     expect(environment.osVersion).toBe(release());
-    expect(environment.arch).toBe(arch() === 'x64' ? 'x86_64' : arch());
+    expect(environment.arch).toBe(hostArch());
     expect(environment.toolVersion).toBe('1.2.3');
   });
 
@@ -24,6 +24,12 @@ describe('inspectEnvironment', () => {
   test('a probe that throws counts as the capability being absent, not as a crash', async () => {
     const broken = { display: async (): Promise<boolean> => { throw new Error('no session'); }, audio: async () => true };
     expect((await inspectEnvironment(hostProfile(), broken)).environment.capabilities).toEqual(['audio']);
+  });
+
+  test('a probe that throws before it even returns a promise is also just an absent capability', async () => {
+    const boom = (): Promise<boolean> => { throw new Error('thrown synchronously'); };
+    const inspected = await inspectEnvironment(hostProfile(), { display: boom, audio: boom });
+    expect(inspected.environment.capabilities).toEqual([]);
   });
 
   test('reports no mismatch for the profile of this machine', async () => {
@@ -40,11 +46,11 @@ describe('inspectEnvironment', () => {
   });
 
   test('reports a mismatch when the profile asks for another architecture', async () => {
-    // The profile type only allows x86_64 today; a future profile for another architecture must still be refused here.
-    const other = { ...hostProfile(), arch: 'aarch64' } as unknown as ReturnType<typeof hostProfile>;
+    // The profile type only allows x86_64 today; a profile for any architecture that is not this machine's must be refused.
+    const other = { ...hostProfile(), arch: otherArch() } as unknown as ReturnType<typeof hostProfile>;
     const { profileMismatch } = await inspectEnvironment(other, probes(true, true));
-    expect(profileMismatch).toContain('aarch64');
-    expect(profileMismatch).toContain('x86_64');
+    expect(profileMismatch).toContain(otherArch());
+    expect(profileMismatch).toContain(hostArch());
   });
 
   test('the default probes answer with a boolean and never throw, whatever this machine has', async () => {

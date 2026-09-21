@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { mkdir, lstat, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { mkdir, lstat, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, parse, resolve, sep } from 'node:path';
 import { writeFileAtomic } from './journal.ts';
@@ -26,6 +27,19 @@ export interface CleanupOptions {
   graceMs?: number;
   /** Test seam: how a process is identified. */
   identityOf?: (pid: number) => Promise<string | undefined>;
+  /** Test seam: how a process is signalled. */
+  kill?: (pid: number, signal?: NodeJS.Signals) => void;
+  /** Whether a process that ignores the polite request is forced. Defaults to true wherever the operating system has a polite request. */
+  escalate?: boolean;
+}
+
+/** The same directory always has the same key, however it was spelled. */
+function keyOf(root: string): string {
+  try {
+    return realpathSync.native(root);
+  } catch {
+    return resolve(root);
+  }
 }
 
 const errorCode = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
@@ -150,7 +164,11 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** Starts a process and records it, with its identity, before handing it back. */
+/**
+ * Starts a process and records it, with its identity, before handing it back. A child that has already exited has
+ * nothing left to own and is returned without a record (its pid may even belong to someone else by now, so an
+ * identity read after its exit is never trusted). If the record cannot be written the child is stopped.
+ */
 export async function spawnOwned(root: string, label: string, command: string, args: readonly string[], options: SpawnOptions = {}): Promise<ChildProcess> {
   const child = spawn(command, [...args], options);
   await new Promise<void>((resolveSpawn, rejectSpawn) => {
@@ -158,48 +176,69 @@ export async function spawnOwned(root: string, label: string, command: string, a
     child.once('error', rejectSpawn);
   });
   const pid = child.pid as number;
+  let exited = false;
+  child.once('exit', () => {
+    exited = true;
+  });
+
   const identity = await processIdentity(pid);
+  const hasExited = (): boolean => exited || child.exitCode !== null || child.signalCode !== null;
+  if (hasExited()) return child;
   if (identity === undefined) {
-    // A process that cannot be identified cannot be owned safely, so it is not left running.
+    // Alive but not identifiable: it cannot be owned safely, so it is not left running.
     child.kill('SIGKILL');
     throw new Error(`could not identify the process started for "${label}"; it was stopped`);
   }
-  await recordOwned(root, { kind: 'process', pid, identity, label });
+  try {
+    await recordOwned(root, { kind: 'process', pid, identity, label });
+  } catch (error) {
+    // An untracked child would outlive every cleanup, since cleanup only knows what the ledger lists.
+    child.kill('SIGKILL');
+    throw error;
+  }
   return child;
 }
 
 async function cleanProcess(resource: Extract<OwnedResource, { kind: 'process' }>, options: Required<CleanupOptions>): Promise<CleanupFailure | undefined> {
-  if (!isAlive(resource.pid)) return undefined;
-  const now = await options.identityOf(resource.pid);
+  const { pid } = resource;
+  if (!isAlive(pid)) return undefined;
+  const now = await options.identityOf(pid);
   if (now === undefined) {
     // It may have exited while its identity was being read; otherwise it is alive and unidentifiable: hands off.
-    return isAlive(resource.pid) ? { resource, reason: 'identity-unknown' } : undefined;
+    return isAlive(pid) ? { resource, reason: 'identity-unknown' } : undefined;
   }
   if (now !== resource.identity) return undefined; // the pid was reused: the process this run owned is already gone
 
   const waitUntilGone = async (ms: number): Promise<boolean> => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
-      if (!isAlive(resource.pid)) return true;
+      if (!isAlive(pid)) return true;
       await sleep(25);
     }
-    return !isAlive(resource.pid);
+    return !isAlive(pid);
   };
-  try {
-    process.kill(resource.pid); // polite on POSIX (SIGTERM); Windows has no polite form
-  } catch {
-    return undefined;
-  }
-  if (await waitUntilGone(options.graceMs)) return undefined;
-  if (process.platform !== 'win32') {
+  /** A signal that could not be delivered is only harmless if the process turned out to be gone anyway. */
+  const send = async (signal?: NodeJS.Signals): Promise<boolean> => {
     try {
-      process.kill(resource.pid, 'SIGKILL');
+      options.kill(pid, signal);
+      return true;
     } catch {
-      return undefined;
+      return waitUntilGone(300);
     }
-    if (await waitUntilGone(2000)) return undefined;
-  }
-  return { resource, reason: 'still-running' };
+  };
+  const stillRunning: CleanupFailure = { resource, reason: 'still-running' };
+
+  if (!(await send())) return stillRunning; // polite on POSIX (SIGTERM); Windows has no polite form
+  if (await waitUntilGone(options.graceMs)) return undefined;
+  if (!options.escalate) return stillRunning;
+
+  // Forcing is the dangerous step: during the grace period the process may have exited and its pid been reused,
+  // so it is identified again immediately before, and only the very same process is ever forced.
+  const again = await options.identityOf(pid);
+  if (again === undefined) return isAlive(pid) ? { resource, reason: 'identity-unknown' } : undefined;
+  if (again !== resource.identity) return undefined;
+  if (!(await send('SIGKILL'))) return stillRunning;
+  return (await waitUntilGone(2000)) ? undefined : stillRunning;
 }
 
 async function cleanPath(root: string, resource: Extract<OwnedResource, { kind: 'path' }>): Promise<CleanupFailure | undefined> {
@@ -227,7 +266,12 @@ async function cleanPath(root: string, resource: Extract<OwnedResource, { kind: 
  * environment stays dirty until it is dealt with.
  */
 export function cleanupOwnedResources(root: string, options: CleanupOptions = {}): Promise<{ removed: OwnedResource[]; failures: CleanupFailure[] }> {
-  const settings: Required<CleanupOptions> = { graceMs: options.graceMs ?? 5000, identityOf: options.identityOf ?? processIdentity };
+  const settings: Required<CleanupOptions> = {
+    graceMs: options.graceMs ?? 5000,
+    identityOf: options.identityOf ?? processIdentity,
+    kill: options.kill ?? ((pid, signal) => void process.kill(pid, signal)),
+    escalate: options.escalate ?? process.platform !== 'win32',
+  };
   return serialized(root, async () => {
     const ledger = await readLedger(root);
     const removed: OwnedResource[] = [];
@@ -250,12 +294,18 @@ export function cleanupOwnedResources(root: string, options: CleanupOptions = {}
 // ---------------------------------------------------------------------------------------------------------------
 // Dirty environments
 
+/** Dirty roots remembered by this process, so a marker that could not be written still keeps the root closed. */
+const dirtyInMemory = new Map<string, string>();
+
 /** Records that this environment must not be reused until it has been reset. */
 export async function markDirty(root: string, reason: string): Promise<void> {
+  dirtyInMemory.set(keyOf(root), reason); // first: even if the write below fails, this process will not reuse the root
   await writeFileAtomic(join(root, DIRTY_FILE), `${JSON.stringify({ schemaVersion: 1, reason }, null, 2)}\n`);
 }
 
 export async function readDirty(root: string): Promise<string | undefined> {
+  const remembered = dirtyInMemory.get(keyOf(root));
+  if (remembered !== undefined) return remembered;
   const text = await readFile(join(root, DIRTY_FILE), 'utf8').catch((error) => (errorCode(error) === 'ENOENT' ? undefined : Promise.reject(error)));
   if (text === undefined) return undefined;
   try {
@@ -268,6 +318,61 @@ export async function readDirty(root: string): Promise<string | undefined> {
 /** Reaps everything the ledger owns and, only when that succeeds completely, clears the dirty marker. */
 export async function resetDirtyEnvironment(root: string, options: CleanupOptions = {}): Promise<{ failures: CleanupFailure[] }> {
   const { failures } = await cleanupOwnedResources(root, options);
-  if (failures.length === 0) await rm(join(root, DIRTY_FILE), { force: true });
+  if (failures.length === 0) {
+    dirtyInMemory.delete(keyOf(root));
+    await rm(join(root, DIRTY_FILE), { force: true });
+  }
   return { failures };
+}
+
+export type RootLock = { ok: true; release(): Promise<void> } | { ok: false; heldBy: string };
+
+const LOCK_FILE = '.release-qa-lock.json';
+/** Roots this process holds, so a second run in the same process is refused without touching the disk. */
+const heldHere = new Set<string>();
+let ownIdentity: Promise<string | undefined> | undefined;
+/** This process's own identity, read once: on Windows reading it costs a PowerShell start. */
+const identityOfThisProcess = (): Promise<string | undefined> => (ownIdentity ??= processIdentity(process.pid));
+
+/**
+ * At most one run at a time may use a test root, or two runs would reset the environment under each other and
+ * clean up each other's resources. The lock names its owner by pid and identity, so one left behind by a process
+ * that has since exited (or whose pid was reused) is recognised as stale, while anything unreadable counts as held.
+ */
+export async function acquireTestRoot(root: string): Promise<RootLock> {
+  const key = keyOf(root);
+  if (heldHere.has(key)) return { ok: false, heldBy: `this process (pid ${process.pid})` };
+  const path = join(root, LOCK_FILE);
+  const mine = JSON.stringify({ pid: process.pid, identity: (await identityOfThisProcess()) ?? 'unknown' });
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await writeFile(path, mine, { flag: 'wx' });
+      heldHere.add(key);
+      return {
+        ok: true,
+        release: async () => {
+          heldHere.delete(key);
+          // Only remove a lock that is still ours; someone may have taken over a lock they judged stale.
+          const current = await readFile(path, 'utf8').catch(() => undefined);
+          if (current === mine) await rm(path, { force: true });
+        },
+      };
+    } catch (error) {
+      if (errorCode(error) !== 'EEXIST') throw error;
+    }
+
+    let holder: { pid: number; identity: string };
+    try {
+      holder = JSON.parse(await readFile(path, 'utf8')) as { pid: number; identity: string };
+      if (!Number.isSafeInteger(holder.pid) || typeof holder.identity !== 'string') throw new Error('malformed');
+    } catch {
+      return { ok: false, heldBy: `a lock file that cannot be read (${path})` };
+    }
+    const identity = isAlive(holder.pid) ? await processIdentity(holder.pid) : undefined;
+    const stale = !isAlive(holder.pid) || (identity !== undefined && identity !== holder.identity);
+    if (!stale) return { ok: false, heldBy: `pid ${holder.pid}` };
+    await rm(path, { force: true });
+  }
+  return { ok: false, heldBy: 'a lock that kept reappearing' };
 }

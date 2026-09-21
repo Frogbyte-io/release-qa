@@ -4,7 +4,19 @@ import type { EnvironmentProfile } from '../model/project.ts';
 import type { Requirement, RequirementKey } from '../model/requirement.ts';
 import type { MeasuredEnvironment, Outcome } from '../model/result.ts';
 import { defaultProbes, inspectEnvironment, type EnvironmentProbes } from './environment.ts';
-import { checkTestRoot, cleanupOwnedResources, markDirty, readDirty, readLedger, recordOwned, spawnOwned, type CleanupFailure, type OwnedResource } from './resources.ts';
+import {
+  acquireTestRoot,
+  checkTestRoot,
+  cleanupOwnedResources,
+  markDirty,
+  readDirty,
+  readLedger,
+  recordOwned,
+  spawnOwned,
+  type CleanupFailure,
+  type OwnedResource,
+  type RootLock,
+} from './resources.ts';
 
 /** Thrown by a scenario or hook to say the candidate behaved wrongly. The only thing that makes a result `failed`. */
 export class AssertionFailure extends Error {
@@ -29,7 +41,9 @@ export interface RunContext {
   profile: EnvironmentProfile;
   testRoot: string;
   signal: AbortSignal;
+  /** Records a resource this run created. Refused once the phase that asked has ended. */
   own(resource: OwnedResource): Promise<void>;
+  /** Starts a process the run owns. Refused once the phase that asked has ended. */
   spawn(label: string, command: string, args: readonly string[], options?: SpawnOptions): Promise<ChildProcess>;
   /** Polls until `condition` is true. Running out of time is an assertion failure; abort is a cancellation. */
   waitFor(condition: () => boolean | Promise<boolean>, options?: { timeoutMs?: number; intervalMs?: number; description?: string }): Promise<void>;
@@ -58,12 +72,16 @@ export interface ExecutionContext {
   emit(event: ScenarioEvent): void | Promise<void>;
   lifecycle: Lifecycle;
   probes?: EnvironmentProbes;
-  /** Bounds in milliseconds. Every wait is bounded; these override the defaults. */
-  timeouts?: { phaseMs?: number; stepsMs?: number; cleanupMs?: number };
+  /**
+   * Bounds in milliseconds; every wait is bounded, including probes and the event sink. `abandonedGraceMs` is how
+   * long a hook that was cut off gets to stop by itself before the environment is declared dirty.
+   */
+  timeouts?: { phaseMs?: number; stepsMs?: number; cleanupMs?: number; abandonedGraceMs?: number };
 }
 
 export type ResultReason =
   | 'not-a-test-environment'
+  | 'environment-busy'
   | 'dirty-environment'
   | 'wrong-environment'
   | 'capability-missing'
@@ -89,6 +107,7 @@ export interface ScenarioResult {
 const DEFAULT_PHASE_MS = 120_000;
 const DEFAULT_STEPS_MS = 300_000;
 const DEFAULT_CLEANUP_MS = 60_000;
+const DEFAULT_ABANDONED_GRACE_MS = 1_000;
 
 /** Why a phase stopped early. These are reasons, not verdicts on the candidate. */
 class Cancelled extends Error {
@@ -97,8 +116,12 @@ class Cancelled extends Error {
   }
 }
 class TimedOut extends Error {
-  constructor(readonly phase: Phase, readonly ms: number) {
+  readonly phase: Phase;
+  readonly ms: number;
+  constructor(phase: Phase, ms: number) {
     super(`${phase} timed out after ${ms} ms`);
+    this.phase = phase;
+    this.ms = ms;
   }
 }
 class SinkFailed extends Error {
@@ -109,6 +132,7 @@ class SinkFailed extends Error {
 
 const withEnvironment = (environment: MeasuredEnvironment | undefined): { environment?: MeasuredEnvironment } => (environment === undefined ? {} : { environment });
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Node's assert and most test libraries throw errors named AssertionError; those are assertions too. */
 function isAssertionFailure(error: unknown): boolean {
@@ -130,13 +154,55 @@ function classify(phase: Phase, error: unknown): Stop {
   return { outcome: 'interrupted', reason: 'infrastructure-error', detail: `${phase}: ${message(error)}` };
 }
 
+/** Work that was cut off before it finished. It may still be doing things, which the run must not ignore. */
+interface Abandoned {
+  phase: Phase;
+  settled: boolean;
+  done: Promise<void>;
+}
+
+/**
+ * Races `work` against a deadline and an outer abort. `onTimeout` supplies the error for the deadline. When the work
+ * loses the race it is not stopped (JavaScript cannot), so it is reported through `abandoned` if it has not settled.
+ */
+function race<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, outer: AbortSignal, onTimeout: () => Error, phase: Phase, abandoned?: Abandoned[]): Promise<T> {
+  const controller = new AbortController();
+  const stop = (reason: Error): void => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
+  const onOuterAbort = (): void => stop(new Cancelled());
+  outer.addEventListener('abort', onOuterAbort);
+  const timer = setTimeout(() => stop(onTimeout()), ms);
+
+  const record: Abandoned = { phase, settled: false, done: Promise.resolve() };
+  const running = Promise.resolve().then(() => work(controller.signal));
+  record.done = running.then(
+    () => { record.settled = true; },
+    () => { record.settled = true; },
+  );
+  const interrupted = new Promise<never>((_, reject) => {
+    const fail = (): void => reject(controller.signal.reason);
+    if (controller.signal.aborted) fail();
+    else controller.signal.addEventListener('abort', fail, { once: true });
+  });
+  interrupted.catch(() => undefined); // no unhandled rejection when the work finishes first
+  if (outer.aborted) stop(new Cancelled());
+
+  return Promise.race([running, interrupted]).finally(() => {
+    clearTimeout(timer);
+    outer.removeEventListener('abort', onOuterAbort);
+    if (controller.signal.aborted && !record.settled) abandoned?.push(record);
+  });
+}
+
 /**
  * Runs one scenario against one candidate in a designated test environment.
  *
  * Outcomes: a prerequisite that is not met is `blocked` and nothing is installed; an assertion failure is `failed`;
  * a cancellation is `cancelled`; a timeout, a hook that breaks, or an unexpected error is `interrupted`, because
- * trouble in the infrastructure says nothing about the candidate. Cleanup runs whenever anything was started, and
- * a cleanup that does not complete leaves the environment marked dirty until it is reset.
+ * trouble in the infrastructure says nothing about the candidate. Only one run at a time may use a test root.
+ * Cleanup runs whenever anything was started, and a cleanup that does not complete (including hooks that were cut
+ * off and may still be running) leaves the environment marked dirty until it is reset.
  */
 export async function executeScenario(context: ExecutionContext, scenario: Scenario): Promise<ScenarioResult> {
   const scenarioId = scenario.id;
@@ -144,104 +210,163 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
   const finish = (result: Pick<ScenarioResult, 'outcome'> & Partial<ScenarioResult>): ScenarioResult => ({ ...base, ...result });
   if (context.signal.aborted) return finish({ outcome: 'cancelled', reason: 'cancelled' });
 
-  // Once the event sink fails nothing more is sent to it: the run stops and the failure is reported.
-  let sinkFailure: SinkFailed | undefined;
-  const emit = async (phase: Phase, status: ScenarioEvent['status'], detail?: string): Promise<void> => {
-    if (sinkFailure !== undefined) return;
-    try {
-      await context.emit({ scenario: scenarioId, phase, status, ...(detail === undefined ? {} : { detail }) });
-    } catch (error) {
-      sinkFailure = new SinkFailed(error);
-      throw sinkFailure;
-    }
-  };
-
-  // -- Prerequisites: nothing is installed or launched unless all of these hold. ------------------------------------
-  let environment: MeasuredEnvironment | undefined;
-  let root: string;
-  try {
-    await emit('prerequisites', 'started');
-    const designated = await checkTestRoot(context.testRoot);
-    if (!designated.ok) {
-      await emit('prerequisites', 'failed', designated.reason);
-      return finish({ outcome: 'blocked', reason: 'not-a-test-environment', detail: `${context.testRoot}: ${designated.reason}` });
-    }
-    root = designated.root;
-
-    const dirty = await dirtiness(root);
-    if (dirty !== undefined) {
-      await emit('prerequisites', 'failed', dirty);
-      return finish({ outcome: 'blocked', reason: 'dirty-environment', detail: dirty });
-    }
-
-    const inspected = await inspectEnvironment(context.profile, context.probes ?? defaultProbes);
-    environment = inspected.environment;
-    if (inspected.profileMismatch !== undefined) {
-      await emit('prerequisites', 'failed', inspected.profileMismatch);
-      return finish({ outcome: 'blocked', reason: 'wrong-environment', detail: inspected.profileMismatch, ...withEnvironment(environment) });
-    }
-    const missing = scenario.requirement.capabilities.filter((c) => !inspected.environment.capabilities.includes(c)).sort();
-    if (missing.length > 0) {
-      await emit('prerequisites', 'failed', `missing: ${missing.join(', ')}`);
-      return finish({ outcome: 'blocked', reason: 'capability-missing', missing, detail: `missing capabilities: ${missing.join(', ')}`, ...withEnvironment(environment) });
-    }
-    await emit('prerequisites', 'finished');
-  } catch (error) {
-    return finish({ ...classify('prerequisites', error), ...withEnvironment(environment) });
-  }
-
-  // -- The lifecycle. Each phase is bounded and abortable; a phase that fails ends the run. -------------------------
   const phaseMs = context.timeouts?.phaseMs ?? DEFAULT_PHASE_MS;
   const stepsMs = context.timeouts?.stepsMs ?? DEFAULT_STEPS_MS;
   const cleanupMs = context.timeouts?.cleanupMs ?? DEFAULT_CLEANUP_MS;
-  const { lifecycle } = context;
-  const contextFor = (signal: AbortSignal): RunContext => ({
-    candidate: context.candidate,
-    profile: context.profile,
-    testRoot: root,
-    signal,
-    own: (resource) => recordOwned(root, resource),
-    spawn: (label, command, args, options) => spawnOwned(root, label, command, args, options),
-    waitFor: (condition, options) => waitFor(signal, condition, options),
-  });
+  const graceMs = context.timeouts?.abandonedGraceMs ?? DEFAULT_ABANDONED_GRACE_MS;
 
-  const phases: Array<[Phase, number, (ctx: RunContext) => Promise<void>]> = [
-    ['install', phaseMs, (ctx) => lifecycle.install(ctx)],
-    ['reset', phaseMs, (ctx) => lifecycle.reset(ctx)],
-    ['launch', phaseMs, (ctx) => lifecycle.launch(ctx)],
-    ...(scenario.setup === undefined ? [] : [['setup', phaseMs, (ctx: RunContext) => scenario.setup!(ctx)] as [Phase, number, (ctx: RunContext) => Promise<void>]]),
-    ['steps', stepsMs, (ctx) => scenario.steps(ctx)],
-  ];
-
-  let stop: Stop | undefined;
-  let touched = false;
-  for (const [phase, limitMs, run] of phases) {
-    if (context.signal.aborted) {
-      stop = { outcome: 'cancelled', reason: 'cancelled', detail: `cancelled before ${phase}` };
-      break;
-    }
-    touched = true;
+  // Once the event sink fails, nothing more is sent to it: the run stops and the failure is reported. A sink that
+  // never answers is cut off like anything else, so it cannot hold up cancellation or cleanup.
+  let sinkFailure: Error | undefined;
+  const emitOn = (signal: AbortSignal, limitMs: number) => async (phase: Phase, status: ScenarioEvent['status'], detail?: string): Promise<void> => {
+    if (sinkFailure !== undefined) return;
     try {
-      await emit(phase, 'started');
-      await bounded(phase, limitMs, context.signal, (signal) => run(contextFor(signal)));
-      await emit(phase, 'finished');
+      await race(
+        () => Promise.resolve().then(() => context.emit({ scenario: scenarioId, phase, status, ...(detail === undefined ? {} : { detail }) })),
+        limitMs,
+        signal,
+        () => new Error(`timed out after ${limitMs} ms`),
+        phase,
+      );
     } catch (error) {
-      stop = classify(phase, error);
-      await emit(phase, 'failed', stop.detail).catch(() => undefined);
-      break;
+      sinkFailure = error instanceof Cancelled ? error : new SinkFailed(error);
+      throw sinkFailure;
     }
+  };
+  const emit = emitOn(context.signal, phaseMs);
+
+  const abandoned: Abandoned[] = [];
+  let lock: Extract<RootLock, { ok: true }> | undefined;
+  let closed = false; // set when the run is over, so a late lock acquisition by cut-off work is given straight back
+  let environment: MeasuredEnvironment | undefined;
+
+  try {
+    // -- Prerequisites: nothing is installed or launched unless all of these hold. ------------------------------
+    type Prerequisites = { ready: true; root: string } | { ready: false; result: ScenarioResult };
+    let prerequisites: Prerequisites;
+    try {
+      prerequisites = await race<Prerequisites>(
+        async () => {
+          await emit('prerequisites', 'started');
+          const designated = await checkTestRoot(context.testRoot);
+          if (!designated.ok) {
+            await emit('prerequisites', 'failed', designated.reason);
+            return { ready: false, result: finish({ outcome: 'blocked', reason: 'not-a-test-environment', detail: `${context.testRoot}: ${designated.reason}` }) };
+          }
+          const root = designated.root;
+
+          const acquired = await acquireTestRoot(root);
+          if (!acquired.ok) {
+            await emit('prerequisites', 'failed', acquired.heldBy);
+            return { ready: false, result: finish({ outcome: 'blocked', reason: 'environment-busy', detail: `the test root is in use by ${acquired.heldBy}` }) };
+          }
+          if (closed) {
+            await acquired.release(); // the prerequisites were cut off and the run is over; do not keep a lock nobody will free
+            return { ready: false, result: finish({ outcome: 'interrupted', reason: 'infrastructure-error' }) };
+          }
+          lock = acquired;
+
+          const dirty = await dirtiness(root);
+          if (dirty !== undefined) {
+            await emit('prerequisites', 'failed', dirty);
+            return { ready: false, result: finish({ outcome: 'blocked', reason: 'dirty-environment', detail: dirty }) };
+          }
+
+          const inspected = await inspectEnvironment(context.profile, context.probes ?? defaultProbes);
+          environment = inspected.environment;
+          if (inspected.profileMismatch !== undefined) {
+            await emit('prerequisites', 'failed', inspected.profileMismatch);
+            return { ready: false, result: finish({ outcome: 'blocked', reason: 'wrong-environment', detail: inspected.profileMismatch, ...withEnvironment(environment) }) };
+          }
+          const missing = scenario.requirement.capabilities.filter((c) => !inspected.environment.capabilities.includes(c)).sort();
+          if (missing.length > 0) {
+            await emit('prerequisites', 'failed', `missing: ${missing.join(', ')}`);
+            return { ready: false, result: finish({ outcome: 'blocked', reason: 'capability-missing', missing, detail: `missing capabilities: ${missing.join(', ')}`, ...withEnvironment(environment) }) };
+          }
+          await emit('prerequisites', 'finished');
+          return { ready: true, root };
+        },
+        phaseMs,
+        context.signal,
+        () => new TimedOut('prerequisites', phaseMs),
+        'prerequisites',
+        abandoned,
+      );
+    } catch (error) {
+      return finish({ ...classify('prerequisites', error), ...withEnvironment(environment) });
+    }
+    if (!prerequisites.ready) return prerequisites.result;
+    const root = prerequisites.root;
+
+    // -- The lifecycle. Each phase is bounded and abortable; a phase that fails ends the run. --------------------
+    const { lifecycle } = context;
+    const contextFor = (signal: AbortSignal): RunContext => {
+      // A phase that has ended can no longer create anything: a hook that was cut off but is still running must not
+      // leave a process or a resource behind after cleanup has looked at the ledger.
+      const assertActive = (): void => {
+        if (signal.aborted) throw new Error('this run has been stopped and can no longer take ownership of anything');
+      };
+      return {
+        candidate: context.candidate,
+        profile: context.profile,
+        testRoot: root,
+        signal,
+        own: async (resource) => {
+          assertActive();
+          await recordOwned(root, resource);
+        },
+        spawn: async (label, command, args, options) => {
+          assertActive();
+          return spawnOwned(root, label, command, args, options);
+        },
+        waitFor: (condition, options) => waitFor(signal, condition, options),
+      };
+    };
+
+    const phases: Array<[Phase, number, (ctx: RunContext) => Promise<void>]> = [
+      ['install', phaseMs, (ctx) => lifecycle.install(ctx)],
+      ['reset', phaseMs, (ctx) => lifecycle.reset(ctx)],
+      ['launch', phaseMs, (ctx) => lifecycle.launch(ctx)],
+      ...(scenario.setup === undefined ? [] : [['setup', phaseMs, (ctx: RunContext) => scenario.setup!(ctx)] as [Phase, number, (ctx: RunContext) => Promise<void>]]),
+      ['steps', stepsMs, (ctx) => scenario.steps(ctx)],
+    ];
+
+    let stop: Stop | undefined;
+    let touched = false;
+    for (const [phase, limitMs, run] of phases) {
+      if (context.signal.aborted) {
+        stop = { outcome: 'cancelled', reason: 'cancelled', detail: `cancelled before ${phase}` };
+        break;
+      }
+      touched = true;
+      try {
+        await emit(phase, 'started');
+        await race((signal) => run(contextFor(signal)), limitMs, context.signal, () => new TimedOut(phase, limitMs), phase, abandoned);
+        await emit(phase, 'finished');
+      } catch (error) {
+        stop = classify(phase, error);
+        await emit(phase, 'failed', stop.detail).catch(() => undefined);
+        break;
+      }
+    }
+
+    // -- Cleanup: on success, on failure and on cancellation, and never cancelled by the run's own signal. --------
+    const noCancel = new AbortController().signal;
+    const cleanup = touched
+      ? await cleanUp(root, lifecycle, contextFor, { cleanupMs, graceMs }, emitOn(noCancel, cleanupMs), () => sinkFailure, abandoned)
+      : { ok: true, failures: [] as string[], leftover: [] as CleanupFailure[] };
+
+    return finish({
+      outcome: stop?.outcome ?? 'passed',
+      ...(stop === undefined ? {} : { reason: stop.reason, ...(stop.detail === undefined ? {} : { detail: stop.detail }) }),
+      ...withEnvironment(environment),
+      cleanup: { ok: cleanup.ok, failures: cleanup.failures },
+      leftover: cleanup.leftover,
+    });
+  } finally {
+    closed = true;
+    await lock?.release().catch(() => undefined);
   }
-
-  // -- Cleanup: on success, on failure and on cancellation, and never cancelled by the run's own signal. ------------
-  const cleanup = touched ? await cleanUp(root, lifecycle, contextFor, cleanupMs, emit) : { ok: true, failures: [] as string[], leftover: [] as CleanupFailure[] };
-
-  return finish({
-    outcome: stop?.outcome ?? 'passed',
-    ...(stop === undefined ? {} : { reason: stop.reason, ...(stop.detail === undefined ? {} : { detail: stop.detail }) }),
-    ...withEnvironment(environment),
-    cleanup: { ok: cleanup.ok, failures: cleanup.failures },
-    leftover: cleanup.leftover,
-  });
 }
 
 async function dirtiness(root: string): Promise<string | undefined> {
@@ -256,44 +381,29 @@ async function dirtiness(root: string): Promise<string | undefined> {
   }
 }
 
-/** Runs `work` with a deadline, abortable by `outer`. A hook that ignores its signal cannot hold the run up. */
-async function bounded(phase: Phase, ms: number, outer: AbortSignal, work: (signal: AbortSignal) => Promise<void>): Promise<void> {
-  const controller = new AbortController();
-  const abortWith = (reason: Error): void => {
-    if (!controller.signal.aborted) controller.abort(reason);
-  };
-  const onOuterAbort = (): void => abortWith(new Cancelled());
-  outer.addEventListener('abort', onOuterAbort);
-  const timer = setTimeout(() => abortWith(new TimedOut(phase, ms)), ms);
-  const interrupted = new Promise<never>((_, reject) => {
-    const reject_ = (): void => reject(controller.signal.reason);
-    if (controller.signal.aborted) reject_();
-    else controller.signal.addEventListener('abort', reject_, { once: true });
-  });
-  interrupted.catch(() => undefined); // no unhandled rejection when the work finishes first
-  const running = Promise.resolve().then(() => work(controller.signal));
-  running.catch(() => undefined); // an abandoned hook may still fail later; that is no longer our concern
-  try {
-    if (outer.aborted) abortWith(new Cancelled());
-    await Promise.race([running, interrupted]);
-  } finally {
-    clearTimeout(timer);
-    outer.removeEventListener('abort', onOuterAbort);
-  }
-}
-
 async function cleanUp(
   root: string,
   lifecycle: Lifecycle,
   contextFor: (signal: AbortSignal) => RunContext,
-  ms: number,
+  limits: { cleanupMs: number; graceMs: number },
   emit: (phase: Phase, status: ScenarioEvent['status'], detail?: string) => Promise<void>,
+  currentSinkFailure: () => Error | undefined,
+  abandoned: readonly Abandoned[],
 ): Promise<{ ok: boolean; failures: string[]; leftover: CleanupFailure[] }> {
   const failures: string[] = [];
+  const sinkFailedBefore = currentSinkFailure() !== undefined;
   await emit('cleanup', 'started').catch(() => undefined);
+
+  // A hook that was cut off may still be running. Give it a moment to stop by itself; if it does not, nothing can
+  // be said about what it is still doing to the environment, so the environment is not clean.
+  if (abandoned.length > 0) {
+    await Promise.race([Promise.all(abandoned.map((a) => a.done)), sleep(limits.graceMs)]);
+    for (const hook of abandoned) if (!hook.settled) failures.push(`the ${hook.phase} hook was abandoned and is still running`);
+  }
+
   try {
     // A fresh signal: the run may have been cancelled, but its cleanup must still be allowed to finish.
-    await bounded('cleanup', ms, new AbortController().signal, (signal) => lifecycle.cleanup(contextFor(signal)));
+    await race((signal) => lifecycle.cleanup(contextFor(signal)), limits.cleanupMs, new AbortController().signal, () => new TimedOut('cleanup', limits.cleanupMs), 'cleanup');
   } catch (error) {
     failures.push(error instanceof TimedOut ? `cleanup hook ${error.message}` : `cleanup hook failed: ${message(error)}`);
   }
@@ -307,19 +417,23 @@ async function cleanUp(
   }
   for (const item of leftover) failures.push(`${item.resource.label}: ${item.reason}${item.detail === undefined ? '' : ` (${item.detail})`}`);
 
+  await emit('cleanup', failures.length === 0 ? 'finished' : 'failed', failures.length === 0 ? undefined : failures.join('; ')).catch(() => undefined);
+  // A record of the cleanup that could not be delivered means the record is incomplete, which is not a clean result.
+  const sinkFailure = currentSinkFailure();
+  if (sinkFailure !== undefined && !sinkFailedBefore) failures.push(sinkFailure.message);
+
   if (failures.length > 0) {
     try {
       await markDirty(root, `cleanup failed: ${failures.join('; ')}`);
     } catch (error) {
-      // The ledger still lists whatever was left, so the next run will see a dirty environment either way.
+      // markDirty remembers the root in memory before it writes, so this process still refuses to reuse it.
       failures.push(`could not mark the environment dirty: ${message(error)}`);
     }
   }
-  const ok = failures.length === 0;
-  await emit('cleanup', ok ? 'finished' : 'failed', ok ? undefined : failures.join('; ')).catch(() => undefined);
-  return { ok, failures, leftover };
+  return { ok: failures.length === 0, failures, leftover };
 }
 
+/** Polls a condition, giving up at the deadline even if the condition itself never answers. */
 async function waitFor(
   signal: AbortSignal,
   condition: () => boolean | Promise<boolean>,
@@ -328,10 +442,21 @@ async function waitFor(
   const timeoutMs = options.timeoutMs ?? 10_000;
   const intervalMs = options.intervalMs ?? 50;
   const deadline = Date.now() + timeoutMs;
+  const expired = (): AssertionFailure => new AssertionFailure(`timed out after ${timeoutMs} ms waiting for ${options.description ?? 'a condition'}`);
+
   for (;;) {
     if (signal.aborted) throw signal.reason;
-    if (await condition()) return;
-    if (Date.now() >= deadline) throw new AssertionFailure(`timed out after ${timeoutMs} ms waiting for ${options.description ?? 'a condition'}`);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw expired();
+    // The condition may hang or answer late, so it is raced against the deadline and the abort like everything else.
+    const answered = await new Promise<boolean>((resolve, reject) => {
+      const timer = setTimeout(() => { cleanUp(); reject(expired()); }, remaining);
+      const onAbort = (): void => { cleanUp(); reject(signal.reason); };
+      const cleanUp = (): void => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); };
+      signal.addEventListener('abort', onAbort, { once: true });
+      Promise.resolve().then(condition).then((value) => { cleanUp(); resolve(value); }, (error: unknown) => { cleanUp(); reject(error); });
+    });
+    if (answered) return;
     // The abort listener is removed as soon as the pause ends, or every poll would leave one behind.
     await new Promise<void>((resolve) => {
       const done = (): void => {

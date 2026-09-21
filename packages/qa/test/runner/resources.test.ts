@@ -15,7 +15,7 @@ import {
   spawnOwned,
   TEST_ROOT_MARKER,
 } from '../../src/runner/resources.ts';
-import { cleanUpProcessesAndRoots, eventually, isAlive, makeTempDir, makeTestRoot, startUnrelatedProcess } from '../fixtures/processes.ts';
+import { cleanUpProcessesAndRoots, eventually, isAlive, makeTempDir, makeTestRoot, startUnrelatedProcess, trackProcess } from '../fixtures/processes.ts';
 
 afterEach(cleanUpProcessesAndRoots);
 
@@ -122,6 +122,7 @@ describe('spawning owned processes', () => {
   test('records the process and its identity in the ledger before handing it back', async () => {
     const root = await makeTestRoot();
     const child = await spawnOwned(root, 'helper', process.execPath, sleeper, { stdio: 'ignore' });
+    trackProcess(child);
     const [entry] = await readLedger(root);
     expect(entry).toMatchObject({ kind: 'process', pid: child.pid, label: 'helper' });
     expect(entry?.kind === 'process' && entry.identity.length).toBeGreaterThan(0);
@@ -151,6 +152,7 @@ describe('cleaning up', () => {
   test('stops the processes it owns and leaves an unrelated process running', async () => {
     const root = await makeTestRoot();
     const owned = await spawnOwned(root, 'helper', process.execPath, sleeper, { stdio: 'ignore' });
+    trackProcess(owned);
     const unrelated = startUnrelatedProcess();
 
     const result = await cleanupOwnedResources(root, { graceMs: 500 });
@@ -179,6 +181,7 @@ describe('cleaning up', () => {
   test('refuses to kill a live process it cannot identify, and keeps it on the ledger', async () => {
     const root = await makeTestRoot();
     const child = await spawnOwned(root, 'helper', process.execPath, sleeper, { stdio: 'ignore' });
+    trackProcess(child);
     const result = await cleanupOwnedResources(root, { graceMs: 200, identityOf: async () => undefined });
     expect(isAlive(child.pid as number)).toBe(true);
     expect(result.failures.map((f) => f.reason)).toEqual(['identity-unknown']);
@@ -188,6 +191,7 @@ describe('cleaning up', () => {
   test('a process that already exited is dropped from the ledger without a failure', async () => {
     const root = await makeTestRoot();
     const child = await spawnOwned(root, 'helper', process.execPath, sleeper, { stdio: 'ignore' });
+    trackProcess(child);
     child.kill('SIGKILL');
     await eventually(() => !isAlive(child.pid as number));
     expect((await cleanupOwnedResources(root)).failures).toEqual([]);
@@ -197,6 +201,7 @@ describe('cleaning up', () => {
   test.skipIf(process.platform === 'win32')('forces a process that ignores the polite request', async () => {
     const root = await makeTestRoot();
     const child = await spawnOwned(root, 'stubborn', process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: 'ignore' });
+    trackProcess(child);
     await new Promise((resolve) => setTimeout(resolve, 300));
     const result = await cleanupOwnedResources(root, { graceMs: 200 });
     expect(result.failures).toEqual([]);
@@ -321,6 +326,7 @@ describe('a dirty environment', () => {
   test('is cleaned by a reset: owned processes stop, the marker clears, the ledger empties', async () => {
     const root = await makeTestRoot();
     const child = await spawnOwned(root, 'helper', process.execPath, sleeper, { stdio: 'ignore' });
+    trackProcess(child);
     await markDirty(root, 'runner crashed');
 
     const result = await resetDirtyEnvironment(root, { graceMs: 300 });
