@@ -73,8 +73,9 @@ export interface ExecutionContext {
   lifecycle: Lifecycle;
   probes?: EnvironmentProbes;
   /**
-   * Bounds in milliseconds; every wait is bounded, including probes and the event sink. `abandonedGraceMs` is how
-   * long a hook that was cut off gets to stop by itself before the environment is declared dirty.
+   * Bounds in milliseconds; every wait is bounded, including probes and the event sink. `cleanupMs` applies to the
+   * cleanup hook and, separately, to reaping the resources the run still owns. `abandonedGraceMs` is how long a hook
+   * that was cut off gets to stop by itself before the environment is declared dirty.
    */
   timeouts?: { phaseMs?: number; stepsMs?: number; cleanupMs?: number; abandonedGraceMs?: number };
 }
@@ -408,12 +409,15 @@ async function cleanUp(
     failures.push(error instanceof TimedOut ? `cleanup hook ${error.message}` : `cleanup hook failed: ${message(error)}`);
   }
 
-  // Whatever the run still owns is reaped by the runner, whatever the hook did or did not do.
+  // Whatever the run still owns is reaped by the runner, whatever the hook did or did not do. Reaping waits for each
+  // process in turn, so it has its own deadline; what it does not finish stays on the ledger and keeps the
+  // environment dirty.
   let leftover: CleanupFailure[] = [];
   try {
-    leftover = (await cleanupOwnedResources(root)).failures;
+    const reaped = await race(() => cleanupOwnedResources(root), limits.cleanupMs, new AbortController().signal, () => new TimedOut('cleanup', limits.cleanupMs), 'cleanup');
+    leftover = reaped.failures;
   } catch (error) {
-    failures.push(`could not clean up owned resources: ${message(error)}`);
+    failures.push(error instanceof TimedOut ? `reaping owned resources timed out after ${limits.cleanupMs} ms; what is left stays on the ledger` : `could not clean up owned resources: ${message(error)}`);
   }
   for (const item of leftover) failures.push(`${item.resource.label}: ${item.reason}${item.detail === undefined ? '' : ` (${item.detail})`}`);
 
