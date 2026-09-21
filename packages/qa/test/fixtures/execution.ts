@@ -1,5 +1,6 @@
 // Shared setup for tests that run scenarios through executeScenario.
 import type { ExecutionContext, Lifecycle, Scenario, ScenarioEvent } from '../../src/runner/execute.ts';
+import { acquireTestRoot } from '../../src/runner/resources.ts';
 import { candidate, requirement } from './records.ts';
 import { hostOs, hostProfile, makeTestRoot } from './processes.ts';
 
@@ -13,6 +14,10 @@ export function lifecycleOf(calls: string[], overrides: Partial<Lifecycle> = {})
 
 export async function arrange(overrides: Partial<ExecutionContext> = {}) {
   const testRoot = await makeTestRoot();
+  // The first lock in a process reads its own identity, which on Windows starts PowerShell and can take seconds on a
+  // busy machine. Do that here, outside any deadline, so tests with short deadlines measure the code, not the machine.
+  const warmUp = await acquireTestRoot(testRoot);
+  if (warmUp.ok) await warmUp.release();
   const calls: string[] = [];
   const events: ScenarioEvent[] = [];
   const controller = new AbortController();

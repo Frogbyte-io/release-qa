@@ -331,8 +331,13 @@ const LOCK_FILE = '.release-qa-lock.json';
 /** Roots this process holds, so a second run in the same process is refused without touching the disk. */
 const heldHere = new Set<string>();
 let ownIdentity: Promise<string | undefined> | undefined;
-/** This process's own identity, read once: on Windows reading it costs a PowerShell start. */
-const identityOfThisProcess = (): Promise<string | undefined> => (ownIdentity ??= processIdentity(process.pid));
+/** This process's own identity, read once: on Windows reading it costs a PowerShell start. A failed read is not kept. */
+async function identityOfThisProcess(): Promise<string | undefined> {
+  ownIdentity ??= processIdentity(process.pid);
+  const identity = await ownIdentity;
+  if (identity === undefined) ownIdentity = undefined;
+  return identity;
+}
 
 /**
  * At most one run at a time may use a test root, or two runs would reset the environment under each other and
