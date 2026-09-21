@@ -155,6 +155,14 @@ describe('a newer head, base or candidate', () => {
     expect(result.reasons).toEqual([{ code: 'missing-result', requirement: 'linux/persistence' }]);
   });
 
+  test('a profile the candidate ships but the caller did not define is reported as undefined, not unsupported', () => {
+    const profiles = [{ id: 'windows', os: 'windows', arch: 'x86_64' }] as const;
+    const result = evaluate(input({ profiles, reports: [windowsReport(), linuxReport()] }));
+    expect(result.ignored).toContainEqual({ kind: 'report', id: 'report-linux', reason: 'profile-not-defined' });
+    expect(result.ignored).not.toContainEqual({ kind: 'report', id: 'report-linux', reason: 'unsupported-profile' });
+    expect(result.reasons).toEqual([{ code: 'missing-result', requirement: 'linux/persistence' }]);
+  });
+
   test('a report claiming to be from someone other than its verified uploader is set aside', () => {
     const forged = eligible({ id: 'report-win', actor: 'maintainer' }, { uploader: 'someone-else' });
     const result = evaluate(input({ reports: [forged, linuxReport()] }));
@@ -196,7 +204,7 @@ describe('replays, concurrent testers and offline uploads', () => {
     expect(result.acceptedReportIds).toEqual(['report-a', 'report-b', 'report-linux']);
   });
 
-  test('the order reports and exceptions arrive in, and their upload times, do not change the decision', () => {
+  test('the order reports arrive in, and their upload times, do not change the decision', () => {
     const reports = [windowsReport(), linuxReport()];
     const forward = evaluate(input({ reports }));
     const backward = evaluate(input({ reports: [...reports].reverse().map((r, i) => ({ ...r, provenance: { ...r.provenance, uploadedAt: `2026-0${i + 1}-01T00:00:00Z` } })) }));
@@ -243,6 +251,23 @@ describe('failures and retries', () => {
     expect(result.readiness).toBe('passed');
     expect(result.reasons).toEqual([]);
     expect(result.acceptedReportIds).toEqual(['report-linux', 'report-win', 'report-win-2']);
+  });
+
+  test('a retry that passes on a machine without the required capability does not resolve the failure', () => {
+    const needsHardware = requirement({ key: 'windows/persistence', capabilities: ['hardware'] });
+    const environment = (capabilities: string[]) => ({ os: 'windows', osVersion: '10.0.26200', arch: 'x86_64', capabilities, toolVersion: '0.0.0' });
+    const reportsFor = (retryCapabilities: string[]) => [
+      eligible({ id: 'report-win', environment: environment(['display', 'hardware']), attempts: [attempt('a-win-persist', 'windows/persistence', 'failed'), attempt('a-win-feel', 'windows/device-feel', 'passed')] }),
+      eligible({ id: 'report-win-2', actor: 'bob', machineId: 'lab-win-02', environment: environment(retryCapabilities), attempts: [attempt('a-win-persist-2', 'windows/persistence', 'passed', { retryOf: 'a-win-persist' })] }),
+      linuxReport(),
+    ];
+    const args = { required: [needsHardware, deviceFeel, linuxPersistence], retryResolutions: [resolution] };
+
+    expect(evaluate(input({ ...args, reports: reportsFor(['display', 'hardware']) })).readiness).toBe('passed');
+
+    const result = evaluate(input({ ...args, reports: reportsFor(['display']) }));
+    expect(result.readiness).toBe('blocked');
+    expect(result.reasons).toEqual([{ code: 'unresolved-failure', requirement: 'windows/persistence', attemptId: 'a-win-persist', reportId: 'report-win' }]);
   });
 
   test('an acknowledgement resolves only the failure it names', () => {
@@ -315,6 +340,18 @@ describe('exceptions', () => {
       { code: 'missing-result', requirement: 'linux/persistence' },
     ]);
     expect(result.excused).toEqual([{ reason: { code: 'missing-result', requirement: 'windows/device-feel' }, exceptionId: 'exception-0001' }]);
+  });
+
+  test('when two exceptions cover the same requirement the lowest id is recorded, whatever the arrival order', () => {
+    const missingFeel = [eligible({ id: 'report-win', attempts: [attempt('a1', 'windows/persistence', 'passed')] }), linuxReport()];
+    const earlier = authorized({ id: 'exception-a' });
+    const later = authorized({ id: 'exception-b' });
+    const one = evaluate(input({ reports: missingFeel, exceptions: [later, earlier] }));
+    const other = evaluate(input({ reports: missingFeel, exceptions: [earlier, later] }));
+    expect(one.readiness).toBe('approved-with-exceptions');
+    expect(one.exceptionIds).toEqual(['exception-a']);
+    expect(one.excused).toEqual([{ reason: { code: 'missing-result', requirement: 'windows/device-feel' }, exceptionId: 'exception-a' }]);
+    expect(other).toEqual(one);
   });
 
   test('an exception nobody needed is not applied and the result stays passed', () => {

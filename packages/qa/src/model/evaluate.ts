@@ -50,7 +50,10 @@ export type IgnoredReason =
   | 'other-candidate'
   | 'policy-mismatch'
   | 'test-revision-mismatch'
+  /** The candidate ships no artifact for the report's profile. */
   | 'unsupported-profile'
+  /** The candidate ships the profile but the caller's `profiles` list has no entry for it: a gap on the caller's side. */
+  | 'profile-not-defined'
   | 'environment-mismatch'
   | 'unverified-reporter'
   | 'duplicate-replay'
@@ -143,7 +146,8 @@ function selectReports(input: EvaluationInput, ignored: Ignored[]): { accepted: 
     else if (report.candidateId !== candidate.id) ignore('other-candidate');
     else if (report.policyDigest !== candidate.policyDigest) ignore('policy-mismatch');
     else if (report.testRevision !== candidate.testRevision) ignore('test-revision-mismatch');
-    else if (!supportedProfiles.has(report.profile) || (input.profiles !== undefined && !profileById.has(report.profile))) ignore('unsupported-profile');
+    else if (!supportedProfiles.has(report.profile)) ignore('unsupported-profile');
+    else if (input.profiles !== undefined && !profileById.has(report.profile)) ignore('profile-not-defined');
     else if (!environmentMatches(report, profileById.get(report.profile))) ignore('environment-mismatch');
     else if (report.actor !== provenance.uploader) ignore('unverified-reporter');
     else if (accepted.has(report.id)) ignore('duplicate-replay');
