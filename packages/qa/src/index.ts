@@ -28,3 +28,6 @@ export {
   type Reason,
   type RetryResolution,
 } from './model/evaluate.ts';
+export { eventDigest, parseRunEvent, type AttemptRecorded, type Checkpoint, type RunEvent, type RunStarted, type UploadAcknowledged } from './runner/events.ts';
+export { appendEvent, JournalError, readRun, writeSummary, type AppendResult, type JournalErrorCode, type RunState } from './runner/journal.ts';
+export { renderReport, type RenderedReport, type RenderOptions } from './runner/report.ts';
