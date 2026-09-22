@@ -72,8 +72,9 @@ export async function main(argv: readonly string[], io: Io = defaultIo, cwd: () 
 
 const defaultRoot = (cwd: () => string): string => join(cwd(), '.release-qa');
 
+/** `issues` is always present in JSON output, empty when there are none, so a consumer can key on it unconditionally. */
 function reportError(io: Io, json: boolean, error: string, issues?: readonly ValidationIssue[]): void {
-  io.error(json ? JSON.stringify({ ok: false, error, ...(issues === undefined ? {} : { issues }) }) : error);
+  io.error(json ? JSON.stringify({ ok: false, error, issues: issues ?? [] }) : error);
 }
 
 function printDoctor(io: Io, json: boolean, report: DoctorReport): void {

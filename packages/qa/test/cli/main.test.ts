@@ -54,8 +54,10 @@ describe('bad usage', () => {
     const code = await main(['doctor', '--project', 'p.json', '--profile', 'w', '--nope', '--json'], out.sink);
     expect(code).toBe(EXIT.infrastructure);
     expect(out.log).toEqual([]);
-    const printed = JSON.parse(out.error.join('')) as { ok: boolean; error: string };
+    const printed = JSON.parse(out.error.join('')) as { ok: boolean; error: string; issues: unknown[] };
     expect(printed).toMatchObject({ ok: false, error: expect.stringContaining('nope') });
+    // issues is always present in JSON error output, even empty, so a consumer can key on it unconditionally.
+    expect(printed.issues).toEqual([]);
   });
 });
 
@@ -66,6 +68,14 @@ describe('doctor', () => {
     const code = await main(['doctor', '--project', join(dir, 'nope.json'), '--profile', 'here'], out.sink);
     expect(code).toBe(EXIT.infrastructure);
     expect(out.error.join(' ')).toContain('nope.json');
+  });
+
+  test('a missing project file with --json still includes issues, empty, alongside the read error', async () => {
+    const out = io();
+    const dir = await makeDir();
+    await main(['doctor', '--project', join(dir, 'nope.json'), '--profile', 'here', '--json'], out.sink);
+    const printed = JSON.parse(out.error.join('')) as { issues: unknown[] };
+    expect(printed.issues).toEqual([]);
   });
 
   test('an unsupported profile is exit 3, naming the profiles the project does declare', async () => {

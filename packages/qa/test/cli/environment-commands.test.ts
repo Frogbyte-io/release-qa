@@ -73,6 +73,13 @@ describe('status', () => {
 });
 
 describe('the root check itself failing', () => {
+  // Torn down here rather than at the end of the test, so a failed assertion cannot leave the mock registered and
+  // confusingly break whatever test happens to run after this one.
+  afterEach(async () => {
+    vi.doUnmock('../../src/runner/resources.ts');
+    vi.resetModules();
+  });
+
   test('a root removed between the existence check and resolving it is a command error, not a thrown exception', async () => {
     // checkTestRoot can throw (not return a TestRootCheck) if the directory is removed in that narrow window; this
     // is the only way to exercise that path deterministically rather than racing the real filesystem for it.
@@ -87,7 +94,5 @@ describe('the root check itself failing', () => {
 
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toContain('no longer there');
-    vi.doUnmock('../../src/runner/resources.ts');
-    vi.resetModules();
   });
 });
