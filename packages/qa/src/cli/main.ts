@@ -4,6 +4,7 @@ import { parseArgs } from './args.ts';
 import { runDoctor, type DoctorReport } from './doctor.ts';
 import { runDesignate, runStatus, type StatusReport } from './environment-commands.ts';
 import { loadProject } from './project.ts';
+import type { ValidationIssue } from '../model/validate.ts';
 
 /**
  * `0` passed. `1` a scenario the candidate failed (not yet reachable: no command runs a scenario in this build).
@@ -23,7 +24,7 @@ const defaultIo: Io = { log: (line) => console.log(line), error: (line) => conso
 export async function main(argv: readonly string[], io: Io = defaultIo, cwd: () => string = () => process.cwd()): Promise<number> {
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
-    io.error(parsed.error);
+    reportError(io, parsed.json, parsed.error);
     return EXIT.infrastructure;
   }
   const { command } = parsed;
@@ -32,12 +33,12 @@ export async function main(argv: readonly string[], io: Io = defaultIo, cwd: () 
     case 'doctor': {
       const loaded = await loadProject(command.project);
       if (!loaded.ok) {
-        io.error(command.json ? JSON.stringify({ ok: false, error: loaded.error, issues: loaded.issues ?? [] }) : loaded.error);
+        reportError(io, command.json, loaded.error, loaded.issues);
         return EXIT.infrastructure;
       }
       const result = await runDoctor(loaded.project, command.profile);
       if (!result.ok) {
-        io.error(command.json ? JSON.stringify({ ok: false, error: result.error }) : result.error);
+        reportError(io, command.json, result.error);
         return EXIT.infrastructure;
       }
       printDoctor(io, command.json, result.report);
@@ -48,7 +49,7 @@ export async function main(argv: readonly string[], io: Io = defaultIo, cwd: () 
       const root = command.root ?? defaultRoot(cwd);
       const result = await runDesignate(root);
       if (!result.ok) {
-        io.error(command.json ? JSON.stringify({ ok: false, error: result.error }) : result.error);
+        reportError(io, command.json, result.error);
         return EXIT.infrastructure;
       }
       io.log(command.json ? JSON.stringify(result) : `designated ${result.root}`);
@@ -59,7 +60,7 @@ export async function main(argv: readonly string[], io: Io = defaultIo, cwd: () 
       const root = command.root ?? defaultRoot(cwd);
       const result = await runStatus(root);
       if (!result.ok) {
-        io.error(command.json ? JSON.stringify({ ok: false, error: result.error }) : result.error);
+        reportError(io, command.json, result.error);
         return EXIT.infrastructure;
       }
       // What status finds (undesignated, dirty) is a fact it reports, never a failure of the status command itself.
@@ -70,6 +71,10 @@ export async function main(argv: readonly string[], io: Io = defaultIo, cwd: () 
 }
 
 const defaultRoot = (cwd: () => string): string => join(cwd(), '.release-qa');
+
+function reportError(io: Io, json: boolean, error: string, issues?: readonly ValidationIssue[]): void {
+  io.error(json ? JSON.stringify({ ok: false, error, ...(issues === undefined ? {} : { issues }) }) : error);
+}
 
 function printDoctor(io: Io, json: boolean, report: DoctorReport): void {
   if (json) {

@@ -1,9 +1,9 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { EXIT, main } from '../../src/cli/main.ts';
-import { hostOs } from '../fixtures/processes.ts';
+import { hostOs, hostProfile } from '../fixtures/processes.ts';
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -26,7 +26,7 @@ const validProject = {
   schemaVersion: 1,
   projectId: 'sample',
   releaseBranch: 'main',
-  profiles: [{ id: 'here', os: hostOs(), arch: 'x86_64' }],
+  profiles: [{ ...hostProfile(), id: 'here' }],
   requirements: [{ key: 'here/persistence', mode: 'automated', title: 'Persists data across restarts', capabilities: [] }],
   suites: [],
   scenarioFiles: [],
@@ -47,6 +47,15 @@ describe('bad usage', () => {
   test('an unknown command is exit 3', async () => {
     const out = io();
     expect(await main(['launch'], out.sink)).toBe(EXIT.infrastructure);
+  });
+
+  test('a malformed invocation with --json still gets a JSON error on stderr, not plain text', async () => {
+    const out = io();
+    const code = await main(['doctor', '--project', 'p.json', '--profile', 'w', '--nope', '--json'], out.sink);
+    expect(code).toBe(EXIT.infrastructure);
+    expect(out.log).toEqual([]);
+    const printed = JSON.parse(out.error.join('')) as { ok: boolean; error: string };
+    expect(printed).toMatchObject({ ok: false, error: expect.stringContaining('nope') });
   });
 });
 
@@ -107,7 +116,9 @@ describe('designate and status', () => {
     expect(await main(['status', '--json'], statusOut.sink, () => dir)).toBe(EXIT.ok);
     const report = JSON.parse(statusOut.log.join('')) as { designated: boolean; root: string };
     expect(report.designated).toBe(true);
-    expect(report.root).toBe(join(dir, '.release-qa'));
+    // status reports the resolved path, which is not always byte-identical to the path given (e.g. an 8.3 short
+    // name in the temp path on some Windows machines), though both name the same directory.
+    expect(report.root).toBe(await realpath(join(dir, '.release-qa')));
   });
 
   test('an explicit --root overrides the default', async () => {
@@ -118,7 +129,7 @@ describe('designate and status', () => {
     expect(await main(['designate', '--root', explicit], out.sink, () => dir)).toBe(EXIT.ok);
     const statusOut = io();
     await main(['status', '--root', explicit, '--json'], statusOut.sink, () => dir);
-    expect((JSON.parse(statusOut.log.join('')) as { root: string }).root).toBe(explicit);
+    expect((JSON.parse(statusOut.log.join('')) as { root: string }).root).toBe(await realpath(explicit));
   });
 
   test('status on an undesignated root is exit 0: it reports a fact, it is not itself a failure', async () => {

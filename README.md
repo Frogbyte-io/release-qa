@@ -21,12 +21,19 @@ CLI (`run`, `resume`), the Tauri driver, the dashboard and the GitHub integratio
 
 ## CLI
 
-Run it straight from a checkout; no build step (see [tool layout](docs/decisions/tool-layout.md)):
+Run it straight from a checkout; no build step (see [tool layout](docs/decisions/tool-layout.md)). `designate` and
+`status` work as they stand, against any directory:
 
 ```sh
-node packages/qa/src/cli/main.ts doctor --project qa/project.json --profile windows [--json]
 node packages/qa/src/cli/main.ts designate [--root <path>] [--json]   # marks a directory safe to install and delete into
 node packages/qa/src/cli/main.ts status [--root <path>] [--json]      # reports what a designated root holds, dirty or clean
+```
+
+`doctor` needs a `qa/project.json` from a project that has one (this repository does not ship a sample yet — that
+lands with the CLI's `run`/`resume` commands):
+
+```sh
+node packages/qa/src/cli/main.ts doctor --project path/to/qa/project.json --profile windows [--json]
 ```
 
 `--root` defaults to `.release-qa` under the current directory (gitignored) when not given. Every command prints to

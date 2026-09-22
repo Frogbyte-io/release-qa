@@ -1,6 +1,8 @@
 /**
  * Parses `process.argv.slice(2)`. Never throws: a malformed invocation is a `{ ok: false }` result the caller turns
- * into an exit code, not an exception that would print a stack trace instead of a usable message.
+ * into an exit code, not an exception that would print a stack trace instead of a usable message. `--json` is
+ * decided by a single scan of the whole invocation, independent of where it appears and of everything else that
+ * might be wrong with it, so the caller can render even a parse failure as JSON when that is what was asked for.
  */
 
 export interface DoctorCommand {
@@ -25,7 +27,7 @@ export interface StatusCommand {
 
 export type Command = DoctorCommand | DesignateCommand | StatusCommand;
 
-export type ParsedArgs = { ok: true; command: Command } | { ok: false; error: string };
+export type ParsedArgs = { ok: true; command: Command } | { ok: false; error: string; json: boolean };
 
 interface Spec {
   /** Flags that must be given a value. */
@@ -43,60 +45,63 @@ const SPECS: Record<Command['name'], Spec> = {
 const COMMAND_NAMES = Object.keys(SPECS) as Command['name'][];
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
+  const json = countJson(argv) === 1;
   const [name, ...rest] = argv;
-  if (name === undefined) return fail(`expected a command: ${COMMAND_NAMES.join(', ')}`);
-  if (!isCommandName(name)) return fail(`unknown command "${name}"; expected one of ${COMMAND_NAMES.join(', ')}`);
+  if (name === undefined) return fail(`expected a command: ${COMMAND_NAMES.join(', ')}`, json);
+  if (!isCommandName(name)) return fail(`unknown command "${name}"; expected one of ${COMMAND_NAMES.join(', ')}`, json);
+  if (countJson(argv) > 1) return fail('--json was given more than once', true);
 
   const flags = parseFlags(rest, SPECS[name]);
-  if (!flags.ok) return flags;
+  if (!flags.ok) return fail(flags.error, json);
 
   switch (name) {
     case 'doctor':
-      return { ok: true, command: { name, project: flags.values.project as string, profile: flags.values.profile as string, json: flags.json } };
+      return { ok: true, command: { name, project: flags.values.project as string, profile: flags.values.profile as string, json } };
     case 'designate':
     case 'status':
-      return { ok: true, command: { name, root: flags.values.root as string | undefined, json: flags.json } };
+      return { ok: true, command: { name, root: flags.values.root as string | undefined, json } };
   }
 }
+
+const countJson = (argv: readonly string[]): number => argv.filter((token) => token === '--json').length;
 
 function isCommandName(value: string): value is Command['name'] {
   return (COMMAND_NAMES as string[]).includes(value);
 }
 
-type FlagResult = { ok: true; values: Record<string, string | undefined>; json: boolean } | { ok: false; error: string };
+type FlagResult = { ok: true; values: Record<string, string | undefined> } | { ok: false; error: string };
 
-/** `--json` is a boolean flag common to every command; every other flag takes exactly one value. */
+/** `--json` is handled by the caller; every other token is a `--flag value` pair or an unexpected extra. */
 function parseFlags(args: readonly string[], spec: Spec): FlagResult {
   const known = new Set([...spec.required, ...spec.optional]);
   const values: Record<string, string> = {};
-  let json = false;
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i];
-    if (token === undefined) break;
-    if (token === '--json') {
-      json = true;
-      continue;
-    }
+    if (token === undefined || token === '--json') continue;
     if (!token.startsWith('--')) {
       positional.push(token);
       continue;
     }
     const flag = token.slice(2);
-    if (!known.has(flag)) return fail(`unknown flag "--${flag}"`);
-    if (Object.hasOwn(values, flag)) return fail(`--${flag} was given more than once`);
+    if (!known.has(flag)) return failFlags(`unknown flag "--${flag}"`);
+    if (Object.hasOwn(values, flag)) return failFlags(`--${flag} was given more than once`);
     const value = args[i + 1];
-    if (value === undefined || value.startsWith('--')) return fail(`--${flag} needs a value`);
+    if (value === undefined || value.startsWith('--')) return failFlags(`--${flag} needs a value`);
     values[flag] = value;
     i += 1;
   }
 
-  if (positional.length > 0) return fail(`unexpected argument "${positional[0]}"`);
-  for (const flag of spec.required) if (values[flag] === undefined) return fail(`--${flag} is required`);
-  return { ok: true, values, json };
+  if (positional.length > 0) return failFlags(`unexpected argument "${positional[0]}"`);
+  for (const flag of spec.required) if (values[flag] === undefined) return failFlags(`--${flag} is required`);
+  return { ok: true, values };
 }
 
-function fail(error: string): { ok: false; error: string } {
+function failFlags(error: string): { ok: false; error: string } {
   return { ok: false, error };
+}
+
+function fail(error: string, json: boolean): { ok: false; error: string; json: boolean } {
+  return { ok: false, error, json };
 }

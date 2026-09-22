@@ -36,13 +36,15 @@ export type StatusResult = { ok: true; report: StatusReport } | { ok: false; err
  * report (`designated: false`), not an error; only a root this cannot read at all is an error.
  */
 export async function runStatus(root: string, options: EnvironmentCommandOptions = {}): Promise<StatusResult> {
-  const check = await checkTestRoot(root, options);
-  if (!check.ok) return { ok: true, report: { root, designated: false, reason: check.reason, owned: [] } };
-
   try {
+    const check = await checkTestRoot(root, options);
+    if (!check.ok) return { ok: true, report: { root, designated: false, reason: check.reason, owned: [] } };
+
     const [dirty, owned] = await Promise.all([readDirty(check.root), readLedger(check.root)]);
     return { ok: true, report: { root: check.root, designated: true, owned, ...(dirty === undefined ? {} : { dirty }) } };
   } catch (error) {
-    return { ok: false, error: `could not read the state of ${check.root}: ${message(error)}` };
+    // Covers checkTestRoot too: it can throw if the root is removed between its own existence check and resolving
+    // the real path, a narrow race this function's "never throws" promise still needs to hold against.
+    return { ok: false, error: `could not read the state of ${root}: ${message(error)}` };
   }
 }

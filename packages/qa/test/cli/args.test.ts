@@ -7,6 +7,12 @@ const err = (argv: string[]): string => {
   return result.error;
 };
 
+const failure = (argv: string[]): { error: string; json: boolean } => {
+  const result = parseArgs(argv);
+  if (result.ok) throw new Error(`expected an error, got ${JSON.stringify(result.command)}`);
+  return result;
+};
+
 describe('no command', () => {
   test('an empty argument list names the valid commands', () => {
     expect(err([])).toMatch(/doctor.*designate.*status/);
@@ -15,6 +21,11 @@ describe('no command', () => {
   test('an unrecognised first word names it and the valid commands', () => {
     expect(err(['fly'])).toMatch(/"fly"/);
     expect(err(['fly'])).toMatch(/doctor.*designate.*status/);
+  });
+
+  test('json is reported even when there is no valid command at all', () => {
+    expect(failure(['fly', '--json']).json).toBe(true);
+    expect(failure([]).json).toBe(false);
   });
 });
 
@@ -59,6 +70,20 @@ describe('doctor', () => {
 
   test('an extra positional argument is an error', () => {
     expect(err(['doctor', '--project', 'p.json', '--profile', 'w', 'extra'])).toMatch(/extra/);
+  });
+
+  test('--json given twice is an error, not silently the same as once', () => {
+    expect(err(['doctor', '--project', 'p.json', '--profile', 'w', '--json', '--json'])).toContain('json');
+  });
+
+  test('a malformed invocation that also asked for --json is still reported as wanting json', () => {
+    // The caller decides how to render the error; parsing must not silently downgrade it to plain text.
+    expect(failure(['doctor', '--project', 'p.json', '--profile', 'w', '--nope', '--json']).json).toBe(true);
+    expect(failure(['doctor', '--project', 'p.json', '--profile', 'w', '--json', '--nope']).json).toBe(true);
+  });
+
+  test('a malformed invocation without --json is reported as not wanting json', () => {
+    expect(failure(['doctor', '--project', 'p.json', '--profile', 'w', '--nope']).json).toBe(false);
   });
 });
 

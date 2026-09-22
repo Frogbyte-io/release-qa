@@ -1,6 +1,6 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { runDesignate, runStatus } from '../../src/cli/environment-commands.ts';
 import { spawnOwned, markDirty } from '../../src/runner/resources.ts';
 import { cleanUpProcessesAndRoots, makeTempDir, makeTestRoot, trackProcess } from '../fixtures/processes.ts';
@@ -35,7 +35,9 @@ describe('status', () => {
   test('a designated, clean, empty root is reported clean', async () => {
     const root = await makeTestRoot();
     const result = await runStatus(root);
-    expect(result).toEqual({ ok: true, report: { root, designated: true, owned: [] } });
+    // checkTestRoot reports the resolved path, which on some machines (e.g. an 8.3 short name in the temp path)
+    // is not byte-identical to the path this test created the directory with, though both name the same directory.
+    expect(result).toEqual({ ok: true, report: { root: await realpath(root), designated: true, owned: [] } });
   });
 
   test('reports what the root owns', async () => {
@@ -43,14 +45,15 @@ describe('status', () => {
     const child = await spawnOwned(root, 'helper', process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
     trackProcess(child);
     const result = await runStatus(root);
-    expect(result.ok && result.report.owned).toHaveLength(1);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.report.owned).toHaveLength(1);
   });
 
   test('reports why the environment is dirty', async () => {
     const root = await makeTestRoot();
     await markDirty(root, 'a previous run left the app installed');
     const result = await runStatus(root);
-    expect(result).toEqual({ ok: true, report: { root, designated: true, dirty: 'a previous run left the app installed', owned: [] } });
+    expect(result).toEqual({ ok: true, report: { root: await realpath(root), designated: true, dirty: 'a previous run left the app installed', owned: [] } });
   });
 
   test('an unreadable ledger is a command error, not a silently empty report', async () => {
@@ -66,5 +69,25 @@ describe('status', () => {
     await writeFile(file, 'x');
     const result = await runStatus(file);
     expect(result).toEqual({ ok: true, report: { root: file, designated: false, reason: 'not-a-directory', owned: [] } });
+  });
+});
+
+describe('the root check itself failing', () => {
+  test('a root removed between the existence check and resolving it is a command error, not a thrown exception', async () => {
+    // checkTestRoot can throw (not return a TestRootCheck) if the directory is removed in that narrow window; this
+    // is the only way to exercise that path deterministically rather than racing the real filesystem for it.
+    vi.doMock('../../src/runner/resources.ts', async (importOriginal) => {
+      const real = await importOriginal<typeof import('../../src/runner/resources.ts')>();
+      return { ...real, checkTestRoot: async () => { throw new Error('ENOENT: no longer there'); } };
+    });
+    vi.resetModules();
+    const { runStatus: runStatusWithBrokenCheck } = await import('../../src/cli/environment-commands.ts');
+
+    const result = await runStatusWithBrokenCheck(await makeTestRoot());
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('no longer there');
+    vi.doUnmock('../../src/runner/resources.ts');
+    vi.resetModules();
   });
 });
