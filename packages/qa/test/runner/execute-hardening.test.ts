@@ -175,14 +175,19 @@ describe('hooks that outlive their phase', () => {
     expect(result.cleanup.ok).toBe(true);
   });
 
+  // These two wait for the phase to actually be cut off (the abort reaching the hook's own signal) before the hook
+  // acts, rather than racing a short phase deadline against a fixed sleep: a race like that assumes prerequisites and
+  // phase entry reliably finish in a few milliseconds, which does not hold on a loaded or slow CI machine.
   test('a late spawn from a hook that was cut off is refused and starts nothing', async () => {
     let refused: unknown;
+    const calls: string[] = [];
     // The child would write this file if it were ever allowed to run; it lives in a scratch directory, never the repo.
     const markerFile = join(await makeTempDir('qa-late-'), 'late-spawn-marker');
-    const { context, testRoot } = await arrange({
-      lifecycle: lifecycleOf([], {
+    const { context, controller, testRoot } = await arrange({
+      lifecycle: lifecycleOf(calls, {
         install: async (ctx) => {
-          await sleep(150);
+          calls.push('install');
+          await new Promise<void>((resolve) => ctx.signal.addEventListener('abort', () => resolve(), { once: true }));
           try {
             await ctx.spawn('late', process.execPath, ['-e', `require('fs').writeFileSync(${JSON.stringify(markerFile)}, 'x'); setInterval(() => {}, 1000)`], { stdio: 'ignore' });
           } catch (error) {
@@ -190,11 +195,13 @@ describe('hooks that outlive their phase', () => {
           }
         },
       }),
-      timeouts: { phaseMs: 30, stepsMs: 2000, cleanupMs: 2000, abandonedGraceMs: 400 },
+      timeouts: { phaseMs: 2000, stepsMs: 2000, cleanupMs: 2000, abandonedGraceMs: 400 },
     });
 
-    await executeScenario(context, scenarioOf());
-    await sleep(500);
+    const running = executeScenario(context, scenarioOf());
+    await eventually(() => calls.includes('install'));
+    controller.abort();
+    await running;
 
     expect(refused).toBeInstanceOf(Error);
     expect(String((refused as Error).message)).toMatch(/stopped|no longer/i);
@@ -205,10 +212,12 @@ describe('hooks that outlive their phase', () => {
   test('a late claim of ownership from a hook that was cut off is refused', async () => {
     let refused: unknown;
     let root = '';
-    const { context, testRoot } = await arrange({
-      lifecycle: lifecycleOf([], {
+    const calls: string[] = [];
+    const { context, controller, testRoot } = await arrange({
+      lifecycle: lifecycleOf(calls, {
         install: async (ctx) => {
-          await sleep(150);
+          calls.push('install');
+          await new Promise<void>((resolve) => ctx.signal.addEventListener('abort', () => resolve(), { once: true }));
           try {
             await ctx.own({ kind: 'path', path: join(root, 'late'), label: 'late' });
           } catch (error) {
@@ -216,11 +225,13 @@ describe('hooks that outlive their phase', () => {
           }
         },
       }),
-      timeouts: { phaseMs: 30, stepsMs: 2000, cleanupMs: 2000, abandonedGraceMs: 400 },
+      timeouts: { phaseMs: 2000, stepsMs: 2000, cleanupMs: 2000, abandonedGraceMs: 400 },
     });
     root = testRoot;
-    await executeScenario(context, scenarioOf());
-    await sleep(500);
+    const running = executeScenario(context, scenarioOf());
+    await eventually(() => calls.includes('install'));
+    controller.abort();
+    await running;
     expect(refused).toBeInstanceOf(Error);
     expect(await readLedger(testRoot)).toEqual([]);
   });
