@@ -84,8 +84,15 @@ describe('inspectEnvironment', () => {
       expect(inspected.environment.capabilities).toEqual([]);
     });
 
-    test('a display probe that throws is no display', async () => {
+    test('a display description that rejects is also no display', async () => {
       const broken = { display: async () => true, audio: async () => false, describeDisplay: async (): Promise<never> => { throw new Error('boom'); } };
+      const inspected = await inspectEnvironment(hostProfile(), broken);
+      expect(inspected.display.kind).toBe('none');
+      expect(inspected.environment.capabilities).toEqual([]);
+    });
+
+    test('a display probe that rejects, with no describeDisplay to ask instead, is also no display', async () => {
+      const broken = { display: async (): Promise<boolean> => { throw new Error('boom'); }, audio: async () => false };
       const inspected = await inspectEnvironment(hostProfile(), broken);
       expect(inspected.display.kind).toBe('none');
       expect(inspected.environment.capabilities).toEqual([]);

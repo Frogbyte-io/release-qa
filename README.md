@@ -19,7 +19,7 @@ Stage 0 (proving the assumptions) is under way; the tool itself is not built yet
 
 ## Development
 
-Requires Node.js 22.12 or newer.
+Requires Node.js 22.18 or newer (the CLI needs no build step because Node strips types directly from that version on).
 
 ```sh
 npm ci

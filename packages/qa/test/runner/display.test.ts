@@ -31,6 +31,17 @@ describe('Linux', () => {
     expect(classifyDisplay(linux({ DISPLAY: ':99' }, ['Xvfb :98 -screen 0 1024x768x24'])).kind).toBe('unknown');
   });
 
+  test('an explicit screen number in DISPLAY still matches the Xvfb serving that display', () => {
+    // Xvfb's own argument never carries a screen number (screens are configured separately, with `-screen`); a
+    // client's DISPLAY may still name one explicitly (":99.0" is the same endpoint as ":99").
+    expect(classifyDisplay(linux({ DISPLAY: ':99.0' }, ['Xvfb :99 -screen 0 1280x1024x24'])).kind).toBe('virtual');
+  });
+
+  test('a screen number on either side of the comparison is ignored, but the display number must still match', () => {
+    expect(classifyDisplay(linux({ DISPLAY: ':99' }, ['Xvfb :99.0 -screen 0 1280x1024x24'])).kind).toBe('virtual');
+    expect(classifyDisplay(linux({ DISPLAY: ':99.0' }, ['Xvfb :98.0 -screen 0 1280x1024x24'])).kind).toBe('unknown');
+  });
+
   test('a desktop session is real', () => {
     expect(classifyDisplay(linux({ DISPLAY: ':0', XDG_SESSION_TYPE: 'x11' })).kind).toBe('real');
     expect(classifyDisplay(linux({ WAYLAND_DISPLAY: 'wayland-0', XDG_SESSION_TYPE: 'wayland' })).kind).toBe('real');
@@ -69,8 +80,18 @@ describe('Windows', () => {
   });
 });
 
-test('other platforms are reported as unknown rather than guessed', () => {
-  expect(classifyDisplay({ platform: 'darwin', env: {}, commandLines: [] }).kind).toBe('unknown');
+describe('other platforms', () => {
+  // DISPLAY/WAYLAND_DISPLAY are not required by this platform's own native GUI apps, so their presence or absence
+  // is weak evidence at best; a headless host here still reports none rather than being handed a display capability
+  // it cannot back up.
+  test('no display evidence at all is reported as none, not guessed as a working display', () => {
+    expect(classifyDisplay({ platform: 'darwin', env: {}, commandLines: [] }).kind).toBe('none');
+  });
+
+  test('some display evidence, without a way to classify it further, is reported as unknown', () => {
+    expect(classifyDisplay({ platform: 'darwin', env: { DISPLAY: ':0' }, commandLines: [] }).kind).toBe('unknown');
+    expect(classifyDisplay({ platform: 'darwin', env: { WAYLAND_DISPLAY: 'wayland-0' }, commandLines: [] }).kind).toBe('unknown');
+  });
 });
 
 describe('reading this machine', () => {
