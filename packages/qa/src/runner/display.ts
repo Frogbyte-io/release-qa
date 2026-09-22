@@ -70,14 +70,19 @@ export async function readDisplayFacts(): Promise<DisplayFacts> {
   return { platform, env: process.env, commandLines: platform === 'linux' ? await linuxCommandLines() : [] };
 }
 
+// Every process is read, not just the first few thousand: missing the one X server that happens to be serving this
+// display would misclassify a virtual display as unknown or real. Read in bounded batches rather than opening every
+// /proc/<pid>/cmdline at once, so a host with many thousands of processes cannot exhaust file descriptors.
+const CMDLINE_BATCH_SIZE = 256;
+
 async function linuxCommandLines(): Promise<string[]> {
   const entries = await readdir('/proc').catch(() => [] as string[]);
-  // Every process is read, not just the first few thousand: missing the one X server that happens to be serving
-  // this display would misclassify a virtual display as unknown or real.
-  const lines = await Promise.all(
-    entries
-      .filter((name) => /^\d+$/.test(name))
-      .map((pid) => readFile(`/proc/${pid}/cmdline`, 'utf8').then((text) => text.split('\0').join(' ').trim(), () => '')),
-  );
+  const pids = entries.filter((name) => /^\d+$/.test(name));
+  const lines: string[] = [];
+  for (let start = 0; start < pids.length; start += CMDLINE_BATCH_SIZE) {
+    const batch = pids.slice(start, start + CMDLINE_BATCH_SIZE);
+    const read = await Promise.all(batch.map((pid) => readFile(`/proc/${pid}/cmdline`, 'utf8').then((text) => text.split('\0').join(' ').trim(), () => '')));
+    lines.push(...read);
+  }
   return lines.filter((line) => line !== '');
 }
