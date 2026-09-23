@@ -16,9 +16,9 @@ Status: **implemented** for the CLI's `run`, `resume` and `reset`, against fixtu
 }
 ```
 
-- One artifact per profile; `path` is relative to the manifest's own directory and cannot leave it.
-- Before anything is installed, the chosen profile's file is hashed and must match `sha256`. Other profiles' files are never read.
-- It has no source or build provenance, so it can never stand in for a GitHub candidate at the merge gate (Stage 3). Hooks receive only `candidate.id` and the verified `artifact` (`name`, absolute `path`, `sha256`); a full GitHub candidate record also fits `candidate`.
+- One artifact per profile; `path` is relative to the manifest's own directory and cannot leave it, lexically or through a link: the real location must be inside the manifest's real directory.
+- Before anything is installed, the chosen profile's file is hashed at its real location and must match `sha256`; the location is re-checked after hashing. Other profiles' files are never read.
+- It has no source or build provenance, so it can never stand in for a GitHub candidate at the merge gate (Stage 3). Hooks receive only `candidate.id` and the verified `artifact` (`name`, its real absolute `path` with no link left in it, `sha256`); a full GitHub candidate record also fits `candidate`.
 
 ## Consumer code
 
@@ -26,24 +26,25 @@ Status: **implemented** for the CLI's `run`, `resume` and `reset`, against fixtu
 
 ## State
 
-- Default test root: `.release-qa` under the current directory; default state directory: `.release-qa/runs` (both gitignored). Each run is `runs/<run id>/` with `invocation.json` (what was asked, absolute paths), `events.jsonl` (the Task 1.3 journal) and `summary.json`.
+- Default test root: `.release-qa` under the current directory; default state directory: `.release-qa/runs` (both gitignored). Each run is `runs/<run id>/` with `invocation.json` (what was asked, absolute paths, and the tested artifact's SHA-256), `events.jsonl` (the Task 1.3 journal) and `summary.json`.
 - The machine is identified in run records by a random token kept in the state directory, never the host name.
-- `run` announces `run <id> started` on stderr before anything runs, in every output mode, so a run can be resumed even if the process dies.
+- `run` announces `run <id> started` on stderr before anything runs, in every output mode, with the `resume` command to use (including a custom `--state`, quoted so it pastes safely in bash and PowerShell), so a run can be resumed even if the process dies.
+- A run id is a run id, never a path: `resume --run` accepts only the journal's id grammar, which has no separators.
 
 ## Journal and resume
 
-Each scenario records a `scenario-started` checkpoint, then an attempt. `resume --run <id>`:
+Each scenario records a `scenario-started` checkpoint, then an attempt, then a `cleanup-failed` checkpoint if its cleanup failed. `resume --run <id>`:
 
-- re-verifies the candidate: same manifest id and same bytes, or it refuses (a different candidate is a different run);
-- carries **passed** and **failed** forward (a failure cannot disappear by being run again);
+- re-verifies the candidate: the same manifest id, and bytes whose SHA-256 is the one recorded when the run started (a manifest edited to name new bytes under the same id is refused: that is a different build);
+- carries **passed** and **failed** forward (a failure cannot disappear by being run again), with any recorded cleanup failure;
 - reruns anything else (blocked, cancelled, interrupted, never reached) as a retry (`retryOf`) of its latest attempt;
 - turns a `scenario-started` with no attempt after it (the process died) into an explicit `interrupted` attempt first, so the crash stays in the run's history.
 
-A run whose journal has conflicting or cyclic events is not continued.
+A run whose journal has conflicting or cyclic events, or cannot be read, is not continued.
 
 ## Outcomes and exit codes
 
-One scenario failing does not stop the others; cancellation stops the running scenario (its cleanup still runs) and starts nothing further (`not-run`). Exit codes, highest rule first: any **failed** → `1`; any interrupted, cancelled or not-run → `3`; any blocked or manual → `2`; otherwise `0`. Configuration and verification problems are `3` before anything runs.
+One scenario failing does not stop the others; cancellation stops the running scenario (its cleanup still runs) and starts nothing further (`not-run`). Exit codes, highest rule first: any **failed** → `1`; any interrupted, cancelled or not-run, or any cleanup that failed (the environment was left dirty, however the scenario went) → `3`; any blocked or manual → `2`; otherwise `0`. Configuration and verification problems are `3` before anything runs.
 
 ## Reset
 
@@ -53,3 +54,5 @@ A crash can leave owned resources and a dirty marker in the test root, which blo
 
 - Cancellation by a real signal is tested on Linux only (CI). On Windows a console Ctrl+C reaches the same handler, but a test cannot send one to another process.
 - Evidence files (screenshots, logs) are not collected yet; attempts record `evidence: []`.
+- The artifact's contents could still change after verification; only copying it into the run's own storage would close that. Links cannot redirect it, and the install hook consumes it at once.
+- Consumer code runs in the CLI's own process: a scenario that calls `process.exit` takes the CLI with it. That is the crash `resume` recovers from, not something prevented.

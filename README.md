@@ -45,7 +45,8 @@ run id on stderr before anything runs, so an interrupted run can be continued wi
 Exit codes: `0` passed/ready; `1` a scenario the candidate failed; `2` a missing prerequisite or manual work left (this
 machine does not meet the profile, a scenario was blocked, a manual check remains); `3` anything else that stopped the
 command or left a run unfinished (bad usage, a file that cannot be read or does not verify, an unknown profile or
-suite, an interrupted or cancelled scenario, a reset that could not clean everything). A run takes the highest rule
+suite, an interrupted or cancelled scenario, a cleanup that failed and left the environment dirty, a reset that could not
+clean everything). A run takes the highest rule
 that applies: any failure is `1` even if something else was also interrupted.
 
 ## Development
