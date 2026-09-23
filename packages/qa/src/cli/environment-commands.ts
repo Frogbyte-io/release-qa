@@ -1,4 +1,13 @@
-import { checkTestRoot, designateTestRoot, readDirty, readLedger, type OwnedResource, type TestRootCheck } from '../runner/resources.ts';
+import {
+  acquireTestRoot,
+  checkTestRoot,
+  designateTestRoot,
+  readDirty,
+  readLedger,
+  resetDirtyEnvironment,
+  type OwnedResource,
+  type TestRootCheck,
+} from '../runner/resources.ts';
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -46,5 +55,33 @@ export async function runStatus(root: string, options: EnvironmentCommandOptions
     // Covers checkTestRoot too: it can throw if the root is removed between its own existence check and resolving
     // the real path, a narrow race this function's "never throws" promise still needs to hold against.
     return { ok: false, error: `could not read the state of ${root}: ${message(error)}` };
+  }
+}
+
+export type ResetResult = { ok: true; root: string; failures: string[] } | { ok: false; error: string };
+
+/**
+ * Reaps what earlier runs left owned in this root and, only when that fully succeeds, clears the dirty marker so the
+ * root can be used again. Only a designated root is touched, and only while no run holds it: resetting under a run
+ * would reap resources that run still uses. Never throws.
+ */
+export async function runReset(root: string, options: EnvironmentCommandOptions = {}): Promise<ResetResult> {
+  try {
+    const check = await checkTestRoot(root, options);
+    if (!check.ok) return { ok: false, error: `${root} is not a designated test root (${check.reason}); nothing was touched` };
+    const lock = await acquireTestRoot(check.root);
+    if (!lock.ok) return { ok: false, error: `${check.root} is in use by ${lock.heldBy}; nothing was touched` };
+    try {
+      const { failures } = await resetDirtyEnvironment(check.root);
+      return {
+        ok: true,
+        root: check.root,
+        failures: failures.map((f) => `${f.resource.label}: ${f.reason}${f.detail === undefined ? '' : ` (${f.detail})`}`),
+      };
+    } finally {
+      await lock.release();
+    }
+  } catch (error) {
+    return { ok: false, error: `could not reset ${root}: ${message(error)}` };
   }
 }

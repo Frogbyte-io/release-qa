@@ -25,7 +25,34 @@ export interface StatusCommand {
   json: boolean;
 }
 
-export type Command = DoctorCommand | DesignateCommand | StatusCommand;
+export interface ResetCommand {
+  name: 'reset';
+  root: string | undefined;
+  json: boolean;
+}
+
+export interface RunCommand {
+  name: 'run';
+  project: string;
+  candidate: string;
+  profile: string;
+  suite: string;
+  /** The designated test root; absent means the caller's default. */
+  root: string | undefined;
+  /** Where run journals are kept; absent means the caller's default. */
+  state: string | undefined;
+  json: boolean;
+}
+
+/** Continues a run exactly as it was started: the project, candidate, profile, suite and root are the run's own. */
+export interface ResumeCommand {
+  name: 'resume';
+  run: string;
+  state: string | undefined;
+  json: boolean;
+}
+
+export type Command = DoctorCommand | DesignateCommand | StatusCommand | ResetCommand | RunCommand | ResumeCommand;
 
 export type ParsedArgs = { ok: true; command: Command } | { ok: false; error: string; json: boolean };
 
@@ -40,6 +67,9 @@ const SPECS: Record<Command['name'], Spec> = {
   doctor: { required: ['project', 'profile'], optional: [] },
   designate: { required: [], optional: ['root'] },
   status: { required: [], optional: ['root'] },
+  reset: { required: [], optional: ['root'] },
+  run: { required: ['project', 'candidate', 'profile', 'suite'], optional: ['root', 'state'] },
+  resume: { required: ['run'], optional: ['state'] },
 };
 
 const COMMAND_NAMES = Object.keys(SPECS) as Command['name'][];
@@ -59,7 +89,14 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       return { ok: true, command: { name, project: flags.values.project as string, profile: flags.values.profile as string, json } };
     case 'designate':
     case 'status':
-      return { ok: true, command: { name, root: flags.values.root as string | undefined, json } };
+    case 'reset':
+      return { ok: true, command: { name, root: flags.values.root, json } };
+    case 'run': {
+      const { project, candidate, profile, suite, root, state } = flags.values as Record<string, string>;
+      return { ok: true, command: { name, project: project!, candidate: candidate!, profile: profile!, suite: suite!, root, state, json } };
+    }
+    case 'resume':
+      return { ok: true, command: { name, run: flags.values.run as string, state: flags.values.state, json } };
   }
 }
 

@@ -1,9 +1,14 @@
-import { mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { EXIT, main } from '../../src/cli/main.ts';
-import { hostOs, hostProfile } from '../fixtures/processes.ts';
+import { writeConsumer } from '../fixtures/consumer.ts';
+import { cleanUpProcessesAndRoots, eventually, hostOs, hostProfile } from '../fixtures/processes.ts';
+
+// Reading a process's identity starts PowerShell on Windows, which can take seconds on a busy CI runner.
+vi.setConfig({ testTimeout: 30_000 });
+afterEach(cleanUpProcessesAndRoots);
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -147,5 +152,89 @@ describe('designate and status', () => {
     const dir = await makeDir();
     expect(await main(['status'], out.sink, () => dir)).toBe(EXIT.ok);
     expect(out.log.join(' ')).toContain('designated: false');
+  });
+});
+
+describe('run, resume and reset', () => {
+  async function designated(consumerDir: string): Promise<void> {
+    const out = io();
+    expect(await main(['designate'], out.sink, () => consumerDir)).toBe(EXIT.ok);
+  }
+  const runArgs = (consumer: Awaited<ReturnType<typeof writeConsumer>>) => ['run', '--project', consumer.projectPath, '--candidate', consumer.candidatePath, '--profile', consumer.profile, '--suite', 'release'];
+
+  test('a passing run exits 0 and prints its summary; root and state default to .release-qa under the directory', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await designated(consumer.dir);
+    const out = io();
+
+    const code = await main([...runArgs(consumer), '--json'], out.sink, () => consumer.dir);
+
+    expect(code).toBe(EXIT.ok);
+    const summary = JSON.parse(out.log.join('')) as { runId: string; results: Array<{ outcome: string }> };
+    expect(summary.results.map((r) => r.outcome)).toEqual(['passed']);
+    expect(await realpath(join(consumer.dir, '.release-qa', 'runs', summary.runId))).toBeTruthy();
+  });
+
+  test('the run id is announced on stderr as soon as the run exists, so it can be resumed even if the process dies', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await designated(consumer.dir);
+    const order: string[] = [];
+    const sink = { log: (line: string) => order.push(`out:${line}`), error: (line: string) => order.push(`err:${line}`) };
+    await main([...runArgs(consumer), '--json'], sink, () => consumer.dir);
+    const { runId } = JSON.parse(order.find((l) => l.startsWith('out:'))!.slice(4)) as { runId: string };
+    const announcement = order.findIndex((l) => l.startsWith('err:') && l.includes(runId));
+    expect(announcement).toBeGreaterThanOrEqual(0);
+    expect(announcement).toBeLessThan(order.findIndex((l) => l.startsWith('out:')));
+  });
+
+  test('a failing scenario makes the run exit 1', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'fail' } });
+    await designated(consumer.dir);
+    expect(await main(runArgs(consumer), io().sink, () => consumer.dir)).toBe(EXIT.scenarioFailure);
+  });
+
+  test('a manual requirement left over makes the run exit 2', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' }, manual: ['audio'] });
+    await designated(consumer.dir);
+    expect(await main(runArgs(consumer), io().sink, () => consumer.dir)).toBe(EXIT.missingPrerequisite);
+  });
+
+  test('a candidate that does not verify exits 3 before anything runs', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await designated(consumer.dir);
+    await writeFile(join(consumer.dir, 'setup.bin'), 'tampered');
+    const out = io();
+    expect(await main([...runArgs(consumer), '--json'], out.sink, () => consumer.dir)).toBe(EXIT.infrastructure);
+    expect((JSON.parse(out.error.join('')) as { error: string }).error).toContain('does not match');
+  });
+
+  test('cancelling through the signal exits 3, and resume then finishes the run', async () => {
+    const consumer = await writeConsumer({ scenarios: { startup: 'pass', persistence: 'hang' } });
+    await designated(consumer.dir);
+    const controller = new AbortController();
+    const out = io();
+    const running = main([...runArgs(consumer), '--json'], out.sink, () => consumer.dir, controller.signal);
+    await eventually(async () => (await readFile(consumer.logPath, 'utf8').catch(() => '')).includes('steps:persistence'));
+    controller.abort();
+    expect(await running).toBe(EXIT.infrastructure);
+    const { runId } = JSON.parse(out.log.join('')) as { runId: string };
+
+    await rm(consumer.holdPath);
+    const resumed = io();
+    expect(await main(['resume', '--run', runId, '--json'], resumed.sink, () => consumer.dir)).toBe(EXIT.ok);
+    const summary = JSON.parse(resumed.log.join('')) as { results: Array<{ outcome: string; carried?: boolean }> };
+    expect(summary.results.map((r) => [r.outcome, r.carried ?? false])).toEqual([['passed', true], ['passed', false]]);
+  });
+
+  test('resuming a run that does not exist exits 3', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    expect(await main(['resume', '--run', 'run-nope'], io().sink, () => consumer.dir)).toBe(EXIT.infrastructure);
+  });
+
+  test('reset on a clean designated root exits 0; on an undesignated one, 3', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    expect(await main(['reset'], io().sink, () => consumer.dir)).toBe(EXIT.infrastructure);
+    await designated(consumer.dir);
+    expect(await main(['reset'], io().sink, () => consumer.dir)).toBe(EXIT.ok);
   });
 });
