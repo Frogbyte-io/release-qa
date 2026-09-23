@@ -2,7 +2,7 @@ import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { EXIT, main } from '../../src/cli/main.ts';
+import { EXIT, main, resumeHint } from '../../src/cli/main.ts';
 import { writeConsumer } from '../fixtures/consumer.ts';
 import { cleanUpProcessesAndRoots, eventually, hostOs, hostProfile } from '../fixtures/processes.ts';
 
@@ -250,5 +250,28 @@ describe('run, resume and reset', () => {
     expect(await main(['reset'], io().sink, () => consumer.dir)).toBe(EXIT.infrastructure);
     await designated(consumer.dir);
     expect(await main(['reset'], io().sink, () => consumer.dir)).toBe(EXIT.ok);
+  });
+});
+
+describe('the resume hint', () => {
+  test('a plain state directory is written as it is', () => {
+    expect(resumeHint('run-1', String.raw`C:\qa\runs`)).toBe(String.raw`resume --run run-1 --state C:\qa\runs`);
+    expect(resumeHint('run-1', '/srv/qa/runs')).toBe('resume --run run-1 --state /srv/qa/runs');
+  });
+
+  test('without a custom state directory there is nothing to add', () => {
+    expect(resumeHint('run-1', undefined)).toBe('resume --run run-1');
+  });
+
+  // Single quotes are literal in both bash and PowerShell, so nothing inside them is expanded or substituted.
+  test.each([[String.raw`C:\My QA\runs`], ['/tmp/$HOME/runs'], ['/tmp/`id`/runs'], ['/tmp/a"b/runs']])('%s is single-quoted so it pastes safely', (dir) => {
+    expect(resumeHint('run-1', dir)).toBe(`resume --run run-1 --state '${dir}'`);
+  });
+
+  test('a path containing a single quote is not put into a command at all, but still named', () => {
+    const hint = resumeHint('run-1', "/tmp/it's/runs");
+    expect(hint).not.toMatch(/--state '/);
+    expect(hint).toContain("/tmp/it's/runs");
+    expect(hint).toContain('resume --run run-1');
   });
 });

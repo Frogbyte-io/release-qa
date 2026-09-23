@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { loadCandidate } from '../../src/cli/candidate.ts';
 
 const dirs: string[] = [];
@@ -45,7 +45,8 @@ describe('loading a candidate for one profile', () => {
     const result = await loaded(path, 'windows');
 
     expect(result.candidate).toEqual({ id: 'local-1' });
-    expect(result.artifact).toEqual({ name: 'setup.exe', path: join(dir, 'dist', 'setup.exe'), sha256: sha('installer bytes') });
+    // Hooks get the file's real location, so nothing on the way can be swapped to point elsewhere afterwards.
+    expect(result.artifact).toEqual({ name: 'setup.exe', path: await realpath(join(dir, 'dist', 'setup.exe')), sha256: sha('installer bytes') });
   });
 
   test('a file whose bytes do not match the manifest is refused, naming both hashes', async () => {
@@ -106,5 +107,31 @@ describe('the artifact path cannot leave the manifest directory through a link',
     const error = await failed(path, 'windows');
 
     expect(error).toMatch(/outside/);
+  });
+});
+
+describe('the path hooks are given', () => {
+  test('a link inside the manifest directory is resolved, so hooks get a path with no link left to swap', async () => {
+    const { dir, path } = await manifestWith({ 'real-dist/setup.exe': 'x' }, [{ profile: 'windows', name: 'setup.exe', path: 'dist/setup.exe', sha256: sha('x') }]);
+    await symlink(join(dir, 'real-dist'), join(dir, 'dist'), 'junction');
+    const result = await loaded(path, 'windows');
+    expect(result.artifact.path).toBe(await realpath(join(dir, 'real-dist', 'setup.exe')));
+  });
+});
+
+describe('a real path that cannot be resolved', () => {
+  afterEach(() => {
+    vi.doUnmock('node:fs/promises');
+    vi.resetModules();
+  });
+
+  test('is a refusal, not a thrown error', async () => {
+    const { path } = await manifestWith({ 'setup.exe': 'x' }, [{ profile: 'windows', name: 'setup.exe', path: 'setup.exe', sha256: sha('x') }]);
+    vi.doMock('node:fs/promises', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:fs/promises')>()), realpath: async () => { throw new Error('EACCES: resolving denied'); } }));
+    vi.resetModules();
+    const { loadCandidate: loadWithBrokenRealpath } = await import('../../src/cli/candidate.ts');
+    const result = await loadWithBrokenRealpath(path, 'windows');
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('resolving denied');
   });
 });

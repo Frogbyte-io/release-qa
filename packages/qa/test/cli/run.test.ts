@@ -1,4 +1,4 @@
-import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { exitCodeOf, resumeRun, startRun, type RequirementResult, type RunOptions, type RunSummary } from '../../src/cli/run.ts';
@@ -47,7 +47,8 @@ describe('starting a run', () => {
 
     expect(summary.exitCode).toBe(0);
     expect(outcomes(summary)).toEqual({ startup: 'passed', persistence: 'passed' });
-    const artifact = join(consumer.dir, 'setup.bin');
+    // Hooks get the file's real path (on some machines not byte-identical to the one it was written through).
+    const artifact = await realpath(join(consumer.dir, 'setup.bin'));
     expect(await calls(consumer)).toEqual([
       `install ${artifact}`, `reset ${artifact}`, `launch ${artifact}`, `steps:startup ${artifact}`, `cleanup ${artifact}`,
       `install ${artifact}`, `reset ${artifact}`, `launch ${artifact}`, `steps:persistence ${artifact}`, `cleanup ${artifact}`,
@@ -255,7 +256,7 @@ describe('resuming a run whose journal cannot be trusted', () => {
   });
 });
 
-describe('review round 1', () => {
+describe('resuming checks the candidate is the one the run tested', () => {
   test('resume refuses a manifest that keeps the id but now names different bytes: that is a different build', async () => {
     const { consumer, options, invocation } = await setUp({ persistence: 'throw' });
     const first = await started(invocation, options);
@@ -281,5 +282,27 @@ describe('review round 1', () => {
     await (await import('node:fs/promises')).mkdir(log);
     const result = await resumeRun(first.runId, options);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('a failed cleanup survives a resume', () => {
+  test('a passed scenario whose cleanup failed is carried forward with that failure, so the run still exits 3', async () => {
+    const { consumer, root, options, invocation } = await setUp({ persistence: 'pass', uninstall: 'pass' });
+    await writeFile(consumer.failCleanupPath, 'x');
+    const first = await started(invocation, options);
+    // The failed cleanup leaves the root dirty, so the next scenario is blocked.
+    expect(outcomes(first)).toEqual({ persistence: 'passed', uninstall: 'blocked' });
+    expect(first.exitCode).toBe(3);
+
+    // The tester fixes the uninstaller and resets the environment, then resumes.
+    await rm(consumer.failCleanupPath);
+    const { runReset } = await import('../../src/cli/environment-commands.ts');
+    expect((await runReset(root)).ok).toBe(true);
+    const summary = await resumed(first.runId, options);
+
+    expect(outcomes(summary)).toEqual({ persistence: 'passed', uninstall: 'passed' });
+    const carried = summary.results.find((r) => r.requirement.endsWith('/persistence'));
+    expect(carried).toMatchObject({ carried: true, cleanup: { ok: false } });
+    expect(summary.exitCode).toBe(3);
   });
 });

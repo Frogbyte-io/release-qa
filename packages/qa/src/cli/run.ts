@@ -67,6 +67,8 @@ export interface RunOptions {
 const INVOCATION_FILE = 'invocation.json';
 const MACHINE_FILE = 'machine-id';
 const STARTED = 'scenario-started';
+/** Recorded after an attempt whose cleanup failed, so a resumed run still reports it for the carried result. */
+const CLEANUP_FAILED = 'cleanup-failed';
 
 /**
  * Starts a run. Everything that can be checked without touching the machine is checked first (project, plan,
@@ -162,7 +164,14 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
     }
 
     if (latest !== undefined && (latest.outcome === 'passed' || latest.outcome === 'failed')) {
-      results.push({ requirement: key, outcome: latest.outcome, attempt: latest.id, carried: true });
+      results.push({
+        requirement: key,
+        outcome: latest.outcome,
+        attempt: latest.id,
+        carried: true,
+        // The environment it left may since have been reset, but the attempt did leave it dirty; that stays on record.
+        ...(history.cleanupFailed ? { cleanup: { ok: false, failures: ['cleanup failed after this attempt, in an earlier session of this run'] } } : {}),
+      });
       continue;
     }
     if (options.signal.aborted) {
@@ -187,6 +196,7 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
     );
     const attempt: Attempt = { id: newAttemptId(), requirement: key, outcome: result.outcome, evidence: [], ...(latest === undefined ? {} : { retryOf: latest.id }) };
     await journal.append('attempt-recorded', { attempt });
+    if (!result.cleanup.ok) await journal.append('checkpoint', { name: CLEANUP_FAILED, requirement: key });
     results.push({
       requirement: key,
       outcome: result.outcome,
@@ -214,19 +224,25 @@ export function exitCodeOf(results: readonly RequirementResult[]): number {
   return 0;
 }
 
-/** The latest recorded attempt for a requirement, and whether a start was recorded after it with no result. */
-function historyOf(state: RunState, key: RequirementKey): { latest?: Attempt; startedAfterLatest: boolean } {
+/**
+ * The latest recorded attempt for a requirement; whether a start was recorded after it with no result (a crash); and
+ * whether its cleanup was recorded as failed.
+ */
+function historyOf(state: RunState, key: RequirementKey): { latest?: Attempt; startedAfterLatest: boolean; cleanupFailed: boolean } {
   let latest: Attempt | undefined;
   let startedAfterLatest = false;
+  let cleanupFailed = false;
   for (const event of state.events) {
     if (event.type === 'attempt-recorded' && event.data.attempt.requirement === key) {
       latest = event.data.attempt;
       startedAfterLatest = false;
-    } else if (event.type === 'checkpoint' && event.data.name === STARTED && event.data.requirement === key) {
-      startedAfterLatest = true;
+      cleanupFailed = false;
+    } else if (event.type === 'checkpoint' && event.data.requirement === key) {
+      if (event.data.name === STARTED) startedAfterLatest = true;
+      if (event.data.name === CLEANUP_FAILED) cleanupFailed = true;
     }
   }
-  return { ...(latest === undefined ? {} : { latest }), startedAfterLatest };
+  return { ...(latest === undefined ? {} : { latest }), startedAfterLatest, cleanupFailed };
 }
 
 /** Appends events in a chain: each names the one before it, so their order never depends on clocks. */

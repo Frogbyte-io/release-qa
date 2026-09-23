@@ -42,22 +42,31 @@ export async function loadCandidate(manifestPath: string, profile: string): Prom
   const info = await stat(path).catch(() => undefined);
   if (info === undefined) return { ok: false, error: `the artifact ${path} for profile "${profile}" does not exist` };
   if (!info.isFile()) return { ok: false, error: `the artifact ${path} for profile "${profile}" is not a file` };
-  // The manifest's path check is lexical; a link on the way could still lead elsewhere. Judge the real locations.
-  const [realDirectory, realFile] = await Promise.all([realpath(dirname(manifestPath)), realpath(path)]);
+  // The manifest's path check is lexical; a link on the way could still lead elsewhere. Judge the real locations, then
+  // hash the real file and give hooks that path, so no link is left in it that could be swapped to point elsewhere.
+  let realDirectory: string;
+  let realFile: string;
+  try {
+    [realDirectory, realFile] = await Promise.all([realpath(dirname(manifestPath)), realpath(path)]);
+  } catch (error) {
+    return { ok: false, error: `could not resolve the artifact ${path}: ${message(error)}` };
+  }
   if (!isInside(realDirectory, realFile)) {
     return { ok: false, error: `the artifact ${path} for profile "${profile}" leads outside the manifest's directory, to ${realFile}` };
   }
 
   let actual: string;
   try {
-    actual = await sha256Of(path);
+    actual = await sha256Of(realFile);
+    // A link swapped while the file was being hashed would make the check above describe some other file.
+    if ((await realpath(path)) !== realFile) return { ok: false, error: `the artifact ${path} changed location while it was being verified` };
   } catch (error) {
     return { ok: false, error: `could not read the artifact ${path}: ${message(error)}` };
   }
   if (actual !== chosen.sha256) {
     return { ok: false, error: `the artifact ${path} does not match the candidate: expected SHA-256 ${chosen.sha256}, found ${actual}` };
   }
-  return { ok: true, candidate: { id: manifest.id }, artifact: { name: chosen.name, path, sha256: actual } };
+  return { ok: true, candidate: { id: manifest.id }, artifact: { name: chosen.name, path: realFile, sha256: actual } };
 }
 
 /** Streams the file, so an installer of any size is hashed without being held in memory. */

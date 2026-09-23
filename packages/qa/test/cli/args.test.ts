@@ -152,7 +152,7 @@ describe('resume', () => {
 });
 
 describe('resume --run is a run id, never a path', () => {
-  test.each([['../../outside'], ['runs/run-1'], ['..\outside'], ['.'], ['']])('%j is refused', (run) => {
+  test.each([['../../outside'], ['runs/run-1'], [String.raw`..\outside`], [String.raw`run\1`], ['.'], ['']])('%j is refused', (run) => {
     expect(err(['resume', '--run', run])).toMatch(/run id/);
   });
 

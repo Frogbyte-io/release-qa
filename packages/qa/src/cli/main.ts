@@ -94,13 +94,12 @@ export async function main(
     case 'run':
     case 'resume': {
       const stateDir = command.state === undefined ? join(defaultRoot(cwd), 'runs') : resolve(cwd(), command.state);
-      // The hint must find the run again: with a custom state directory, it has to say which one.
-      const resumeHint = (runId: string): string => `resume --run ${runId}${command.state === undefined ? '' : ` --state "${stateDir}"`}`;
+      const customState = command.state === undefined ? undefined : stateDir;
       const options: RunOptions = {
         stateDir,
         signal,
         // Announced before anything runs, on stderr in every mode: if the process dies, this is how to resume it.
-        onStart: (runId: string) => io.error(`run ${runId} started; if it is interrupted, continue it with: ${resumeHint(runId)}`),
+        onStart: (runId: string) => io.error(`run ${runId} started; if it is interrupted, continue it with: ${resumeHint(runId, customState)}`),
         // Progress goes to stderr, so stdout carries only the summary.
         ...(command.json ? {} : { onEvent: (event: ScenarioEvent) => io.error(`${event.scenario}: ${event.phase} ${event.status}${event.detail === undefined ? '' : ` (${event.detail})`}`) }),
       };
@@ -128,6 +127,19 @@ export async function main(
 }
 
 const defaultRoot = (cwd: () => string): string => join(cwd(), '.release-qa');
+
+/**
+ * The command that continues a run. With a custom state directory it must name it, and pasting it must not expand
+ * anything: a plain path goes in as it is, anything else in single quotes (literal in both bash and PowerShell), and a
+ * path that itself contains a single quote is named in prose rather than put into a command it would break.
+ */
+export function resumeHint(runId: string, stateDir: string | undefined): string {
+  const command = `resume --run ${runId}`;
+  if (stateDir === undefined) return command;
+  if (/^[A-Za-z0-9_.:\\/-]+$/.test(stateDir)) return `${command} --state ${stateDir}`;
+  if (!stateDir.includes("'")) return `${command} --state '${stateDir}'`;
+  return `${command} --state <the state directory>, which is: ${stateDir}`;
+}
 
 function printRun(io: Io, json: boolean, summary: RunSummary): void {
   if (json) {

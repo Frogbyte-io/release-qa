@@ -38,6 +38,8 @@ export interface Consumer {
   logPath: string;
   /** While this file exists, `hang` scenarios wait for cancellation. Remove it to let them pass. */
   holdPath: string;
+  /** While this file exists (it does not by default), the lifecycle's cleanup hook throws. */
+  failCleanupPath: string;
   profile: string;
   artifactBytes: string;
 }
@@ -79,12 +81,14 @@ export async function writeConsumer(options: ConsumerOptions): Promise<Consumer>
   );
 
   const log = (phase: string) => `appendFileSync(${JSON.stringify(logPath)}, \`${phase} \${ctx.artifact ? ctx.artifact.path : '-'}\\n\`)`;
+  const failCleanupPath = join(dir, 'fail-cleanup');
   await writeFile(
     join(qa, 'lifecycle.ts'),
     [
-      "import { appendFileSync } from 'node:fs';",
+      "import { appendFileSync, existsSync } from 'node:fs';",
       'export const lifecycle = {',
-      ...['install', 'reset', 'launch', 'cleanup'].map((phase) => `  ${phase}: async (ctx) => { ${log(phase)}; },`),
+      ...['install', 'reset', 'launch'].map((phase) => `  ${phase}: async (ctx) => { ${log(phase)}; },`),
+      `  cleanup: async (ctx) => { ${log('cleanup')}; if (existsSync(${JSON.stringify(failCleanupPath)})) throw new Error('the uninstaller crashed'); },`,
       '};',
     ].join('\n'),
   );
@@ -120,5 +124,5 @@ export async function writeConsumer(options: ConsumerOptions): Promise<Consumer>
     }),
   );
 
-  return { dir, projectPath: join(qa, 'project.json'), candidatePath, logPath, holdPath, profile: profile.id, artifactBytes };
+  return { dir, projectPath: join(qa, 'project.json'), candidatePath, logPath, holdPath, failCleanupPath, profile: profile.id, artifactBytes };
 }
