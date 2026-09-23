@@ -15,12 +15,12 @@ const failure = (argv: string[]): { error: string; json: boolean } => {
 
 describe('no command', () => {
   test('an empty argument list names the valid commands', () => {
-    expect(err([])).toMatch(/doctor.*designate.*status/);
+    expect(err([])).toMatch(/doctor.*designate.*status.*reset.*run.*resume/);
   });
 
   test('an unrecognised first word names it and the valid commands', () => {
     expect(err(['fly'])).toMatch(/"fly"/);
-    expect(err(['fly'])).toMatch(/doctor.*designate.*status/);
+    expect(err(['fly'])).toMatch(/doctor.*designate.*status.*reset.*run.*resume/);
   });
 
   test('json is reported even when there is no valid command at all', () => {
@@ -105,5 +105,58 @@ describe('status', () => {
 
   test('--root is optional here too', () => {
     expect(parseArgs(['status'])).toEqual({ ok: true, command: { name: 'status', root: undefined, json: false } });
+  });
+});
+
+describe('reset', () => {
+  test('--root is optional, like designate and status', () => {
+    expect(parseArgs(['reset'])).toEqual({ ok: true, command: { name: 'reset', root: undefined, json: false } });
+    expect(parseArgs(['reset', '--root', 'r'])).toEqual({ ok: true, command: { name: 'reset', root: 'r', json: false } });
+  });
+});
+
+describe('run', () => {
+  const full = ['run', '--project', 'qa/project.json', '--candidate', 'candidate.json', '--profile', 'windows', '--suite', 'release'];
+
+  test('reads the four required flags, and leaves --root and --state to the caller when absent', () => {
+    expect(parseArgs(full)).toEqual({
+      ok: true,
+      command: { name: 'run', project: 'qa/project.json', candidate: 'candidate.json', profile: 'windows', suite: 'release', root: undefined, state: undefined, json: false },
+    });
+  });
+
+  test('reads --root, --state and --json when given', () => {
+    const result = parseArgs([...full, '--root', 'r', '--state', 's', '--json']);
+    expect(result).toMatchObject({ ok: true, command: { root: 'r', state: 's', json: true } });
+  });
+
+  test.each([['--project'], ['--candidate'], ['--profile'], ['--suite']])('missing %s is an error naming it', (flag) => {
+    const index = full.indexOf(flag);
+    const argv = [...full.slice(0, index), ...full.slice(index + 2)];
+    expect(err(argv)).toContain(flag);
+  });
+});
+
+describe('resume', () => {
+  test('reads --run, and leaves --state to the caller', () => {
+    expect(parseArgs(['resume', '--run', 'run-1'])).toEqual({ ok: true, command: { name: 'resume', run: 'run-1', state: undefined, json: false } });
+  });
+
+  test('--run is required', () => {
+    expect(err(['resume'])).toContain('--run');
+  });
+
+  test('resume repeats what run was asked, so run\'s own flags are refused here', () => {
+    expect(err(['resume', '--run', 'run-1', '--profile', 'linux'])).toContain('profile');
+  });
+});
+
+describe('resume --run is a run id, never a path', () => {
+  test.each([['../../outside'], ['runs/run-1'], [String.raw`..\outside`], [String.raw`run\1`], ['.'], ['']])('%j is refused', (run) => {
+    expect(err(['resume', '--run', run])).toMatch(/run id/);
+  });
+
+  test('an ordinary run id is accepted', () => {
+    expect(parseArgs(['resume', '--run', 'run-20260923T101500Z-a1b2c3']).ok).toBe(true);
   });
 });

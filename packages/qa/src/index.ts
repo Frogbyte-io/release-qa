@@ -3,6 +3,7 @@ export const toolName = 'release-qa';
 
 export { parseCandidate, type Artifact, type Candidate } from './model/candidate.ts';
 export { parseException, type Exception } from './model/exception.ts';
+export { parseLocalCandidate, type LocalArtifact, type LocalCandidate } from './model/local-candidate.ts';
 export { parseProject, type EnvironmentProfile, type Project, type Suite } from './model/project.ts';
 export { parseRequirement, type ExecutionMode, type Requirement, type RequirementKey } from './model/requirement.ts';
 export {
@@ -35,6 +36,8 @@ export { defaultProbes, inspectEnvironment, type EnvironmentProbes, type Inspect
 export {
   AssertionFailure,
   executeScenario,
+  type ArtifactRef,
+  type CandidateRef,
   type ExecutionContext,
   type Lifecycle,
   type Phase,

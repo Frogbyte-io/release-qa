@@ -1,10 +1,12 @@
-import { mkdir, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { runDesignate, runStatus } from '../../src/cli/environment-commands.ts';
-import { spawnOwned, markDirty } from '../../src/runner/resources.ts';
+import { runDesignate, runReset, runStatus } from '../../src/cli/environment-commands.ts';
+import { acquireTestRoot, markDirty, readDirty, readLedger, recordOwned, spawnOwned } from '../../src/runner/resources.ts';
 import { cleanUpProcessesAndRoots, makeTempDir, makeTestRoot, trackProcess } from '../fixtures/processes.ts';
 
+// Reading a process's identity starts PowerShell on Windows, which can take seconds on a busy CI runner.
+vi.setConfig({ testTimeout: 30_000 });
 afterEach(cleanUpProcessesAndRoots);
 
 describe('designate', () => {
@@ -69,6 +71,55 @@ describe('status', () => {
     await writeFile(file, 'x');
     const result = await runStatus(file);
     expect(result).toEqual({ ok: true, report: { root: file, designated: false, reason: 'not-a-directory', owned: [] } });
+  });
+});
+
+describe('reset', () => {
+  test('reaps what an earlier run left owned and clears the dirty marker', async () => {
+    const root = await makeTestRoot();
+    const leftover = join(root, 'installed-app');
+    await mkdir(leftover);
+    await recordOwned(root, { kind: 'path', path: leftover, label: 'installed app' });
+    await markDirty(root, 'a run crashed');
+
+    const result = await runReset(root);
+
+    expect(result).toEqual({ ok: true, root: await realpath(root), failures: [] });
+    expect(await readDirty(root)).toBeUndefined();
+    expect(await readLedger(root)).toEqual([]);
+    expect(await stat(leftover).then(() => true, () => false)).toBe(false);
+  });
+
+  test('reports what it could not clean, and leaves the environment dirty', async () => {
+    const root = await makeTestRoot();
+    const outside = await makeTempDir('qa-outside-');
+    await recordOwned(root, { kind: 'path', path: outside, label: 'not really ours' });
+    await markDirty(root, 'a run crashed');
+
+    const result = await runReset(root);
+
+    expect(result.ok && result.failures.join(' ')).toMatch(/not really ours.*outside-test-root/);
+    expect(await readDirty(root)).toBeDefined();
+    expect(await stat(outside).then(() => true, () => false)).toBe(true);
+  });
+
+  test('refuses a directory that is not a designated test root, touching nothing', async () => {
+    const root = await makeTestRoot(false);
+    const result = await runReset(root);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('missing-marker');
+  });
+
+  test('refuses while a run holds the root, so it cannot reap resources out from under it', async () => {
+    const root = await makeTestRoot();
+    const lock = await acquireTestRoot(root);
+    try {
+      const result = await runReset(root);
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.error).toContain(String(process.pid));
+    } finally {
+      if (lock.ok) await lock.release();
+    }
   });
 });
 

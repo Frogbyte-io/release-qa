@@ -8,5 +8,5 @@ experiments/**/output/
 app-icon.png
 # Tauri regenerates these schemas on every build
 examples/**/src-tauri/gen/
-# the CLI's default test-root directory (release-qa designate/status use it when --root is not given)
+# the CLI's default test root and run state (.release-qa, .release-qa/runs) when --root/--state are not given
 .release-qa/

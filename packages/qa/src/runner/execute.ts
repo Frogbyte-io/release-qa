@@ -1,5 +1,4 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import type { Candidate } from '../model/candidate.ts';
 import type { EnvironmentProfile } from '../model/project.ts';
 import type { Requirement, RequirementKey } from '../model/requirement.ts';
 import type { MeasuredEnvironment, Outcome } from '../model/result.ts';
@@ -35,9 +34,24 @@ export interface ScenarioEvent {
   detail?: string;
 }
 
+/** Which candidate a run tests. A full GitHub candidate record fits here; a local run needs only an identity. */
+export interface CandidateRef {
+  id: string;
+}
+
+/** The candidate's file for this profile, already checked against its SHA-256 before anything ran. */
+export interface ArtifactRef {
+  name: string;
+  /** Absolute path to the verified file. */
+  path: string;
+  sha256: string;
+}
+
 /** What a lifecycle hook or scenario may do. `own` and `spawn` record ownership before anything is used. */
 export interface RunContext {
-  candidate: Candidate;
+  candidate: CandidateRef;
+  /** Present when the run tests a file; every hook and the steps see the same one. */
+  artifact?: ArtifactRef;
   profile: EnvironmentProfile;
   testRoot: string;
   signal: AbortSignal;
@@ -65,7 +79,8 @@ export interface Scenario {
 }
 
 export interface ExecutionContext {
-  candidate: Candidate;
+  candidate: CandidateRef;
+  artifact?: ArtifactRef;
   profile: EnvironmentProfile;
   testRoot: string;
   signal: AbortSignal;
@@ -309,6 +324,7 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
       };
       return {
         candidate: context.candidate,
+        ...(context.artifact === undefined ? {} : { artifact: context.artifact }),
         profile: context.profile,
         testRoot: root,
         signal,

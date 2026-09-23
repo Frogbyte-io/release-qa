@@ -15,6 +15,41 @@ vi.setConfig({ testTimeout: 30_000 });
 afterEach(cleanUpProcessesAndRoots);
 
 const sleeper = ['-e', 'setInterval(() => {}, 1000)'];
+// Spawning and reaping a real process each read its identity, which on Windows starts PowerShell and can take seconds
+// under load, so the steps (spawn) and cleanup (reap) budgets both allow for it. A cleanup budget too tight for that
+// cuts reaping off; it then finishes in the background, after the assertions below have looked.
+const REAPING_MS = 20_000;
+
+describe('what the hooks are told about the candidate', () => {
+  test('every hook and the steps receive the same verified artifact and the candidate identity', async () => {
+    const seen: string[] = [];
+    const artifact = { name: 'setup.exe', path: '/tmp/setup.exe', sha256: 'a'.repeat(64) };
+    const note = (phase: string) => async (ctx: { artifact?: typeof artifact; candidate: { id: string } }) => {
+      seen.push(`${phase}:${ctx.candidate.id}:${ctx.artifact?.path}`);
+    };
+    const { context } = await arrange({
+      candidate: { id: 'local-7' },
+      artifact,
+      lifecycle: { install: note('install'), reset: note('reset'), launch: note('launch'), cleanup: note('cleanup') },
+    });
+    await executeScenario(context, scenarioOf({ steps: note('steps') }));
+    expect(seen).toEqual(['install', 'reset', 'launch', 'steps', 'cleanup'].map((phase) => `${phase}:local-7:/tmp/setup.exe`));
+  });
+
+  test('the artifact is simply absent when the run has none', async () => {
+    let seen: unknown = 'unset';
+    const { context } = await arrange();
+    await executeScenario(context, scenarioOf({ steps: async (ctx) => { seen = ctx.artifact; } }));
+    expect(seen).toBeUndefined();
+  });
+
+  test('a full GitHub candidate record is still accepted as the candidate', async () => {
+    let id = '';
+    const { context } = await arrange({ candidate: candidate() });
+    await executeScenario(context, scenarioOf({ steps: async (ctx) => { id = ctx.candidate.id; } }));
+    expect(id).toBe(candidate().id);
+  });
+});
 
 describe('a passing run', () => {
   test('runs the phases in order, emits an event for each, and cleans up', async () => {
@@ -292,7 +327,7 @@ describe('cancelled', () => {
 
 describe('owning only what the run created', () => {
   test('stops a process the scenario spawned even if the cleanup hook forgot it, and leaves an unrelated process alone', async () => {
-    const { context, testRoot } = await arrange();
+    const { context, testRoot } = await arrange({ timeouts: { phaseMs: 2000, stepsMs: REAPING_MS, cleanupMs: REAPING_MS } });
     const unrelated = startUnrelatedProcess();
     let spawnedPid = 0;
 
@@ -304,13 +339,14 @@ describe('owning only what the run created', () => {
     }));
 
     expect(result.outcome).toBe('passed');
+    expect(result.cleanup).toEqual({ ok: true, failures: [] });
     await eventually(() => !isAlive(spawnedPid));
     expect(isAlive(unrelated.pid as number)).toBe(true);
     expect(await readLedger(testRoot)).toEqual([]);
   });
 
   test('reaps what the run owned even when the steps failed', async () => {
-    const { context } = await arrange();
+    const { context } = await arrange({ timeouts: { phaseMs: 2000, stepsMs: REAPING_MS, cleanupMs: REAPING_MS } });
     let spawnedPid = 0;
     const result = await executeScenario(context, scenarioOf({
       steps: async (ctx) => {
@@ -319,6 +355,7 @@ describe('owning only what the run created', () => {
       },
     }));
     expect(result.outcome).toBe('failed');
+    expect(result.cleanup).toEqual({ ok: true, failures: [] });
     await eventually(() => !isAlive(spawnedPid));
   });
 

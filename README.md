@@ -12,35 +12,42 @@ The first targets are Tauri applications on Windows and Linux, with Dot X as the
 ## Status
 
 Stage 0 (proving the assumptions) is complete. The runner (environment checks, scenario execution, the durable run
-journal) and a first slice of the CLI (`doctor`, `designate`, `status`) exist; running an actual scenario from the
-CLI (`run`, `resume`), the Tauri driver, the dashboard and the GitHub integration do not yet.
+journal) and the CLI's local commands (`doctor`, `designate`, `status`, `reset`, `run`, `resume`) exist. The Tauri
+driver adapter and a runnable sample consumer, the dashboard and the GitHub integration do not exist yet.
 
 - [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. The Dot X feasibility check is still open.
 - [GitHub merge gate](docs/decisions/github-gate.md): a no-service required check works, with documented design changes and unproven items.
 - [Tool layout and defaults](docs/decisions/tool-layout.md): runtime, package manager, baselines and repository structure.
+- [Local runs](docs/decisions/local-runs.md): the local candidate manifest, run state, resume rules and exit codes.
 
 ## CLI
 
-Run it straight from a checkout; no build step (see [tool layout](docs/decisions/tool-layout.md)). `designate` and
-`status` work as they stand, against any directory:
+Run it straight from a checkout; no build step (see [tool layout](docs/decisions/tool-layout.md)):
 
 ```sh
 node packages/qa/src/cli/main.ts designate [--root <path>] [--json]   # marks a directory safe to install and delete into
 node packages/qa/src/cli/main.ts status [--root <path>] [--json]      # reports what a designated root holds, dirty or clean
+node packages/qa/src/cli/main.ts reset [--root <path>] [--json]       # reaps what a crashed run left, clears the dirty marker
+node packages/qa/src/cli/main.ts doctor --project <qa/project.json> --profile <id> [--json]
+node packages/qa/src/cli/main.ts run --project <qa/project.json> --candidate <candidate.json> --profile <id> --suite <id> [--root <path>] [--state <dir>] [--json]
+node packages/qa/src/cli/main.ts resume --run <run id> [--state <dir>] [--json]
 ```
 
-`doctor` needs a `qa/project.json` from a project that has one (this repository does not ship a sample yet — that
-lands with the CLI's `run`/`resume` commands):
+`doctor` and `run` need a consumer's `qa/project.json`; this repository does not ship a runnable sample consumer yet.
+`run` also needs a [local candidate manifest](docs/decisions/local-runs.md#the-local-candidate-manifest) naming the
+file to test and its SHA-256, which is checked before anything is installed.
 
-```sh
-node packages/qa/src/cli/main.ts doctor --project path/to/qa/project.json --profile windows [--json]
-```
+`--root` defaults to `.release-qa` and `--state` to `.release-qa/runs`, under the current directory (gitignored).
+Results go to stdout, problems and progress to stderr; `--json` makes the result one line of JSON. `run` prints its
+run id on stderr before anything runs, so an interrupted run can be continued with `resume`. Interrupting `run` once
+(Ctrl+C) cancels it cleanly; a second interrupt exits at once.
 
-`--root` defaults to `.release-qa` under the current directory (gitignored) when not given. Every command prints to
-stdout on success and to stderr on failure; `--json` switches both to one line of machine-readable JSON. Exit codes:
-`0` passed/ready, `1` a scenario the candidate failed (not reachable yet — no command runs a scenario), `2` this
-machine does not meet a requested profile, `3` anything else that stopped the command (bad usage, an unreadable or
-invalid project file, a profile the project does not declare).
+Exit codes: `0` passed/ready; `1` a scenario the candidate failed; `2` a missing prerequisite or manual work left (this
+machine does not meet the profile, a scenario was blocked, a manual check remains); `3` anything else that stopped the
+command or left a run unfinished (bad usage, a file that cannot be read or does not verify, an unknown profile or
+suite, an interrupted or cancelled scenario, a cleanup that failed and left the environment dirty, a reset that could not
+clean everything). A run takes the highest rule
+that applies: any failure is `1` even if something else was also interrupted.
 
 ## Development
 

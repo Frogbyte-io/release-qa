@@ -112,7 +112,8 @@ describe('every wait is bounded, including prerequisites and the event sink', ()
     const { context } = await arrange({
       lifecycle: lifecycleOf(calls),
       emit: (event) => (event.phase === 'install' && event.status === 'started' ? never() : undefined),
-      timeouts: { phaseMs: 80, stepsMs: 2000, cleanupMs: 2000 },
+      // Shared with prerequisites: enough room to reach install on a loaded machine, where the sink then hangs.
+      timeouts: { phaseMs: 300, stepsMs: 2000, cleanupMs: 2000 },
     });
     const result = await executeScenario(context, scenarioOf());
     expect(result).toMatchObject({ outcome: 'interrupted', reason: 'infrastructure-error' });
@@ -165,13 +166,16 @@ describe('hooks that outlive their phase', () => {
     expect((await executeScenario({ ...context, signal: new AbortController().signal }, scenarioOf())).reason).toBe('dirty-environment');
   });
 
+  // The phase budget is shared with prerequisites, so it must leave room to reach install on a loaded machine;
+  // otherwise prerequisites time out instead and this passes without testing an install being cut off at all.
   test('a hook that stops soon after being cut off does not dirty the environment', async () => {
     const { context } = await arrange({
-      lifecycle: lifecycleOf([], { install: () => sleep(80) }),
-      timeouts: { phaseMs: 20, stepsMs: 2000, cleanupMs: 2000, abandonedGraceMs: 1000 },
+      lifecycle: lifecycleOf([], { install: () => sleep(900) }),
+      timeouts: { phaseMs: 300, stepsMs: 2000, cleanupMs: 2000, abandonedGraceMs: 3000 },
     });
     const result = await executeScenario(context, scenarioOf());
     expect(result).toMatchObject({ outcome: 'interrupted', reason: 'timeout' });
+    expect(result.detail).toContain('install');
     expect(result.cleanup.ok).toBe(true);
   });
 
