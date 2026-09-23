@@ -15,8 +15,9 @@ vi.setConfig({ testTimeout: 30_000 });
 afterEach(cleanUpProcessesAndRoots);
 
 const sleeper = ['-e', 'setInterval(() => {}, 1000)'];
-// Reaping a real process reads its identity, which on Windows starts PowerShell and can take seconds under load. A
-// budget that tight cuts reaping off; it then finishes in the background, after the assertions below have looked.
+// Spawning and reaping a real process each read its identity, which on Windows starts PowerShell and can take seconds
+// under load, so the steps (spawn) and cleanup (reap) budgets both allow for it. A cleanup budget too tight for that
+// cuts reaping off; it then finishes in the background, after the assertions below have looked.
 const REAPING_MS = 20_000;
 
 describe('what the hooks are told about the candidate', () => {
@@ -326,7 +327,7 @@ describe('cancelled', () => {
 
 describe('owning only what the run created', () => {
   test('stops a process the scenario spawned even if the cleanup hook forgot it, and leaves an unrelated process alone', async () => {
-    const { context, testRoot } = await arrange({ timeouts: { phaseMs: 2000, stepsMs: 2000, cleanupMs: REAPING_MS } });
+    const { context, testRoot } = await arrange({ timeouts: { phaseMs: 2000, stepsMs: REAPING_MS, cleanupMs: REAPING_MS } });
     const unrelated = startUnrelatedProcess();
     let spawnedPid = 0;
 
@@ -345,7 +346,7 @@ describe('owning only what the run created', () => {
   });
 
   test('reaps what the run owned even when the steps failed', async () => {
-    const { context } = await arrange({ timeouts: { phaseMs: 2000, stepsMs: 2000, cleanupMs: REAPING_MS } });
+    const { context } = await arrange({ timeouts: { phaseMs: 2000, stepsMs: REAPING_MS, cleanupMs: REAPING_MS } });
     let spawnedPid = 0;
     const result = await executeScenario(context, scenarioOf({
       steps: async (ctx) => {

@@ -95,12 +95,18 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       const { project, candidate, profile, suite, root, state } = flags.values as Record<string, string>;
       return { ok: true, command: { name, project: project!, candidate: candidate!, profile: profile!, suite: suite!, root, state, json } };
     }
-    case 'resume':
-      return { ok: true, command: { name, run: flags.values.run as string, state: flags.values.state, json } };
+    case 'resume': {
+      // The run id becomes a directory name under the state directory, so it must never be a path.
+      const run = flags.values.run as string;
+      if (!RUN_ID.test(run)) return fail(`--run must be a run id (letters, digits, ".", "_" or "-", starting with a letter or digit), not ${JSON.stringify(run)}`, json);
+      return { ok: true, command: { name, run, state: flags.values.state, json } };
+    }
   }
 }
 
 const countJson = (argv: readonly string[]): number => argv.filter((token) => token === '--json').length;
+/** The id grammar the journal uses; it has no separators, so a run id can never climb out of the state directory. */
+const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function isCommandName(value: string): value is Command['name'] {
   return (COMMAND_NAMES as string[]).includes(value);

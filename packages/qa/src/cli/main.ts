@@ -93,11 +93,14 @@ export async function main(
 
     case 'run':
     case 'resume': {
+      const stateDir = command.state === undefined ? join(defaultRoot(cwd), 'runs') : resolve(cwd(), command.state);
+      // The hint must find the run again: with a custom state directory, it has to say which one.
+      const resumeHint = (runId: string): string => `resume --run ${runId}${command.state === undefined ? '' : ` --state "${stateDir}"`}`;
       const options: RunOptions = {
-        stateDir: command.state === undefined ? join(defaultRoot(cwd), 'runs') : resolve(cwd(), command.state),
+        stateDir,
         signal,
         // Announced before anything runs, on stderr in every mode: if the process dies, this is how to resume it.
-        onStart: (runId: string) => io.error(`run ${runId} started; if it is interrupted, continue it with: resume --run ${runId}`),
+        onStart: (runId: string) => io.error(`run ${runId} started; if it is interrupted, continue it with: ${resumeHint(runId)}`),
         // Progress goes to stderr, so stdout carries only the summary.
         ...(command.json ? {} : { onEvent: (event: ScenarioEvent) => io.error(`${event.scenario}: ${event.phase} ${event.status}${event.detail === undefined ? '' : ` (${event.detail})`}`) }),
       };
@@ -191,7 +194,14 @@ if (process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === imp
   };
   process.on('SIGINT', interrupt);
   process.on('SIGTERM', interrupt);
-  main(process.argv.slice(2), defaultIo, () => process.cwd(), controller.signal).then((code) => {
-    process.exitCode = code;
-  });
+  main(process.argv.slice(2), defaultIo, () => process.cwd(), controller.signal).then(
+    (code) => {
+      process.exitCode = code;
+    },
+    // main never rejects by design; if a bug makes it, report it as an infrastructure error, not a bare stack trace.
+    (error: unknown) => {
+      console.error(`release-qa stopped unexpectedly: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = EXIT.infrastructure;
+    },
+  );
 }

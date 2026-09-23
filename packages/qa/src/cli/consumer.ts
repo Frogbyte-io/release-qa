@@ -21,6 +21,15 @@ const message = (error: unknown): string => (error instanceof Error ? error.mess
  * a project the user pointed the CLI at. Every problem is found before anything is installed. Never throws.
  */
 export async function loadConsumer(projectPath: string, project: Project, requirements: readonly Requirement[]): Promise<LoadedConsumer> {
+  // Inspecting what a module exports runs its code too (a getter can throw), so all of it is inside this boundary.
+  try {
+    return await inspectConsumer(projectPath, project, requirements);
+  } catch (error) {
+    return { ok: false, error: `could not read the project's lifecycle or scenarios: ${message(error)}` };
+  }
+}
+
+async function inspectConsumer(projectPath: string, project: Project, requirements: readonly Requirement[]): Promise<LoadedConsumer> {
   const base = dirname(resolve(projectPath));
   const load = async (relative: string): Promise<{ ok: true; module: Record<string, unknown> } | { ok: false; error: string }> => {
     const path = resolve(base, ...relative.split('/'));

@@ -150,3 +150,13 @@ describe('resume', () => {
     expect(err(['resume', '--run', 'run-1', '--profile', 'linux'])).toContain('profile');
   });
 });
+
+describe('resume --run is a run id, never a path', () => {
+  test.each([['../../outside'], ['runs/run-1'], ['..\outside'], ['.'], ['']])('%j is refused', (run) => {
+    expect(err(['resume', '--run', run])).toMatch(/run id/);
+  });
+
+  test('an ordinary run id is accepted', () => {
+    expect(parseArgs(['resume', '--run', 'run-20260923T101500Z-a1b2c3']).ok).toBe(true);
+  });
+});

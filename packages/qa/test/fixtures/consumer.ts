@@ -16,7 +16,8 @@ const STEPS: Record<Behaviour, string> = {
   pass: 'async () => {}',
   fail: "async () => { assert.fail('the saved value was not shown after restart'); }",
   throw: "async () => { throw new Error('the driver went away'); }",
-  hang: "(ctx) => existsSync(HOLD) ? new Promise((_, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true })) : Promise.resolve()",
+  // An already-aborted signal never fires 'abort' again, so that case must reject straight away.
+  hang: "(ctx) => !existsSync(HOLD) ? Promise.resolve() : ctx.signal.aborted ? Promise.reject(ctx.signal.reason) : new Promise((_, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true }))",
   crash: "async () => { process.exit(70); }",
 };
 
@@ -42,6 +43,13 @@ export interface Consumer {
 }
 
 export async function writeConsumer(options: ConsumerOptions): Promise<Consumer> {
+  // A typo here would otherwise surface as an obscure error deep in generation, or silently test something else.
+  for (const [id, behaviour] of Object.entries(options.scenarios)) {
+    if (!Object.hasOwn(STEPS, behaviour)) throw new Error(`writeConsumer: scenario "${id}" has unknown behaviour "${behaviour}"`);
+  }
+  if (options.crashOnce !== undefined && !Object.hasOwn(options.scenarios, options.crashOnce)) {
+    throw new Error(`writeConsumer: crashOnce "${options.crashOnce}" is not one of the scenarios`);
+  }
   const dir = await makeTempDir('qa-consumer-');
   const qa = join(dir, 'qa');
   await mkdir(qa, { recursive: true });

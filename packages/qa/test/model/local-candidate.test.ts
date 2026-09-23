@@ -52,3 +52,34 @@ describe('a local candidate manifest', () => {
     expect(issues({ ...valid(), note: 'x' })).toContain('note:unknown-field');
   });
 });
+
+describe('what an artifact entry must be', () => {
+  const entry = (overrides: Record<string, unknown>) => ({ ...valid(), artifacts: [{ ...valid().artifacts[0], ...overrides }] });
+
+  test.each([
+    ['a non-object entry', { ...valid(), artifacts: ['setup.exe'] }, 'artifacts[0]:invalid-type'],
+    ['a name that is a path', entry({ name: 'dist/setup.exe' }), 'artifacts[0].name:unsafe-path'],
+    ['a Windows device name', entry({ name: 'CON' }), 'artifacts[0].name:unsafe-path'],
+    ['an empty name', entry({ name: '' }), 'artifacts[0].name:empty'],
+    ['an empty path', entry({ path: '' }), 'artifacts[0].path:empty'],
+    ['an upper-case profile', entry({ profile: 'Windows' }), 'artifacts[0].profile:malformed-id'],
+  ])('%s is refused', (_label, input, expected) => {
+    expect(issues(input)).toContain(expected);
+  });
+
+  test.each([['id'], ['artifacts']])('a missing %s is refused', (field) => {
+    const input: Record<string, unknown> = valid();
+    delete input[field];
+    expect(issues(input)).toContain(`${field}:missing-field`);
+  });
+
+  test.each([['profile'], ['name'], ['path'], ['sha256']])('an artifact without %s is refused', (field) => {
+    const artifact: Record<string, unknown> = { ...valid().artifacts[0] };
+    delete artifact[field];
+    expect(issues({ ...valid(), artifacts: [artifact] })).toContain(`artifacts[0].${field}:missing-field`);
+  });
+
+  test.each([[null], ['a string'], [[]]])('%j is not a manifest at all', (input) => {
+    expect(parseLocalCandidate(input).ok).toBe(false);
+  });
+});

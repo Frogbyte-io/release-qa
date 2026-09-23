@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { readFile, realpath, stat } from 'node:fs/promises';
+import { dirname, resolve, sep } from 'node:path';
 import { parseLocalCandidate } from '../model/local-candidate.ts';
 import type { ArtifactRef, CandidateRef } from '../runner/execute.ts';
 
 export type LoadedCandidate = { ok: true; candidate: CandidateRef; artifact: ArtifactRef } | { ok: false; error: string };
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const fold = (path: string): string => (process.platform === 'win32' ? path.toLowerCase() : path);
+const isInside = (directory: string, path: string): boolean => fold(path).startsWith(fold(directory.endsWith(sep) ? directory : directory + sep));
 
 /**
  * Reads a local candidate manifest, picks the artifact for `profile`, and checks the file's bytes against the
@@ -40,6 +42,11 @@ export async function loadCandidate(manifestPath: string, profile: string): Prom
   const info = await stat(path).catch(() => undefined);
   if (info === undefined) return { ok: false, error: `the artifact ${path} for profile "${profile}" does not exist` };
   if (!info.isFile()) return { ok: false, error: `the artifact ${path} for profile "${profile}" is not a file` };
+  // The manifest's path check is lexical; a link on the way could still lead elsewhere. Judge the real locations.
+  const [realDirectory, realFile] = await Promise.all([realpath(dirname(manifestPath)), realpath(path)]);
+  if (!isInside(realDirectory, realFile)) {
+    return { ok: false, error: `the artifact ${path} for profile "${profile}" leads outside the manifest's directory, to ${realFile}` };
+  }
 
   let actual: string;
   try {

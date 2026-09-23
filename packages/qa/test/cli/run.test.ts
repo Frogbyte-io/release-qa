@@ -226,6 +226,14 @@ describe('the run\'s exit code', () => {
   ] as Array<[RequirementResult['outcome'][], number]>)('%j exits %i', (outcomes, code) => {
     expect(exitCodeOf(r(...outcomes))).toBe(code);
   });
+
+  test('a cleanup that failed leaves the environment dirty: 3, even when every scenario passed', () => {
+    const dirty: RequirementResult = { requirement: 'windows/s0', outcome: 'passed', cleanup: { ok: false, failures: ['app: still-running'] } };
+    expect(exitCodeOf([dirty])).toBe(3);
+    expect(exitCodeOf([dirty, { requirement: 'windows/s1', outcome: 'blocked' }])).toBe(3);
+    // ...but a failure still decides it.
+    expect(exitCodeOf([dirty, { requirement: 'windows/s1', outcome: 'failed' }])).toBe(1);
+  });
 });
 
 describe('resuming a run whose journal cannot be trusted', () => {
@@ -244,5 +252,34 @@ describe('resuming a run whose journal cannot be trusted', () => {
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toMatch(/inconsistent/);
     expect((await calls(consumer)).length).toBe(before);
+  });
+});
+
+describe('review round 1', () => {
+  test('resume refuses a manifest that keeps the id but now names different bytes: that is a different build', async () => {
+    const { consumer, options, invocation } = await setUp({ persistence: 'throw' });
+    const first = await started(invocation, options);
+    const { createHash } = await import('node:crypto');
+    await writeFile(join(consumer.dir, 'setup.bin'), 'rebuilt');
+    const manifest = JSON.parse(await readFile(consumer.candidatePath, 'utf8')) as { artifacts: Array<{ sha256: string }> };
+    manifest.artifacts[0]!.sha256 = createHash('sha256').update('rebuilt').digest('hex');
+    await writeFile(consumer.candidatePath, JSON.stringify(manifest));
+    const before = (await calls(consumer)).length;
+
+    const result = await resumeRun(first.runId, options);
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toMatch(/different build|bytes/);
+    expect((await calls(consumer)).length).toBe(before);
+  });
+
+  test('a journal that cannot be read at all is a refusal, not a thrown error', async () => {
+    const { stateDir, options, invocation } = await setUp({ persistence: 'throw' });
+    const first = await started(invocation, options);
+    const log = join(stateDir, first.runId, 'events.jsonl');
+    await rm(log);
+    await (await import('node:fs/promises')).mkdir(log);
+    const result = await resumeRun(first.runId, options);
+    expect(result.ok).toBe(false);
   });
 });

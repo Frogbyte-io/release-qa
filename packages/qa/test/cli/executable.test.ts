@@ -12,7 +12,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { EXIT } from '../../src/cli/main.ts';
 import { readRun } from '../../src/runner/journal.ts';
 import { writeConsumer, type Consumer } from '../fixtures/consumer.ts';
-import { cleanUpProcessesAndRoots, eventually, hostOs } from '../fixtures/processes.ts';
+import { cleanUpProcessesAndRoots, eventually, hostOs, trackProcess } from '../fixtures/processes.ts';
 
 // Each case starts a Node process, and reading a process's identity starts PowerShell on Windows.
 vi.setConfig({ testTimeout: 60_000 });
@@ -149,10 +149,11 @@ describe('running a suite through the executable', () => {
   test.skipIf(process.platform === 'win32')('SIGINT cancels the running scenario, cleans up, and exits 3 with a summary', async () => {
     const consumer = await writeConsumer({ scenarios: { persistence: 'hang', uninstall: 'pass' } });
     expect((await runIn(consumer.dir, 'designate')).code).toBe(EXIT.ok);
-    const child = spawn(process.execPath, [cliPath, ...runArgs(consumer), '--json'], { cwd: consumer.dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = trackProcess(spawn(process.execPath, [cliPath, ...runArgs(consumer), '--json'], { cwd: consumer.dir, stdio: ['ignore', 'pipe', 'pipe'] }));
     let stdout = '';
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    const exited = new Promise<number | null>((resolveExit) => child.on('exit', (code) => resolveExit(code)));
+    // 'close', not 'exit': only then are the output streams flushed, so the summary is complete.
+    const exited = new Promise<number | null>((resolveExit) => child.on('close', (code) => resolveExit(code)));
 
     await eventually(async () => (await readFile(consumer.logPath, 'utf8').catch(() => '')).includes('steps:persistence'), 30_000);
     child.kill('SIGINT');

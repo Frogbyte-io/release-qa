@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
@@ -92,5 +92,19 @@ describe('loading a candidate for one profile', () => {
     const path = join(dir, 'candidate.json');
     if (content !== null) await writeFile(path, content);
     expect((await loadCandidate(path, 'windows')).ok).toBe(false);
+  });
+});
+
+describe('the artifact path cannot leave the manifest directory through a link', () => {
+  test('a directory link pointing outside is refused, and the file behind it is not treated as the candidate', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'qa-cli-outside-'));
+    dirs.push(outside);
+    await writeFile(join(outside, 'setup.exe'), 'somebody else\'s file');
+    const { dir, path } = await manifestWith({}, [{ profile: 'windows', name: 'setup.exe', path: 'dist/setup.exe', sha256: sha('somebody else\'s file') }]);
+    await symlink(outside, join(dir, 'dist'), 'junction');
+
+    const error = await failed(path, 'windows');
+
+    expect(error).toMatch(/outside/);
   });
 });

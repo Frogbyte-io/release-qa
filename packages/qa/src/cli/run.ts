@@ -82,7 +82,8 @@ export async function startRun(input: RunInvocation, options: RunOptions): Promi
   const runDir = join(options.stateDir, runId);
   try {
     await mkdir(runDir, { recursive: true });
-    await writeFileAtomic(join(runDir, INVOCATION_FILE), `${JSON.stringify({ schemaVersion: 1, ...invocation }, null, 2)}\n`);
+    // The artifact's digest is kept with the invocation, so resume can tell a rebuild under the same candidate id.
+    await writeFileAtomic(join(runDir, INVOCATION_FILE), `${JSON.stringify({ schemaVersion: 1, ...invocation, artifactSha256: prepared.artifact.sha256 }, null, 2)}\n`);
     const journal = new Journal(runDir, runId, undefined, 0);
     await journal.append('run-started', { runId, candidateId: prepared.candidate.id, profile: invocation.profile, machineId: await machineId(options.stateDir) });
     options.onStart?.(runId);
@@ -100,23 +101,27 @@ export async function startRun(input: RunInvocation, options: RunOptions): Promi
  */
 export async function resumeRun(runId: string, options: RunOptions): Promise<RunResult> {
   const runDir = join(options.stateDir, runId);
-  const invocation = await readInvocation(runDir);
-  if (!invocation.ok) return invocation;
-
-  const state = await readRun(runDir);
-  const start = state.events.find((e) => e.type === 'run-started');
-  if (start === undefined || start.type !== 'run-started') return { ok: false, error: `run ${runId} has no recorded start` };
-  if (state.conflicts.length > 0 || state.cyclic.length > 0) {
-    return { ok: false, error: `run ${runId}'s journal is inconsistent (conflicting or cyclic events); it cannot be continued safely` };
-  }
-
-  const prepared = await prepare(invocation.value);
-  if (!prepared.ok) return prepared;
-  if (prepared.candidate.id !== start.data.candidateId) {
-    return { ok: false, error: `run ${runId} tested candidate "${start.data.candidateId}", but the manifest now names "${prepared.candidate.id}"` };
-  }
-
   try {
+    const invocation = await readInvocation(runDir);
+    if (!invocation.ok) return invocation;
+
+    const state = await readRun(runDir);
+    const start = state.events.find((e) => e.type === 'run-started');
+    if (start === undefined || start.type !== 'run-started') return { ok: false, error: `run ${runId} has no recorded start` };
+    if (state.conflicts.length > 0 || state.cyclic.length > 0) {
+      return { ok: false, error: `run ${runId}'s journal is inconsistent (conflicting or cyclic events); it cannot be continued safely` };
+    }
+
+    const prepared = await prepare(invocation.value);
+    if (!prepared.ok) return prepared;
+    if (prepared.candidate.id !== start.data.candidateId) {
+      return { ok: false, error: `run ${runId} tested candidate "${start.data.candidateId}", but the manifest now names "${prepared.candidate.id}"` };
+    }
+    // The manifest could have been edited to name new bytes under the same id: that is a different build.
+    if (prepared.artifact.sha256 !== invocation.artifactSha256) {
+      return { ok: false, error: `run ${runId} tested an artifact with SHA-256 ${invocation.artifactSha256}, but the manifest now names ${prepared.artifact.sha256}: a different build` };
+    }
+
     const last = state.events.at(-1);
     const journal = new Journal(runDir, runId, last?.id, state.events.length);
     return { ok: true, summary: await execute(prepared, invocation.value, runId, journal, state, options) };
@@ -197,11 +202,14 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
   return { runId, candidateId: prepared.candidate.id, profile: invocation.profile, suite: invocation.suite, results, exitCode: exitCodeOf(results) };
 }
 
-/** Any failure outranks everything: it is a verdict on the candidate. Then anything unfinished, then work left for a person. */
+/**
+ * Any failure outranks everything: it is a verdict on the candidate. Then anything unfinished, or a cleanup that
+ * failed (the environment is left dirty, however the scenario went), then work left for a person.
+ */
 export function exitCodeOf(results: readonly RequirementResult[]): number {
   const has = (...outcomes: ResultOutcome[]) => results.some((r) => outcomes.includes(r.outcome));
   if (has('failed')) return 1;
-  if (has('interrupted', 'cancelled', 'not-run')) return 3;
+  if (has('interrupted', 'cancelled', 'not-run') || results.some((r) => r.cleanup?.ok === false)) return 3;
   if (has('blocked', 'manual')) return 2;
   return 0;
 }
@@ -244,9 +252,9 @@ class Journal {
   }
 }
 
-const INVOCATION_SPEC: FieldSpec = { required: ['project', 'candidate', 'profile', 'suite', 'root'] };
+const INVOCATION_SPEC: FieldSpec = { required: ['project', 'candidate', 'profile', 'suite', 'root', 'artifactSha256'] };
 
-async function readInvocation(runDir: string): Promise<{ ok: true; value: RunInvocation } | { ok: false; error: string }> {
+async function readInvocation(runDir: string): Promise<{ ok: true; value: RunInvocation; artifactSha256: string } | { ok: false; error: string }> {
   let text: string;
   try {
     text = await readFile(join(runDir, INVOCATION_FILE), 'utf8');
@@ -260,13 +268,16 @@ async function readInvocation(runDir: string): Promise<{ ok: true; value: RunInv
     return { ok: false, error: `${join(runDir, INVOCATION_FILE)} is not valid JSON: ${message(error)}` };
   }
   const result = parseVersioned(parsed, INVOCATION_SPEC, (c: Collector, rec) => ({
-    project: c.text(rec.project, 'project', { max: 4096 }),
-    candidate: c.text(rec.candidate, 'candidate', { max: 4096 }),
-    profile: c.profileId(rec.profile, 'profile'),
-    suite: c.id(rec.suite, 'suite'),
-    root: c.text(rec.root, 'root', { max: 4096 }),
-  }) as RunInvocation);
-  return result.ok ? { ok: true, value: result.value } : { ok: false, error: `${join(runDir, INVOCATION_FILE)}: ${result.error.message}` };
+    value: {
+      project: c.text(rec.project, 'project', { max: 4096 }),
+      candidate: c.text(rec.candidate, 'candidate', { max: 4096 }),
+      profile: c.profileId(rec.profile, 'profile'),
+      suite: c.id(rec.suite, 'suite'),
+      root: c.text(rec.root, 'root', { max: 4096 }),
+    } as RunInvocation,
+    artifactSha256: c.sha256(rec.artifactSha256, 'artifactSha256') as string,
+  }));
+  return result.ok ? { ok: true, ...result.value } : { ok: false, error: `${join(runDir, INVOCATION_FILE)}: ${result.error.message}` };
 }
 
 /**

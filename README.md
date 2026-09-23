@@ -13,7 +13,7 @@ The first targets are Tauri applications on Windows and Linux, with Dot X as the
 
 Stage 0 (proving the assumptions) is complete. The runner (environment checks, scenario execution, the durable run
 journal) and the CLI's local commands (`doctor`, `designate`, `status`, `reset`, `run`, `resume`) exist. The Tauri
-driver adapter and a runnable sample consumer, the dashboard and the GitHub integration do not yet.
+driver adapter and a runnable sample consumer, the dashboard and the GitHub integration do not exist yet.
 
 - [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. The Dot X feasibility check is still open.
 - [GitHub merge gate](docs/decisions/github-gate.md): a no-service required check works, with documented design changes and unproven items.

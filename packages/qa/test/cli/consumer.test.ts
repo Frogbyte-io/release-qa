@@ -74,3 +74,19 @@ describe('loading a consumer project\'s code', () => {
     expect(await failure(consumer.projectPath, project, plan.automated)).toContain('cannot find the installer tool');
   });
 });
+
+describe('module shapes that throw while being inspected', () => {
+  test('a lifecycle whose hook is a throwing getter is a refusal, not a crash', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await writeFile(join(consumer.dir, 'qa', 'lifecycle.ts'), "export const lifecycle = { get install() { throw new Error('getter exploded'); } };");
+    const { project, plan } = await planFor(consumer.projectPath, consumer.profile);
+    expect(await failure(consumer.projectPath, project, plan.automated)).toContain('getter exploded');
+  });
+
+  test('a scenario definition whose id is a throwing getter is a refusal, not a crash', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await writeFile(join(consumer.dir, 'qa', 'scenarios.ts'), "export const scenarios = [{ get id() { throw new Error('id exploded'); }, steps: async () => {} }];");
+    const { project, plan } = await planFor(consumer.projectPath, consumer.profile);
+    expect(await failure(consumer.projectPath, project, plan.automated)).toContain('id exploded');
+  });
+});

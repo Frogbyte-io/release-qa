@@ -187,6 +187,16 @@ describe('run, resume and reset', () => {
     expect(announcement).toBeLessThan(order.findIndex((l) => l.startsWith('out:')));
   });
 
+  test('the resume hint names a custom --state, so copying it after a crash finds the run', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await designated(consumer.dir);
+    const out = io();
+    await main([...runArgs(consumer), '--state', 'elsewhere'], out.sink, () => consumer.dir);
+    const hint = out.error.find((line) => line.includes('resume --run')) ?? '';
+    expect(hint).toContain('--state');
+    expect(hint).toContain(join(consumer.dir, 'elsewhere'));
+  });
+
   test('a failing scenario makes the run exit 1', async () => {
     const consumer = await writeConsumer({ scenarios: { persistence: 'fail' } });
     await designated(consumer.dir);
@@ -214,8 +224,12 @@ describe('run, resume and reset', () => {
     const controller = new AbortController();
     const out = io();
     const running = main([...runArgs(consumer), '--json'], out.sink, () => consumer.dir, controller.signal);
-    await eventually(async () => (await readFile(consumer.logPath, 'utf8').catch(() => '')).includes('steps:persistence'));
-    controller.abort();
+    try {
+      await eventually(async () => (await readFile(consumer.logPath, 'utf8').catch(() => '')).includes('steps:persistence'));
+    } finally {
+      // Even if the wait above fails, cancel the run and let it finish, so the failure is that assertion, not a timeout.
+      controller.abort();
+    }
     expect(await running).toBe(EXIT.infrastructure);
     const { runId } = JSON.parse(out.log.join('')) as { runId: string };
 

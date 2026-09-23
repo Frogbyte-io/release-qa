@@ -20,7 +20,7 @@ export function startUnrelatedProcess(script = 'setInterval(() => {}, 1000)'): C
 }
 
 /** Registers a process started some other way (for example by spawnOwned) so it is stopped after the test. */
-export function trackProcess(child: ChildProcess): ChildProcess {
+export function trackProcess<T extends ChildProcess>(child: T): T {
   child.on('error', () => undefined);
   started.push(child);
   return child;
