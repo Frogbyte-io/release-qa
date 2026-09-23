@@ -135,3 +135,37 @@ describe('a real path that cannot be resolved', () => {
     expect(!result.ok && result.error).toContain('resolving denied');
   });
 });
+
+describe('a link swapped while the artifact is being hashed', () => {
+  afterEach(() => {
+    vi.doUnmock('node:fs/promises');
+    vi.resetModules();
+  });
+
+  test('is refused: the check before hashing would describe some other file', async () => {
+    const { dir, path } = await manifestWith({ 'setup.exe': 'x' }, [{ profile: 'windows', name: 'setup.exe', path: 'setup.exe', sha256: sha('x') }]);
+    const file = join(dir, 'setup.exe');
+    let resolvedFile = 0;
+    // The first resolution of the artifact sees the real file; the one after hashing sees it moved elsewhere.
+    vi.doMock('node:fs/promises', async (importOriginal) => {
+      const real = await importOriginal<typeof import('node:fs/promises')>();
+      return {
+        ...real,
+        realpath: async (target: string) => {
+          const resolved = await real.realpath(target);
+          if (target !== file) return resolved;
+          resolvedFile += 1;
+          return resolvedFile === 1 ? resolved : `${resolved}.swapped`;
+        },
+      };
+    });
+    vi.resetModules();
+    const { loadCandidate: loadWithSwap } = await import('../../src/cli/candidate.ts');
+
+    const result = await loadWithSwap(path, 'windows');
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('changed location');
+    expect(resolvedFile).toBe(2);
+  });
+});

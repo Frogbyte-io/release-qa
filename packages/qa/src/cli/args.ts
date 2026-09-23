@@ -105,7 +105,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 }
 
 const countJson = (argv: readonly string[]): number => argv.filter((token) => token === '--json').length;
-/** The id grammar the journal uses; it has no separators, so a run id can never climb out of the state directory. */
+/** The id grammar the journal uses; it has no path separators, so a run id can never climb out of the state directory. */
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function isCommandName(value: string): value is Command['name'] {

@@ -29,7 +29,7 @@ Status: **implemented** for the CLI's `run`, `resume` and `reset`, against fixtu
 - Default test root: `.release-qa` under the current directory; default state directory: `.release-qa/runs` (both gitignored). Each run is `runs/<run id>/` with `invocation.json` (what was asked, absolute paths, and the tested artifact's SHA-256), `events.jsonl` (the Task 1.3 journal) and `summary.json`.
 - The machine is identified in run records by a random token kept in the state directory, never the host name.
 - `run` announces `run <id> started` on stderr before anything runs, in every output mode, with the `resume` command to use (including a custom `--state`, quoted so it pastes safely in bash and PowerShell), so a run can be resumed even if the process dies.
-- A run id is a run id, never a path: `resume --run` accepts only the journal's id grammar, which has no separators.
+- A run id is a run id, never a path: `resume --run` accepts only the journal's id grammar, which has no path separators (`/`, `\`, `:`).
 
 ## Journal and resume
 
