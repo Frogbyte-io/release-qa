@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "project": "D:\\release-qa\\examples\\tauri-smoke\\qa\\project.json",
+  "candidate": "D:\\release-qa\\examples\\tauri-smoke\\src-tauri\\target\\release\\bundle\\candidate.json",
+  "profile": "windows",
+  "suite": "release",
+  "root": "D:\\release-qa\\.release-qa",
+  "artifactSha256": "f2e9663903d3345f11e3b2bba3ecfd18a688b7c5124b3ad7186e63af248ff5dd"
+}

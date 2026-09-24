@@ -1,5 +1,6 @@
 // What the adapter decides before any WebDriver session exists. Driving a real app needs tauri-driver, a native driver
 // and an installed application; that is exercised by the sample's real runs (see the setup guide), not here.
+import { createServer } from 'node:net';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { TauriApp } from '../../src/drivers/tauri.ts';
 import { executeScenario } from '../../src/runner/execute.ts';
@@ -33,6 +34,18 @@ describe('starting the driver chain', () => {
     expect(result).toMatchObject({ outcome: 'interrupted', reason: 'infrastructure-error' });
     expect(result.detail).toMatch(/tauri-driver exited/);
     expect(ms).toBeLessThan(15_000);
+  });
+
+  test('a port something else already listens on is refused, naming it, before tauri-driver is started', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const { result } = await launchWith({ application: `${process.execPath}.not-running`, nativeDriver: process.execPath, tauriDriver: process.execPath, port });
+      expect(result.detail).toContain(`already listening on port ${port}`);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   test('an application that is already running is refused: that instance would not be the run\'s', async () => {

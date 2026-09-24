@@ -35,16 +35,23 @@ docs/decisions/               decision records
 
 ## Stage 0 commands and where they go
 
-The Stage 0 commands are not turned into npm scripts yet, because they need a designated machine, installed drivers and a built package rather than just `npm ci`. They stay documented and runnable in [`experiments/native-automation`](../../experiments/native-automation) until Stage 2 promotes them.
+The native-automation harness is promoted (Task 2.2): the same check now runs through `release-qa run` with the sample's
+`qa/` consumer, following [the setup guide](../guides/run-the-sample.md), with [evidence](../../examples/tauri-smoke/qa/evidence/)
+from Windows and a fresh Ubuntu 24.04 machine. It still needs a designated machine, installed drivers and a built package,
+so it is not an npm script and not in CI. The Stage 0 harness stays in [`experiments/native-automation`](../../experiments/native-automation) as the record of Stage 0.
 
 | Stage 0 command | Promoted to |
 | --- | --- |
-| `run-attempts.mjs` (launch, save, read disk, restart, clear) | `packages/qa/src/drivers/tauri.ts` and the runner (Task 2.1/2.2), driven by `release-qa run` |
-| Driver/WebView2 version match, display presence, no already-running instance | `release-qa doctor` |
-| Hash the installed file, not the build tree | Candidate preparation (Task 3.1) and the runner's install step |
+| `run-attempts.mjs` (launch, save, read disk, restart, clear) | `packages/qa/src/drivers/tauri.ts`, the runner and `examples/tauri-smoke/qa/`, driven by `release-qa run` |
+| Display presence | `release-qa doctor` |
+| No already-running instance, native driver present, driver ports free | the Tauri adapter, before it starts anything |
+| Driver/WebView2 version match | a setup step in the guide; not checked by the tool |
+| Hash the installed file, not the build tree | Candidate preparation (Task 3.1). The runner verifies the candidate package; the sample's installed binary was checked by hand (see the evidence) |
 | `experiments/github-gate/*.sh`, `sandbox/scripts/qa-evaluate.mjs` | `packages/qa/src/github/*` and consumer workflows (Tasks 3.1-3.3), applying the changes listed in [github-gate.md](github-gate.md) |
 
-The repeatable smoke check for now is `experiments/native-automation/run-attempts.mjs` itself, plus `experiments/github-gate/run-core.sh`. Both are clearly separate from the shipped package: nothing under `packages/` or `apps/` imports from `experiments/` or `examples/`.
+The repeatable smoke check is now the sample's `release-qa run` (see the guide), plus `experiments/github-gate/run-core.sh`. Nothing under `packages/` or `apps/` imports from `experiments/` or `examples/`; the sample's `qa/` files import the package (`packages/qa/src/...`) by relative path, since nothing is published.
+
+**WebdriverIO dependency (Task 2.2).** `packages/qa` depends on `webdriverio` 9.31.9, pinned exactly as proven in Stage 0, and only `packages/qa/src/drivers/tauri.ts` imports it, so the package's main entry point does not load it. `npm audit` reports one advisory through it: `extract-zip` ≤2.0.1 ([GHSA-jmr9-qjv8-65gv](https://github.com/advisories/GHSA-jmr9-qjv8-65gv), [GHSA-7pqw-9j4j-h8q3](https://github.com/advisories/GHSA-7pqw-9j4j-h8q3)), symlink path traversal when extracting an archive, reached through `@puppeteer/browsers`, which WebdriverIO uses to download browsers and drivers. The adapter never takes that path: it connects to an already-running `tauri-driver` by host and port, and drivers are fetched separately and hash-checked (see the guide). No patched `extract-zip` exists; npm's only offered fix is WebdriverIO below 8.15. Revisit when WebdriverIO or `@puppeteer/browsers` moves off `extract-zip`.
 
 ## CI
 

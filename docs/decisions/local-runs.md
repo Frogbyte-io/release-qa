@@ -1,6 +1,6 @@
 # Decision: running a suite from a checkout (Task 2.2, part 3a)
 
-Status: **implemented** for the CLI's `run`, `resume` and `reset`, against fixture consumer projects. Running the real sample (`examples/tauri-smoke`) through a Tauri driver adapter is part 3b.
+Status: **implemented** for the CLI's `run`, `resume` and `reset`: tested against fixture consumer projects, and run for real with the sample (`examples/tauri-smoke`) through the Tauri driver adapter on Windows and Ubuntu 24.04 ([guide](../guides/run-the-sample.md), [evidence](../../examples/tauri-smoke/qa/evidence/)).
 
 ## The local candidate manifest
 
