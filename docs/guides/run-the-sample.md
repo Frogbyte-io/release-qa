@@ -81,6 +81,10 @@ xvfb-run -a -s "-screen 0 1280x1024x24" node packages/qa/src/cli/main.ts doctor 
 xvfb-run -a -s "-screen 0 1280x1024x24" node packages/qa/src/cli/main.ts run --project examples/tauri-smoke/qa/project.json --candidate "$candidate" --profile linux --suite release
 ```
 
+On **WSL2**, WSLg sets `WAYLAND_DISPLAY`, and GTK then draws through WSLg instead of the virtual X display; run
+`unset WAYLAND_DISPLAY` first so the run really uses Xvfb (a headless Ubuntu machine has no `WAYLAND_DISPLAY` to begin
+with). `doctor` shows which display the run sees.
+
 `RELEASE_QA_NATIVE_DRIVER` defaults to `/usr/bin/WebKitWebDriver` on Linux. The `.deb` is **unpacked** into the test
 root with `dpkg-deb -x` rather than installed with `apt`: the app binary is the packaged one byte for byte, no root
 access is needed, and nothing is installed system-wide, but the package manager's own steps and desktop integration are
