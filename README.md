@@ -12,8 +12,10 @@ The first targets are Tauri applications on Windows and Linux, with Dot X as the
 ## Status
 
 Stage 0 (proving the assumptions) is complete. The runner (environment checks, scenario execution, the durable run
-journal) and the CLI's local commands (`doctor`, `designate`, `status`, `reset`, `run`, `resume`) exist. The Tauri
-driver adapter and a runnable sample consumer, the dashboard and the GitHub integration do not exist yet.
+journal), the CLI's local commands (`doctor`, `designate`, `status`, `reset`, `run`, `resume`), the Tauri driver adapter
+and a runnable sample consumer exist: the sample passes through `release-qa run` on Windows and on Ubuntu 24.04 with
+Xvfb ([guide](docs/guides/run-the-sample.md), [evidence](examples/tauri-smoke/qa/evidence/)). The dashboard and the
+GitHub integration do not exist yet.
 
 - [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. The Dot X feasibility check is still open.
 - [GitHub merge gate](docs/decisions/github-gate.md): a no-service required check works, with documented design changes and unproven items.
@@ -33,7 +35,8 @@ node packages/qa/src/cli/main.ts run --project <qa/project.json> --candidate <ca
 node packages/qa/src/cli/main.ts resume --run <run id> [--state <dir>] [--json]
 ```
 
-`doctor` and `run` need a consumer's `qa/project.json`; this repository does not ship a runnable sample consumer yet.
+`doctor` and `run` need a consumer's `qa/project.json`; the sample's is [`examples/tauri-smoke/qa`](examples/tauri-smoke/qa),
+and [the setup guide](docs/guides/run-the-sample.md) takes a fresh machine to a passing run.
 `run` also needs a [local candidate manifest](docs/decisions/local-runs.md#the-local-candidate-manifest) naming the
 file to test and its SHA-256, which is checked before anything is installed.
 

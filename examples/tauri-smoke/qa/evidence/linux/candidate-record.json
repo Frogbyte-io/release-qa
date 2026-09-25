@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "local-linux-63e244ad765e",
+  "artifacts": [
+    {
+      "profile": "linux",
+      "name": "Release QA Smoke_0.1.0_amd64.deb",
+      "path": "deb/Release QA Smoke_0.1.0_amd64.deb",
+      "sha256": "63e244ad765eb9031b6a941cd31383e03c4954b3eaf1db885806e90985f9e622"
+    }
+  ]
+}

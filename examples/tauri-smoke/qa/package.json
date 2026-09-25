@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Release QA consumer files for the sample app, loaded by `release-qa run` under Node type stripping"
+}
