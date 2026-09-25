@@ -26,8 +26,12 @@ Prerequisites: Git, Node.js, [Rust](https://rustup.rs), and the [Tauri 2 prerequ
 cargo install tauri-driver --locked --version 2.0.6
 
 # The Edge WebDriver must match the WebView2 runtime exactly. Read its version, then fetch that driver.
-$v = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
-# A per-user WebView2 install registers under HKCU:\Software\Microsoft\EdgeUpdate\Clients\{...} instead.
+# A machine-wide WebView2 registers under HKLM, a per-user one under HKCU; the first one set is the installed runtime.
+$v = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+     'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' |
+  ForEach-Object { (Get-ItemProperty $_ -ErrorAction SilentlyContinue).pv } |
+  Where-Object { $_ -and $_ -ne '0.0.0.0' } | Select-Object -First 1
+if (-not $v) { throw 'WebView2 Runtime is not installed' }
 $tools = "$env:LOCALAPPDATA\release-qa\tools\msedgedriver-$v"
 New-Item -ItemType Directory -Force $tools | Out-Null
 Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile "$tools\edgedriver_win64.zip"

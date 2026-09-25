@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { TauriApp } from '../../../packages/qa/src/drivers/tauri.ts';
 import type { RunContext } from '../../../packages/qa/src/runner/execute.ts';
 
@@ -23,7 +23,8 @@ export const executable = (ctx: RunContext): string =>
 export function dataDirs(): string[] {
   const roots = windows
     ? [process.env.APPDATA, process.env.LOCALAPPDATA]
-    : [process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'), process.env.XDG_CACHE_HOME ?? join(homedir(), '.cache')];
+    : // XDG says an empty value means "use the default", so `||`, not `??`.
+      [process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), process.env.XDG_CACHE_HOME || join(homedir(), '.cache')];
   return roots.flatMap((root) => (root === undefined || root === '' ? [] : [join(root, IDENTIFIER)]));
 }
 
@@ -71,8 +72,70 @@ export const VENDOR_KEY = 'HKCU\\Software\\frogbyte';
 export function nativeDriver(): string {
   const configured = process.env.RELEASE_QA_NATIVE_DRIVER;
   if (configured !== undefined && configured !== '') return configured;
-  if (!windows && existsSync('/usr/bin/WebKitWebDriver')) return '/usr/bin/WebKitWebDriver';
-  throw new Error('set RELEASE_QA_NATIVE_DRIVER to the msedgedriver.exe matching the installed WebView2 runtime (see the setup guide)');
+  if (windows) throw new Error('set RELEASE_QA_NATIVE_DRIVER to the msedgedriver.exe matching the installed WebView2 runtime (see the setup guide)');
+  if (existsSync('/usr/bin/WebKitWebDriver')) return '/usr/bin/WebKitWebDriver';
+  throw new Error('WebKitWebDriver is not installed: install webkit2gtk-driver, or set RELEASE_QA_NATIVE_DRIVER to its path (see the setup guide)');
+}
+
+/** What a per-user NSIS install left outside its directory, and where each thing points. Windows only. */
+interface InstallerTraces {
+  uninstallLocation?: string;
+  rememberedDir?: string;
+  shortcuts: Array<{ path: string; target: string }>;
+}
+
+async function installerTraces(): Promise<InstallerTraces> {
+  // One PowerShell call: the uninstall entry's location, the remembered directory, and both shortcuts' targets.
+  const script = `
+    $u = Get-ItemProperty -LiteralPath 'Registry::${UNINSTALL_KEY}' -ErrorAction SilentlyContinue
+    $r = Get-Item -LiteralPath 'Registry::${REMEMBERED_DIR_KEY}' -ErrorAction SilentlyContinue
+    $shell = New-Object -ComObject WScript.Shell
+    $links = @((Join-Path ([Environment]::GetFolderPath('Programs')) '${PRODUCT}.lnk'), (Join-Path ([Environment]::GetFolderPath('Desktop')) '${PRODUCT}.lnk')) |
+      Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { @{ path = $_; target = $shell.CreateShortcut($_).TargetPath } }
+    @{ uninstallLocation = $(if ($u) { $u.InstallLocation } else { $null }); rememberedDir = $(if ($r) { $r.GetValue('') } else { $null }); shortcuts = @($links) } | ConvertTo-Json -Compress -Depth 3`;
+  const stdout = await new Promise<string>((resolveOut, rejectOut) =>
+    execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true }, (error, out) => (error ? rejectOut(error) : resolveOut(out))),
+  );
+  const parsed = JSON.parse(stdout) as { uninstallLocation?: string | null; rememberedDir?: string | null; shortcuts?: Array<{ path: string; target: string }> | null };
+  return {
+    ...(parsed.uninstallLocation ? { uninstallLocation: parsed.uninstallLocation.replace(/^"|"$/g, '') } : {}),
+    ...(parsed.rememberedDir ? { rememberedDir: parsed.rememberedDir.replace(/^"|"$/g, '') } : {}),
+    shortcuts: parsed.shortcuts ?? [],
+  };
+}
+
+const samePath = (a: string, b: string): boolean => resolve(a).toLowerCase() === resolve(b).toLowerCase();
+
+/**
+ * A run in this same test root that died before its cleanup (and was then `reset`, which removes the install
+ * directory with the uninstaller in it) leaves the installer's outside effects behind, all pointing into this root's
+ * install directory. Those are provably that run's, so they are removed here. Anything pointing elsewhere belongs to an
+ * install this run did not make, and is refused rather than taken over. Windows only; returns what it removed.
+ */
+export async function recoverInstallerTraces(ctx: RunContext): Promise<string[]> {
+  const traces = await installerTraces();
+  const ours = installDir(ctx);
+  const foreign = [
+    ...(traces.uninstallLocation !== undefined && !samePath(traces.uninstallLocation, ours) ? [`${UNINSTALL_KEY} (installed at ${traces.uninstallLocation})`] : []),
+    ...(traces.rememberedDir !== undefined && !samePath(traces.rememberedDir, ours) ? [`${REMEMBERED_DIR_KEY} (${traces.rememberedDir})`] : []),
+    ...traces.shortcuts.filter((link) => !samePath(link.target, executable(ctx))).map((link) => `${link.path} (to ${link.target})`),
+  ];
+  if (foreign.length > 0) throw new Error(`${PRODUCT} is already installed for this user outside this run's test root; uninstall it before running: ${foreign.join('; ')}`);
+
+  const removed: string[] = [];
+  if (traces.uninstallLocation !== undefined) {
+    await deleteRegistryKey(UNINSTALL_KEY);
+    removed.push(UNINSTALL_KEY);
+  }
+  if (traces.rememberedDir !== undefined) {
+    await deleteRegistryKey(REMEMBERED_DIR_KEY);
+    removed.push(REMEMBERED_DIR_KEY);
+  }
+  for (const link of traces.shortcuts) {
+    await rm(link.path, { force: true });
+    removed.push(link.path);
+  }
+  return removed;
 }
 
 /** The live session, set by the lifecycle's launch hook and ended by its cleanup hook. */

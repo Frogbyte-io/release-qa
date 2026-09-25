@@ -26,6 +26,8 @@ export const scenarios = [
       await (await session().browser.$('#setting-input')).setValue(value);
       await (await session().browser.$('#save-button')).click();
       await shows(ctx, value, 'the saved value to be shown');
+      // Checked as an assertion first: a Save that wrote nothing is the candidate failing, not a read error.
+      assert.ok(existsSync(settingFile()), `Save writes ${settingFile()}`);
       assert.equal(readFileSync(settingFile(), 'utf8'), value, `the value on disk in ${settingFile()}`);
 
       await session().restart();
@@ -37,6 +39,9 @@ export const scenarios = [
 
       await session().restart();
       await shows(ctx, '', 'the cleared state to be shown after a restart');
+      // The readout starts empty in the page itself, so it alone cannot show that a restart did not bring the value
+      // back; the file is the independent check, as after every other step.
+      assert.equal(existsSync(settingFile()), false, `${settingFile()} stays removed after a restart`);
     },
   },
 ];

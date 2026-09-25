@@ -17,7 +17,7 @@ import {
   executable,
   installDir,
   nativeDriver,
-  PRODUCT,
+  recoverInstallerTraces,
   registryKeyExists,
   REMEMBERED_DIR_KEY,
   removeData,
@@ -29,13 +29,12 @@ import {
 
 async function install(ctx: RunContext): Promise<void> {
   if (ctx.artifact === undefined) throw new Error('this lifecycle installs the candidate artifact, and the run has none');
-  if (windows) {
-    // An install this run did not make cannot be owned, and installing over it would take over its registry entries.
-    for (const key of [UNINSTALL_KEY, REMEMBERED_DIR_KEY]) {
-      if (await registryKeyExists(key)) throw new Error(`${PRODUCT} is already installed for this user (${key} exists); uninstall it before running`);
-    }
-  }
+  // An install this run did not make cannot be owned, and installing over it would take over its entries; what an
+  // earlier run in this same root left behind after dying is recognised by where it points, and removed.
+  if (windows) await recoverInstallerTraces(ctx);
   const dir = installDir(ctx);
+  // Files already there are not this run's: owning the directory would let cleanup delete them.
+  if (existsSync(dir)) throw new Error(`${dir} already exists and is not this run's; remove it before running`);
   await ctx.own({ kind: 'path', path: dir, label: 'installed app' });
   if (windows) await runToEnd(ctx, 'installer', ctx.artifact.path, ['/S', `/D=${dir}`]);
   else await runToEnd(ctx, 'unpack', 'dpkg-deb', ['-x', ctx.artifact.path, dir]);
