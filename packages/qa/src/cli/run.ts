@@ -1,14 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { copyFile, mkdir, readFile, rm } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import type { RequirementKey } from '../model/requirement.ts';
 import type { Attempt, Outcome } from '../model/result.ts';
 import { Collector, parseVersioned, type FieldSpec } from '../model/validate.ts';
 import type { EnvironmentProbes } from '../runner/environment.ts';
 import type { RunEvent } from '../runner/events.ts';
-import { executeScenario, type ExecutionContext, type ScenarioEvent } from '../runner/execute.ts';
+import { executeScenario, type ArtifactRef, type ExecutionContext, type ScenarioEvent } from '../runner/execute.ts';
 import { appendEvent, readRun, writeFileAtomic, writeSummary, type RunState } from '../runner/journal.ts';
-import { loadCandidate } from './candidate.ts';
+import { loadCandidate, sha256Of } from './candidate.ts';
 import { loadConsumer, type LoadedConsumer } from './consumer.ts';
 import { selectPlan } from './plan.ts';
 import { loadProject } from './project.ts';
@@ -69,6 +69,27 @@ const MACHINE_FILE = 'machine-id';
 const STARTED = 'scenario-started';
 /** Recorded after an attempt whose cleanup failed, so a resumed run still reports it for the carried result. */
 const CLEANUP_FAILED = 'cleanup-failed';
+const ARTIFACT_DIR = 'verified-artifact';
+
+/** The copied file is the only path passed to hooks; a changed source cannot change what they install. */
+export async function stageArtifact(artifact: ArtifactRef, runDir: string): Promise<ArtifactRef> {
+  const dir = join(runDir, ARTIFACT_DIR);
+  // A crashed session may have left its copy here. Resume verifies the manifest afresh before replacing it.
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { mode: 0o700 });
+  try {
+    const path = join(dir, basename(artifact.path));
+    await copyFile(artifact.path, path);
+    const actual = await sha256Of(path);
+    if (actual !== artifact.sha256) {
+      throw new Error(`the copied artifact does not match the verified candidate: expected SHA-256 ${artifact.sha256}, found ${actual}`);
+    }
+    return { ...artifact, path };
+  } catch (error) {
+    await rm(dir, { recursive: true, force: true });
+    throw error;
+  }
+}
 
 /**
  * Starts a run. Everything that can be checked without touching the machine is checked first (project, plan,
@@ -84,12 +105,17 @@ export async function startRun(input: RunInvocation, options: RunOptions): Promi
   const runDir = join(options.stateDir, runId);
   try {
     await mkdir(runDir, { recursive: true });
-    // The artifact's digest is kept with the invocation, so resume can tell a rebuild under the same candidate id.
+    // Record and announce the run before copying a large installer, so a crash during staging can be resumed.
     await writeFileAtomic(join(runDir, INVOCATION_FILE), `${JSON.stringify({ schemaVersion: 1, ...invocation, artifactSha256: prepared.artifact.sha256 }, null, 2)}\n`);
     const journal = new Journal(runDir, runId, undefined, 0);
     await journal.append('run-started', { runId, candidateId: prepared.candidate.id, profile: invocation.profile, machineId: await machineId(options.stateDir) });
     options.onStart?.(runId);
-    return { ok: true, summary: await execute(prepared, invocation, runId, journal, emptyState(), options) };
+    const staged = await stageArtifact(prepared.artifact, runDir);
+    try {
+      return { ok: true, summary: await execute({ ...prepared, artifact: staged }, invocation, runId, journal, emptyState(), options) };
+    } finally {
+      await rm(join(runDir, ARTIFACT_DIR), { recursive: true, force: true });
+    }
   } catch (error) {
     return { ok: false, error: `run ${runId} stopped: ${message(error)}` };
   } finally {
@@ -130,7 +156,12 @@ export async function resumeRun(runId: string, options: RunOptions): Promise<Run
 
     const last = state.events.at(-1);
     const journal = new Journal(runDir, runId, last?.id, state.events.length);
-    return { ok: true, summary: await execute(prepared, invocation.value, runId, journal, state, options) };
+    const staged = await stageArtifact(prepared.artifact, runDir);
+    try {
+      return { ok: true, summary: await execute({ ...prepared, artifact: staged }, invocation.value, runId, journal, state, options) };
+    } finally {
+      await rm(join(runDir, ARTIFACT_DIR), { recursive: true, force: true });
+    }
   } catch (error) {
     return { ok: false, error: `run ${runId} stopped: ${message(error)}` };
   } finally {
@@ -330,4 +361,3 @@ function emptyState(): RunState {
     pending: [], synced: [], ackMismatches: [], orphanAcks: [], missingEvidence: [],
   };
 }
-
