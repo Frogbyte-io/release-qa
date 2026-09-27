@@ -3,8 +3,10 @@ import { pathToFileURL } from 'node:url';
 import type { Project } from '../model/project.ts';
 import type { Requirement } from '../model/requirement.ts';
 import type { Lifecycle, RunContext, Scenario } from '../runner/execute.ts';
+import { ConsumerProcess } from './consumer-process.ts';
 
-export type LoadedConsumer = { ok: true; lifecycle: Lifecycle; scenarios: Scenario[] } | { ok: false; error: string };
+export type LoadedConsumer = { ok: true; lifecycle: Lifecycle; scenarios: Scenario[]; close(): Promise<void> } | { ok: false; error: string };
+export type InProcessConsumer = { ok: true; lifecycle: Lifecycle; scenarios: Scenario[] } | { ok: false; error: string };
 
 interface ScenarioDefinition {
   id: string;
@@ -21,6 +23,35 @@ const message = (error: unknown): string => (error instanceof Error ? error.mess
  * a project the user pointed the CLI at. Every problem is found before anything is installed. Never throws.
  */
 export async function loadConsumer(projectPath: string, project: Project, requirements: readonly Requirement[]): Promise<LoadedConsumer> {
+  const worker = new ConsumerProcess(projectPath, project, requirements);
+  const inspected = await worker.inspect();
+  if (!inspected.ok) {
+    await worker.close();
+    return inspected;
+  }
+  return {
+    ok: true,
+    scenarios: requirements.map((requirement) => {
+      const id = requirement.key.slice(requirement.key.indexOf('/') + 1);
+      return {
+        id,
+        requirement,
+        steps: (ctx: RunContext) => worker.invoke('steps', id, ctx),
+        ...(inspected.setupIds.includes(id) ? { setup: (ctx: RunContext) => worker.invoke('setup', id, ctx) } : {}),
+      };
+    }),
+    lifecycle: {
+      install: (ctx) => worker.invoke('install', undefined, ctx),
+      reset: (ctx) => worker.invoke('reset', undefined, ctx),
+      launch: (ctx) => worker.invoke('launch', undefined, ctx),
+      cleanup: (ctx) => worker.invoke('cleanup', undefined, ctx),
+    },
+    close: () => worker.close(),
+  };
+}
+
+/** Called only inside the supervised child process; importing consumer code here must never happen in the CLI. */
+export async function loadConsumerInProcess(projectPath: string, project: Project, requirements: readonly Requirement[]): Promise<InProcessConsumer> {
   // Inspecting what a module exports runs its code too (a getter can throw), so all of it is inside this boundary.
   try {
     return await inspectConsumer(projectPath, project, requirements);
@@ -29,7 +60,7 @@ export async function loadConsumer(projectPath: string, project: Project, requir
   }
 }
 
-async function inspectConsumer(projectPath: string, project: Project, requirements: readonly Requirement[]): Promise<LoadedConsumer> {
+async function inspectConsumer(projectPath: string, project: Project, requirements: readonly Requirement[]): Promise<InProcessConsumer> {
   const base = dirname(resolve(projectPath));
   const load = async (relative: string): Promise<{ ok: true; module: Record<string, unknown> } | { ok: false; error: string }> => {
     const path = resolve(base, ...relative.split('/'));

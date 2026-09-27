@@ -9,7 +9,7 @@ import type { RunEvent } from '../runner/events.ts';
 import { executeScenario, type ExecutionContext, type ScenarioEvent } from '../runner/execute.ts';
 import { appendEvent, readRun, writeFileAtomic, writeSummary, type RunState } from '../runner/journal.ts';
 import { loadCandidate } from './candidate.ts';
-import { loadConsumer } from './consumer.ts';
+import { loadConsumer, type LoadedConsumer } from './consumer.ts';
 import { selectPlan } from './plan.ts';
 import { loadProject } from './project.ts';
 
@@ -92,6 +92,8 @@ export async function startRun(input: RunInvocation, options: RunOptions): Promi
     return { ok: true, summary: await execute(prepared, invocation, runId, journal, emptyState(), options) };
   } catch (error) {
     return { ok: false, error: `run ${runId} stopped: ${message(error)}` };
+  } finally {
+    await prepared.consumer.close();
   }
 }
 
@@ -103,6 +105,7 @@ export async function startRun(input: RunInvocation, options: RunOptions): Promi
  */
 export async function resumeRun(runId: string, options: RunOptions): Promise<RunResult> {
   const runDir = join(options.stateDir, runId);
+  let consumer: Extract<LoadedConsumer, { ok: true }> | undefined;
   try {
     const invocation = await readInvocation(runDir);
     if (!invocation.ok) return invocation;
@@ -116,6 +119,7 @@ export async function resumeRun(runId: string, options: RunOptions): Promise<Run
 
     const prepared = await prepare(invocation.value);
     if (!prepared.ok) return prepared;
+    consumer = prepared.consumer;
     if (prepared.candidate.id !== start.data.candidateId) {
       return { ok: false, error: `run ${runId} tested candidate "${start.data.candidateId}", but the manifest now names "${prepared.candidate.id}"` };
     }
@@ -129,6 +133,8 @@ export async function resumeRun(runId: string, options: RunOptions): Promise<Run
     return { ok: true, summary: await execute(prepared, invocation.value, runId, journal, state, options) };
   } catch (error) {
     return { ok: false, error: `run ${runId} stopped: ${message(error)}` };
+  } finally {
+    await consumer?.close();
   }
 }
 
