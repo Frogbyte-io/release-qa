@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 
 export type AccessProblem = 'logged-out' | 'missing-scope' | 'insufficient-role' | 'organization-rejected' | 'not-found' | 'network-error';
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: AccessProblem };
@@ -45,6 +46,36 @@ export class GhTransport implements GitHubApi {
     if (!response.ok) return response;
     try { return { ok: true, value: response.output.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as unknown) }; }
     catch { return { ok: false, reason: 'network-error' }; }
+  }
+
+  /** Streams an exact release asset to a new file without buffering installer bytes in memory. */
+  download(path: string, destination: string): Promise<ApiResult<true>> {
+    return new Promise((resolve) => {
+      const child = spawn(this.executable, [...this.prefixArgs, 'api', '-H', 'Accept: application/octet-stream', path], {
+        windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 15 * 60_000,
+      });
+      const output = createWriteStream(destination, { flags: 'wx' });
+      let stderr = '';
+      let childClosed = false;
+      let outputClosed = false;
+      let written = false;
+      let failure: AccessProblem | undefined;
+      const finish = (): void => {
+        // On Windows the caller cannot remove its temporary directory until both handles have closed.
+        if (childClosed && outputClosed) resolve(failure === undefined && written ? { ok: true, value: true } : { ok: false, reason: failure ?? 'network-error' });
+      };
+      child.stderr.on('data', (chunk: Buffer) => { if (stderr.length < 4096) stderr += chunk.toString('utf8').slice(0, 4096 - stderr.length); });
+      child.stdout.pipe(output);
+      child.on('error', () => { failure = 'network-error'; output.destroy(); });
+      child.on('close', (code) => {
+        childClosed = true;
+        if (code !== 0) { failure ??= classifyGhError(stderr); output.destroy(); }
+        finish();
+      });
+      output.on('finish', () => { written = true; });
+      output.on('error', () => { failure = 'network-error'; child.kill(); });
+      output.on('close', () => { outputClosed = true; finish(); });
+    });
   }
 }
 

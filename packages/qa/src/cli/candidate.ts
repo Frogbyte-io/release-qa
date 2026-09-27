@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { parseLocalCandidate } from '../model/local-candidate.ts';
 import type { ArtifactRef, CandidateRef } from '../runner/execute.ts';
+import { sha256Of } from '../util/sha256.ts';
 
 export type LoadedCandidate = { ok: true; candidate: CandidateRef; artifact: ArtifactRef } | { ok: false; error: string };
 
@@ -67,15 +66,4 @@ export async function loadCandidate(manifestPath: string, profile: string): Prom
     return { ok: false, error: `the artifact ${path} does not match the candidate: expected SHA-256 ${chosen.sha256}, found ${actual}` };
   }
   return { ok: true, candidate: { id: manifest.id }, artifact: { name: chosen.name, path: realFile, sha256: actual } };
-}
-
-/** Streams the file, so an installer of any size is hashed without being held in memory. */
-export function sha256Of(path: string): Promise<string> {
-  return new Promise((resolveHash, rejectHash) => {
-    const hash = createHash('sha256');
-    createReadStream(path)
-      .on('data', (chunk) => hash.update(chunk))
-      .on('error', rejectHash)
-      .on('end', () => resolveHash(hash.digest('hex')));
-  });
 }
