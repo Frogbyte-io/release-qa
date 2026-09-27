@@ -12,7 +12,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { EXIT } from '../../src/cli/main.ts';
 import { readRun } from '../../src/runner/journal.ts';
 import { writeConsumer, type Consumer } from '../fixtures/consumer.ts';
-import { cleanUpProcessesAndRoots, eventually, hostOs, trackProcess } from '../fixtures/processes.ts';
+import { cleanUpProcessesAndRoots, eventually, hostOs, isAlive, trackProcess } from '../fixtures/processes.ts';
 
 // Each case starts a Node process, and reading a process's identity starts PowerShell on Windows.
 vi.setConfig({ testTimeout: 60_000 });
@@ -122,14 +122,17 @@ describe('running a suite through the executable', () => {
     expect(await readFile(consumer.logPath, 'utf8').catch(() => '')).toBe('');
   });
 
-  test('a process that dies in the middle of a scenario leaves a run that resume completes, with the crash on record', async () => {
+  test('a consumer process that dies during a scenario is recorded by the CLI, cleaned up, and can be resumed', async () => {
     const consumer = await writeConsumer({ scenarios: { startup: 'pass', persistence: 'pass' }, crashOnce: 'persistence' });
     expect((await runIn(consumer.dir, 'designate')).code).toBe(EXIT.ok);
 
-    const crashed = await runIn(consumer.dir, ...runArgs(consumer));
-    expect(crashed.code).toBe(70); // the scenario itself killed the process
+    const crashed = await runIn(consumer.dir, ...runArgs(consumer), '--json');
+    expect(crashed.code).toBe(EXIT.infrastructure);
     const runId = /run (\S+) started/.exec(crashed.stderr)?.[1];
     expect(runId).toBeDefined();
+    const firstSummary = JSON.parse(crashed.stdout) as { results: Array<{ outcome: string; cleanup?: { ok: boolean } }> };
+    expect(firstSummary.results.map((result) => result.outcome)).toEqual(['passed', 'interrupted']);
+    expect(firstSummary.results[1]?.cleanup?.ok).toBe(true);
 
     const resumed = await runIn(consumer.dir, 'resume', '--run', runId as string, '--json');
 
@@ -142,6 +145,78 @@ describe('running a suite through the executable', () => {
     const attempts = (await readRun(join(consumer.dir, '.release-qa', 'runs', runId as string))).attempts.filter((a) => a.requirement.endsWith('/persistence'));
     expect(attempts.map((a) => a.outcome)).toEqual(['interrupted', 'passed']);
     expect(attempts[1]?.retryOf).toBe(attempts[0]?.id);
+  });
+
+  test('the CLI reaps a process the consumer owned before crashing', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    const pidFile = join(consumer.dir, 'owned-pid');
+    await writeFile(join(consumer.dir, 'qa', 'scenarios.ts'), `
+import { writeFileSync } from 'node:fs';
+export const scenarios = [{ id: 'persistence', steps: async (ctx) => {
+  const child = await ctx.spawn('consumer helper', process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));
+  process.exit(71);
+} }];`);
+    expect((await runIn(consumer.dir, 'designate')).code).toBe(EXIT.ok);
+
+    const result = await runIn(consumer.dir, ...runArgs(consumer), '--json');
+    expect(result.code).toBe(EXIT.infrastructure);
+    expect(JSON.parse(result.stdout).results[0]).toMatchObject({ outcome: 'interrupted', cleanup: { ok: true } });
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    await eventually(() => !isAlive(pid));
+    expect(isAlive(pid)).toBe(false);
+  });
+
+  test('consumer module state survives the lifecycle phases of a scenario', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await writeFile(join(consumer.dir, 'qa', 'lifecycle.ts'), `
+let stage = 0;
+export const lifecycle = {
+  install: async () => { stage = 1; },
+  reset: async () => { if (stage !== 1) throw new Error('install state lost'); stage = 2; },
+  launch: async () => { if (stage !== 2) throw new Error('reset state lost'); stage = 3; },
+  cleanup: async () => { if (stage !== 3) throw new Error('launch state lost'); stage = 0; },
+};`);
+    expect((await runIn(consumer.dir, 'designate')).code).toBe(EXIT.ok);
+    const result = await runIn(consumer.dir, ...runArgs(consumer), '--json');
+    expect(result.code).toBe(EXIT.ok);
+    expect(JSON.parse(result.stdout).results[0]).toMatchObject({ outcome: 'passed', cleanup: { ok: true } });
+  });
+
+  test('a worker-side waitFor timeout remains a candidate assertion failure', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await writeFile(join(consumer.dir, 'qa', 'scenarios.ts'), `export const scenarios = [{ id: 'persistence', steps: async (ctx) => {
+  await ctx.waitFor(() => false, { timeoutMs: 30, description: 'saved value' });
+} }];`);
+    expect((await runIn(consumer.dir, 'designate')).code).toBe(EXIT.ok);
+    const result = await runIn(consumer.dir, ...runArgs(consumer), '--json');
+    expect(result.code).toBe(EXIT.scenarioFailure);
+    expect(JSON.parse(result.stdout).results[0]).toMatchObject({ outcome: 'failed', reason: 'assertion-failed' });
+  });
+
+  test('consumer code exiting during import is reported before a run starts', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await writeFile(join(consumer.dir, 'qa', 'lifecycle.ts'), 'process.exit(72);');
+    expect((await runIn(consumer.dir, 'designate')).code).toBe(EXIT.ok);
+
+    const result = await runIn(consumer.dir, ...runArgs(consumer), '--json');
+    expect(result.code).toBe(EXIT.infrastructure);
+    expect(result.stderr).toContain('consumer process exited (72)');
+    expect(result.stdout).toBe('');
+  });
+
+  test('a cleanup hook that exits marks the environment dirty without killing the CLI', async () => {
+    const consumer = await writeConsumer({ scenarios: { persistence: 'pass' } });
+    await writeFile(join(consumer.dir, 'qa', 'lifecycle.ts'), `export const lifecycle = {
+  install: async () => {}, reset: async () => {}, launch: async () => {},
+  cleanup: async () => { process.exit(73); },
+};`);
+    expect((await runIn(consumer.dir, 'designate')).code).toBe(EXIT.ok);
+
+    const result = await runIn(consumer.dir, ...runArgs(consumer), '--json');
+    expect(result.code).toBe(EXIT.infrastructure);
+    expect(JSON.parse(result.stdout).results[0]).toMatchObject({ cleanup: { ok: false } });
+    expect(await readFile(join(consumer.dir, '.release-qa', '.release-qa-dirty.json'), 'utf8')).toContain('cleanup failed');
   });
 
   // Node on Windows cannot deliver SIGINT to another process (kill() terminates it outright); a console Ctrl+C

@@ -454,7 +454,7 @@ async function cleanUp(
 }
 
 /** Polls a condition, giving up at the deadline even if the condition itself never answers. */
-async function waitFor(
+export async function waitFor(
   signal: AbortSignal,
   condition: () => boolean | Promise<boolean>,
   options: { timeoutMs?: number; intervalMs?: number; description?: string } = {},

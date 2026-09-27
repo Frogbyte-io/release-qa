@@ -36,6 +36,7 @@ describe('loading a consumer project\'s code', () => {
       ['persistence', `${consumer.profile}/persistence`],
     ]);
     expect(typeof result.lifecycle.install).toBe('function');
+    await result.close();
   });
 
   test('a requirement no scenario file defines is refused before anything runs, naming it', async () => {
