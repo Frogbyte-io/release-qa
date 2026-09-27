@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { discoverProjects, type RepositoryApi } from '../../src/github/discover.ts';
 import { GhTransport, inspectGitHubAccess, type GitHubApi } from '../../src/github/transport.ts';
 import { project } from '../fixtures/records.ts';
+import { candidate, SHA1, SHA256 } from '../fixtures/records.ts';
+import { verifyCandidateAssets } from '../../src/github/candidate.ts';
 
 function fakeApi(entries: Record<string, unknown>): RepositoryApi {
   return {
@@ -97,5 +99,44 @@ console.log(JSON.stringify({ id: 2 }));`);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('candidate asset identity', () => {
+  const build = { id: 5000, run_attempt: 1, path: 'team/sample/.github/workflows/qa-prepare.yml@refs/heads/main', head_sha: SHA1.source, conclusion: 'success', repository: { id: 1 } };
+  const releases = [
+    { id: 101, name: 'Release QA Smoke_0.1.0_x64-setup.exe', state: 'uploaded', digest: `sha256:${SHA256.windowsInstaller}` },
+    { id: 102, name: 'release-qa-smoke_0.1.0_amd64.deb', state: 'uploaded', digest: `sha256:${SHA256.linuxPackage}` },
+  ];
+  const actions = [
+    { id: 201, name: 'windows', expired: false, workflow_run: { id: 5000, repository_id: 1, head_sha: SHA1.source } },
+    { id: 202, name: 'linux', expired: false, workflow_run: { id: 5000, repository_id: 1, head_sha: SHA1.source } },
+  ];
+
+  test('accepts exact asset IDs and hashes from the recorded successful build', () => {
+    expect(verifyCandidateAssets(candidate(), build, releases, actions)).toEqual({ ok: true, issues: [] });
+  });
+
+  test('allows an expired Actions archive when the exact draft asset survives with its hash', () => {
+    expect(verifyCandidateAssets(candidate(), build, releases, [{ ...actions[0]!, expired: true }, actions[1]!])).toEqual({ ok: true, issues: [] });
+  });
+
+  test('rejects a same-name release asset with different bytes', () => {
+    const wrong = { ...releases[0]!, digest: `sha256:${'d'.repeat(64)}` };
+    expect(verifyCandidateAssets(candidate(), build, [wrong, releases[1]!], actions).ok).toBe(false);
+  });
+
+  test('rejects the wrong workflow, run attempt, or source', () => {
+    for (const changed of [
+      { ...build, path: 'team/sample/.github/workflows/other.yml@refs/heads/main' },
+      { ...build, run_attempt: 2 },
+      { ...build, head_sha: SHA1.base },
+      { ...build, conclusion: 'cancelled' },
+    ]) expect(verifyCandidateAssets(candidate(), changed, releases, actions).ok).toBe(false);
+  });
+
+  test('rejects an Actions archive associated with another run even if its name matches', () => {
+    const wrong = { ...actions[0]!, workflow_run: { ...actions[0]!.workflow_run, id: 9999 } };
+    expect(verifyCandidateAssets(candidate(), build, releases, [wrong, actions[1]!]).ok).toBe(false);
   });
 });
