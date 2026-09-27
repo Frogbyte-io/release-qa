@@ -14,6 +14,10 @@ export function updateManagedSections(body: string, sections: readonly ManagedSe
     const { name } = section;
     if (!/^[a-z][a-z0-9-]*$/.test(name) || names.has(name)) return { ok: false, error: `invalid or repeated section name: ${name}` };
     names.add(name);
+  }
+  const markers = [...names].flatMap((name) => [`<!-- ${name}:start -->`, `<!-- ${name}:end -->`]);
+  for (const section of sections) {
+    const { name } = section;
     const begin = `<!-- ${name}:start -->`;
     const finish = `<!-- ${name}:end -->`;
     const start = body.indexOf(begin);
@@ -27,7 +31,7 @@ export function updateManagedSections(body: string, sections: readonly ManagedSe
     if (!inner.startsWith(newline) || !inner.endsWith(newline)) return { ok: false, error: `${name} section markers must be on separate lines` };
     const current = inner.slice(newline.length, -newline.length);
     if (section.expected !== undefined && current !== section.expected) return { ok: false, error: `${name} section changed since it was read` };
-    if (section.content.includes(begin) || section.content.includes(finish)) return { ok: false, error: `${name} section content contains its own marker` };
+    if (markers.some((marker) => section.content.includes(marker))) return { ok: false, error: `${name} section content contains a managed marker` };
     edits.push({ start: innerStart, end, replacement: `${newline}${section.content.replace(/\r?\n/g, newline)}${newline}` });
   }
   const ordered = [...edits].sort((a, b) => a.start - b.start);

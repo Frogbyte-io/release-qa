@@ -37,9 +37,39 @@ describe('managed PR sections', () => {
       ok: true, body: '<!-- qa:start -->\r\nNew QA\r\n<!-- qa:end -->',
     });
   });
+
+  test('refuses nested sections and repeated names', () => {
+    const nested = '<!-- qa:start -->\n<!-- release-notes:start -->\nNotes\n<!-- release-notes:end -->\n<!-- qa:end -->';
+    expect(updateManagedSections(nested, [
+      { name: 'qa', content: 'QA' }, { name: 'release-notes', content: 'Notes' },
+    ])).toEqual({ ok: false, error: 'managed sections overlap' });
+    expect(updateManagedSections(body, [{ name: 'qa', content: 'A' }, { name: 'qa', content: 'B' }])).toEqual({
+      ok: false, error: 'invalid or repeated section name: qa',
+    });
+  });
+
+  test('refuses invalid layout and markers injected into another managed section', () => {
+    expect(updateManagedSections('<!-- qa:start -->Old QA<!-- qa:end -->', [{ name: 'qa', content: 'New QA' }]).ok).toBe(false);
+    expect(updateManagedSections(body, [
+      { name: 'release-notes', content: '<!-- qa:start -->\nInjected\n<!-- qa:end -->' },
+      { name: 'qa', content: 'New QA' },
+    ]).ok).toBe(false);
+  });
 });
 
 describe('QA section', () => {
+  test('shows a passed evaluation, plural reports and why records were ignored', () => {
+    const output = renderQaSection(evaluation({
+      acceptedReportIds: ['report-1', 'report-2'],
+      ignored: [{ kind: 'report', id: 'replayed', reason: 'duplicate-replay' }, { kind: 'report', id: 'conflict', reason: 'conflicting-report-id' }],
+    }));
+    expect(output).toContain('QA: Passed');
+    expect(output).toContain('2 accepted reports');
+    expect(output).toContain('duplicate-replay');
+    expect(output).toContain('conflicting-report-id');
+    expect(output).not.toContain('stale or ineligible');
+  });
+
   test('shows every blocking reason and the accepted report count', () => {
     const output = renderQaSection(evaluation({ readiness: 'blocked', reasons: [
       { code: 'head-changed', expected: 'old', actual: 'new' },

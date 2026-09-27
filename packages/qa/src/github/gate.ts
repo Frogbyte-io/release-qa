@@ -22,6 +22,6 @@ export function renderQaSection(evaluation: Evaluation): string {
   const lines = [`**QA: ${status}**`, `${count} accepted report${count === 1 ? '' : 's'}.`];
   if (evaluation.reasons.length > 0) lines.push('', 'Blocking reasons:', ...evaluation.reasons.map((reason) => `- ${describe(reason)}`));
   if (evaluation.excused.length > 0) lines.push('', 'Approved exceptions:', ...evaluation.excused.map(({ reason, exceptionId }) => `- ${describe(reason)} (exception ${safe(exceptionId)})`));
-  if (evaluation.ignored.length > 0) lines.push('', `${evaluation.ignored.length} record${evaluation.ignored.length === 1 ? '' : 's'} ignored as stale or ineligible.`);
+  if (evaluation.ignored.length > 0) lines.push('', 'Ignored records:', ...evaluation.ignored.map(({ kind, id, reason }) => `- ${safe(kind)} ${safe(id)}: ${safe(reason)}`));
   return lines.join('\n');
 }
