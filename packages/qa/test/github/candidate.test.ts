@@ -7,7 +7,7 @@ import { discoverProjects, type RepositoryApi } from '../../src/github/discover.
 import { GhTransport, inspectGitHubAccess, type GitHubApi } from '../../src/github/transport.ts';
 import { project } from '../fixtures/records.ts';
 import { candidate, SHA1, SHA256 } from '../fixtures/records.ts';
-import { downloadCandidate, verifyCandidateAssets, type CandidateDownloadApi } from '../../src/github/candidate.ts';
+import { downloadCandidate, inspectCandidatePreparation, verifyCandidateAssets, type CandidateDownloadApi, type PreparationApi } from '../../src/github/candidate.ts';
 
 function fakeApi(entries: Record<string, unknown>): RepositoryApi {
   return {
@@ -280,5 +280,113 @@ describe('downloading a selected candidate artifact', () => {
       expect(result).toMatchObject({ ok: false });
       expect(downloaded).toBe(false);
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('candidate preparation preflight', () => {
+  const policy = { releaseBranchPrefix: 'release/', releaseLabel: 'release', releaseFiles: ['VERSION'], required: ['windows/persistence'] };
+  const repository = { id: 7, permissions: { pull: true, push: true }, full_name: 'team/sample' };
+  const pr = { number: 9, state: 'open', head: { sha: SHA1.source, ref: 'feature/version', repo: { id: 7 } }, base: { ref: 'main', repo: { id: 7 } }, labels: [] };
+  const records: Record<string, unknown> = {
+    'repos/team/sample': repository,
+    'repos/team/sample/pulls/9': pr,
+    'repos/team/sample/branches/main': { commit: { sha: SHA1.base } },
+    [`repos/team/sample/contents/qa/policy.json?ref=${SHA1.base}`]: file(policy),
+    'repos/team/sample/pulls/9/files?per_page=100': [{ filename: 'VERSION' }],
+  };
+  const api = (overrides: Record<string, unknown> = {}): PreparationApi => ({
+    auth: async () => ({ ok: true, value: true }),
+    get: async (path) => {
+      const entries = { ...records, ...overrides };
+      return Object.hasOwn(entries, path) ? { ok: true, value: entries[path] } : { ok: false, reason: 'not-found' };
+    },
+    list: async (path) => {
+      const entries = { ...records, ...overrides };
+      return Object.hasOwn(entries, path) ? { ok: true, value: entries[path] as unknown[] } : { ok: false, reason: 'not-found' };
+    },
+  });
+
+  test('recognizes a changed release file despite a removed label and records the trusted base tip', async () => {
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api());
+    expect(result).toMatchObject({ ok: true, repositoryId: 7, sourceSha: SHA1.source, baseSha: SHA1.base, releaseIntent: ['release file changed: VERSION'] });
+    expect(result.ok && result.policyDigest).toBe(createHash('sha256').update(JSON.stringify(policy)).digest('hex'));
+  });
+
+  test('refuses a changed PR head before building or selecting a candidate', async () => {
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.base, api());
+    expect(result).toMatchObject({ ok: false });
+    expect(!result.ok && result.error).toContain('head');
+  });
+
+  test('refuses a PR with no trusted release intent', async () => {
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api({ 'repos/team/sample/pulls/9/files?per_page=100': [] }));
+    expect(result).toMatchObject({ ok: false });
+    expect(!result.ok && result.error).toContain('release intent');
+  });
+
+  test('refuses policy metadata that is not a base64 file from the target branch', async () => {
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api({
+      [`repos/team/sample/contents/qa/policy.json?ref=${SHA1.base}`]: { type: 'symlink', content: file(policy).content },
+    }));
+    expect(result).toMatchObject({ ok: false });
+    expect(!result.ok && result.error).toContain('trusted QA policy');
+  });
+
+  test('refuses a forked PR or a read-only operator', async () => {
+    const fork = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api({ 'repos/team/sample/pulls/9': { ...pr, head: { ...pr.head, repo: { id: 8 } } } }));
+    expect(fork).toMatchObject({ ok: false });
+    const reader = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api({ 'repos/team/sample': { ...repository, permissions: { pull: true, push: false } } }));
+    expect(reader).toMatchObject({ ok: false });
+  });
+
+  test('refuses preparation when the target branch moves during preflight', async () => {
+    const client = api();
+    let branchReads = 0;
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, {
+      ...client,
+      get: async (path) => {
+        if (path === 'repos/team/sample/branches/main' && ++branchReads === 2) return { ok: true, value: { commit: { sha: SHA1.tree } } };
+        return client.get(path);
+      },
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(!result.ok && result.error).toContain('target branch changed');
+  });
+
+  test('refuses when a release label is removed during preflight', async () => {
+    const labeled = { ...pr, labels: [{ name: 'release' }] };
+    const client = api({
+      'repos/team/sample/pulls/9': labeled,
+      'repos/team/sample/pulls/9/files?per_page=100': [],
+    });
+    let reads = 0;
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, {
+      ...client,
+      get: async (path) => path === 'repos/team/sample/pulls/9' && ++reads === 2 ? { ok: true, value: pr } : client.get(path),
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(!result.ok && result.error).toContain('labels changed');
+  });
+
+  test('accepts a release branch as the sole release-intent signal', async () => {
+    const branch = { ...pr, head: { ...pr.head, ref: 'release/1.2.3' } };
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api({
+      'repos/team/sample/pulls/9': branch,
+      'repos/team/sample/pulls/9/files?per_page=100': [],
+    }));
+    expect(result).toMatchObject({ ok: true, releaseIntent: ['release branch'] });
+  });
+
+  test('refuses a PR that closes or changes head during the final read', async () => {
+    for (const second of [{ ...pr, state: 'closed' }, { ...pr, head: { ...pr.head, sha: SHA1.tree } }]) {
+      const client = api();
+      let reads = 0;
+      const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, {
+        ...client,
+        get: async (path) => path === 'repos/team/sample/pulls/9' && ++reads === 2 ? { ok: true, value: second } : client.get(path),
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(!result.ok && result.error).toContain('during candidate preparation preflight');
+    }
   });
 });

@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import { link, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Candidate } from '../model/candidate.ts';
 import { parseCandidate } from '../model/candidate.ts';
 import { sha256Of } from '../util/sha256.ts';
-import { GhTransport, type ApiResult } from './transport.ts';
+import { GhTransport, inspectGitHubAccess, type ApiResult, type GitHubApi } from './transport.ts';
 
 export interface BuildRun {
   id: number;
@@ -32,6 +33,80 @@ export interface CandidateDownloadApi {
   get(path: string): Promise<ApiResult<unknown>>;
   /** Streams the exact release asset ID to a temporary file; no name-based lookup. */
   download(path: string, destination: string): Promise<ApiResult<true>>;
+}
+
+export interface PreparationApi extends GitHubApi {
+  list(path: string): Promise<ApiResult<unknown[]>>;
+}
+
+export type PreparationPreflight =
+  | { ok: true; repositoryId: number; sourceSha: string; baseSha: string; policyDigest: string; releaseIntent: string[] }
+  | { ok: false; error: string };
+
+const gitSha = /^[0-9a-f]{40}$/;
+const record = (value: unknown): Record<string, unknown> | undefined =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+/** Reads release intent and policy from the current trusted base, not the PR's potentially stale base SHA. */
+export async function inspectCandidatePreparation(repository: string, prNumber: number, expectedHead: string, api: PreparationApi = new GhTransport()): Promise<PreparationPreflight> {
+  if (!Number.isSafeInteger(prNumber) || prNumber <= 0 || !gitSha.test(expectedHead)) return { ok: false, error: 'invalid PR number or expected head SHA' };
+  try {
+    const access = await inspectGitHubAccess(repository, api);
+    if (!access.ok) return { ok: false, error: `cannot prepare a candidate: ${access.reason}` };
+    if (!['write', 'maintain', 'admin'].includes(access.role)) return { ok: false, error: 'candidate preparation requires repository write access' };
+    const prefix = `repos/${repository}`;
+    const response = await api.get(`${prefix}/pulls/${prNumber}`);
+    if (!response.ok) return { ok: false, error: `cannot inspect PR #${prNumber}: ${response.reason}` };
+    const pr = record(response.value);
+    const head = record(pr?.head);
+    const base = record(pr?.base);
+    if (pr?.state !== 'open' || head?.sha !== expectedHead) return { ok: false, error: `PR #${prNumber} is closed or its head no longer matches ${expectedHead}` };
+    if (record(head.repo)?.id !== access.repositoryId || record(base?.repo)?.id !== access.repositoryId) {
+      return { ok: false, error: 'candidate preparation requires a same-repository PR' };
+    }
+    if (typeof head.ref !== 'string' || typeof base?.ref !== 'string') return { ok: false, error: 'PR branch metadata is incomplete' };
+    const branch = await api.get(`${prefix}/branches/${encodeURIComponent(base.ref)}`);
+    if (!branch.ok) return { ok: false, error: `cannot inspect target branch: ${branch.reason}` };
+    const baseSha = record(record(branch.value)?.commit)?.sha;
+    if (typeof baseSha !== 'string' || !gitSha.test(baseSha)) return { ok: false, error: 'target branch has no valid tip SHA' };
+    const policyResponse = await api.get(`${prefix}/contents/qa/policy.json?ref=${baseSha}`);
+    if (!policyResponse.ok) return { ok: false, error: `cannot read trusted QA policy: ${policyResponse.reason}` };
+    const policyFile = record(policyResponse.value);
+    const encoded = policyFile?.content;
+    if (policyFile?.type !== 'file' || policyFile.encoding !== 'base64' || typeof encoded !== 'string') {
+      return { ok: false, error: 'trusted QA policy is not a readable file' };
+    }
+    const bytes = Buffer.from(encoded, 'base64');
+    const policy = record(JSON.parse(bytes.toString('utf8')) as unknown);
+    if (typeof policy?.releaseBranchPrefix !== 'string' || !policy.releaseBranchPrefix ||
+        typeof policy.releaseLabel !== 'string' || !policy.releaseLabel ||
+        !Array.isArray(policy.releaseFiles) || !policy.releaseFiles.every((file) => typeof file === 'string' && file.length > 0)) {
+      return { ok: false, error: 'trusted QA policy has invalid release intent rules' };
+    }
+    const changed = await api.list(`${prefix}/pulls/${prNumber}/files?per_page=100`);
+    if (!changed.ok) return { ok: false, error: `cannot inspect changed files: ${changed.reason}` };
+    const files = changed.value.map((file) => record(file)?.filename);
+    if (files.some((file) => typeof file !== 'string')) return { ok: false, error: 'PR changed-file list is incomplete' };
+    const reasons: string[] = [];
+    if (head.ref.startsWith(policy.releaseBranchPrefix)) reasons.push('release branch');
+    if (Array.isArray(pr.labels) && pr.labels.some((label) => record(label)?.name === policy.releaseLabel)) reasons.push('release label');
+    const changedReleaseFiles = files.filter((file) => (policy.releaseFiles as string[]).includes(file as string));
+    if (changedReleaseFiles.length > 0) reasons.push(`release file changed: ${changedReleaseFiles.join(', ')}`);
+    if (reasons.length === 0) return { ok: false, error: 'PR has no trusted release intent' };
+    const current = await api.get(`${prefix}/pulls/${prNumber}`);
+    const currentPr = current.ok ? record(current.value) : undefined;
+    if (currentPr?.state !== 'open' || record(currentPr?.head)?.sha !== expectedHead || record(currentPr?.head)?.ref !== head.ref || record(currentPr?.base)?.ref !== base.ref) {
+      return { ok: false, error: 'PR state, head, or target changed during candidate preparation preflight' };
+    }
+    const labelNames = (value: Record<string, unknown> | undefined): string =>
+      JSON.stringify((Array.isArray(value?.labels) ? value.labels : []).map((label) => record(label)?.name).sort());
+    if (labelNames(currentPr) !== labelNames(pr)) return { ok: false, error: 'PR release labels changed during candidate preparation preflight' };
+    const currentBase = await api.get(`${prefix}/branches/${encodeURIComponent(base.ref)}`);
+    if (!currentBase.ok || record(record(currentBase.value)?.commit)?.sha !== baseSha) return { ok: false, error: 'target branch changed during candidate preparation preflight' };
+    return { ok: true, repositoryId: access.repositoryId, sourceSha: expectedHead, baseSha, policyDigest: createHash('sha256').update(bytes).digest('hex'), releaseIntent: reasons };
+  } catch {
+    return { ok: false, error: 'candidate preparation preflight could not verify GitHub state' };
+  }
 }
 
 export type DownloadCandidateResult = { ok: true; path: string; sha256: string } | { ok: false; error: string };
