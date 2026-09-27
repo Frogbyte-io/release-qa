@@ -9,7 +9,10 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
   $requestId = $parts[0]
   try {
     $targetProcessId = [int]$parts[1]
-    $started = (Get-Process -Id $targetProcessId -ErrorAction Stop).StartTime.ToFileTimeUtc()
+    $targetProcess = Get-Process -Id $targetProcessId -ErrorAction Stop
+    if ($targetProcess.HasExited) { throw 'process exited' }
+    $started = $targetProcess.StartTime.ToFileTimeUtc()
+    if ($targetProcess.HasExited) { throw 'process exited' }
     [Console]::Out.WriteLine("$requestId,$started")
   } catch {
     [Console]::Out.WriteLine("$requestId,")
