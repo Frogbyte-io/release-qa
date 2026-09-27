@@ -17,7 +17,7 @@ import {
 } from '../../src/runner/resources.ts';
 import { cleanUpProcessesAndRoots, eventually, isAlive, makeTempDir, makeTestRoot, startUnrelatedProcess, trackProcess } from '../fixtures/processes.ts';
 
-// Reading a process's identity starts PowerShell on Windows, which can take seconds on a busy CI runner.
+// The first Windows identity read starts PowerShell; subsequent reads use the same session.
 vi.setConfig({ testTimeout: 30_000 });
 
 afterEach(cleanUpProcessesAndRoots);
@@ -152,6 +152,28 @@ describe('spawning owned processes', () => {
     child.kill('SIGKILL');
     await eventually(() => !isAlive(pid));
     expect(await processIdentity(pid)).toBeUndefined();
+  });
+
+  test.skipIf(process.platform !== 'win32')('reuses the Windows lookup session for repeated identity reads', async () => {
+    const expected = await processIdentity(process.pid);
+    expect(expected).toMatch(/^win32:\d+$/);
+    const started = performance.now();
+    for (let attempt = 0; attempt < 12; attempt++) {
+      expect(await processIdentity(process.pid)).toBe(expected);
+    }
+    // A new PowerShell start for each read takes several seconds even on an idle Windows machine.
+    expect(performance.now() - started).toBeLessThan(1200);
+  });
+
+  test.skipIf(process.platform !== 'win32')('keeps concurrent Windows identity replies paired with their pids', async () => {
+    const child = startUnrelatedProcess();
+    const [mine, theirs, missing] = await Promise.all([
+      processIdentity(process.pid), processIdentity(child.pid as number), processIdentity(2147483647),
+    ]);
+    expect(mine).toMatch(/^win32:\d+$/);
+    expect(theirs).toMatch(/^win32:\d+$/);
+    expect(theirs).not.toBe(mine);
+    expect(missing).toBeUndefined();
   });
 });
 
