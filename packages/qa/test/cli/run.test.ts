@@ -1,7 +1,9 @@
-import { readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { exitCodeOf, resumeRun, startRun, type RequirementResult, type RunOptions, type RunSummary } from '../../src/cli/run.ts';
+import { exitCodeOf, resumeRun, stageArtifact, startRun, type RequirementResult, type RunOptions, type RunSummary } from '../../src/cli/run.ts';
+import { loadCandidate } from '../../src/cli/candidate.ts';
 import { readRun } from '../../src/runner/journal.ts';
 import { writeConsumer, type Behaviour, type Consumer } from '../fixtures/consumer.ts';
 import { cleanUpProcessesAndRoots, makeTempDir, makeTestRoot } from '../fixtures/processes.ts';
@@ -47,8 +49,8 @@ describe('starting a run', () => {
 
     expect(summary.exitCode).toBe(0);
     expect(outcomes(summary)).toEqual({ startup: 'passed', persistence: 'passed' });
-    // Hooks get the file's real path (on some machines not byte-identical to the one it was written through).
-    const artifact = await realpath(join(consumer.dir, 'setup.bin'));
+    // Every hook gets the same copy inside this run, which is removed after the session.
+    const artifact = join(stateDir, summary.runId, 'verified-artifact', 'setup.bin');
     expect(await calls(consumer)).toEqual([
       `install ${artifact}`, `reset ${artifact}`, `launch ${artifact}`, `steps:startup ${artifact}`, `cleanup ${artifact}`,
       `install ${artifact}`, `reset ${artifact}`, `launch ${artifact}`, `steps:persistence ${artifact}`, `cleanup ${artifact}`,
@@ -62,6 +64,7 @@ describe('starting a run', () => {
       [`${consumer.profile}/persistence`, 'passed'],
     ]);
     expect(await exists(join(stateDir, summary.runId, 'summary.json'))).toBe(true);
+    expect(await exists(artifact)).toBe(false);
   });
 
   test('the machine id is a generated token, not the host name, and stays the same across runs', async () => {
@@ -113,6 +116,34 @@ describe('starting a run', () => {
     expect(!result.ok && result.error).toContain('does not match');
     expect(await calls(consumer)).toEqual([]);
     expect(await exists(stateDir)).toBe(false);
+  });
+
+  test('install uses the verified run-owned bytes if the source changes after verification', async () => {
+    const { consumer, stateDir, options, invocation } = await setUp({ persistence: 'pass' });
+    const source = await realpath(join(consumer.dir, 'setup.bin'));
+    const summary = await started(invocation, {
+      ...options,
+      onStart: () => writeFileSync(source, 'changed after verification'),
+    });
+
+    expect(summary.exitCode).toBe(0);
+    expect(await readFile(consumer.installedBytesPath, 'utf8')).toBe(consumer.artifactBytes);
+    const installPath = (await calls(consumer))[0]!.slice('install '.length);
+    expect(installPath).not.toBe(source);
+    expect(installPath).toContain(join(stateDir, summary.runId));
+    expect(await exists(installPath)).toBe(false);
+  });
+
+  test('a source changed while being staged cannot be installed under its old digest', async () => {
+    const { consumer } = await setUp({ persistence: 'pass' });
+    const loaded = await loadCandidate(consumer.candidatePath, consumer.profile);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const runDir = await makeTempDir('qa-copy-');
+    await writeFile(join(consumer.dir, 'setup.bin'), 'changed before the copy');
+
+    await expect(stageArtifact(loaded.artifact, runDir)).rejects.toThrow(/expected SHA-256 .* found/);
+    expect(await exists(join(runDir, 'verified-artifact'))).toBe(false);
   });
 
   test('an unknown suite or profile is refused before anything is recorded', async () => {
@@ -197,6 +228,29 @@ describe('resuming a run', () => {
     await writeFile(join(consumer.dir, 'setup.bin'), 'rebuilt');
     const result = await resumeRun(first.runId, options);
     expect(result.ok).toBe(false);
+  });
+
+  test('resume creates a fresh verified copy before its install hook', async () => {
+    const { consumer, stateDir, options, invocation } = await setUp({ persistence: 'throw' });
+    const first = await started(invocation, options);
+    const stale = join(stateDir, first.runId, 'verified-artifact');
+    await mkdir(stale);
+    await writeFile(join(stale, 'setup.bin'), 'left by a crashed session');
+    const source = await realpath(join(consumer.dir, 'setup.bin'));
+    let changed = false;
+    await resumed(first.runId, {
+      ...options,
+      onEvent: (event) => {
+        if (!changed && event.phase === 'install' && event.status === 'started') {
+          writeFileSync(source, 'changed during resume');
+          changed = true;
+        }
+      },
+    });
+
+    expect(changed).toBe(true);
+    expect(await readFile(consumer.installedBytesPath, 'utf8')).toBe(consumer.artifactBytes);
+    expect(await exists(stale)).toBe(false);
   });
 
   test('a manifest that now names a different candidate is refused', async () => {

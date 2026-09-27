@@ -18,7 +18,7 @@ Status: **implemented** for the CLI's `run`, `resume` and `reset`: tested agains
 
 - One artifact per profile; `path` is relative to the manifest's own directory and cannot leave it, lexically or through a link: the real location must be inside the manifest's real directory.
 - Before anything is installed, the chosen profile's file is hashed at its real location and must match `sha256`; the location is re-checked after hashing. Other profiles' files are never read.
-- It has no source or build provenance, so it can never stand in for a GitHub candidate at the merge gate (Stage 3). Hooks receive only `candidate.id` and the verified `artifact` (`name`, its real absolute `path` with no link left in it, `sha256`); a full GitHub candidate record also fits `candidate`.
+- It has no source or build provenance, so it can never stand in for a GitHub candidate at the merge gate (Stage 3). Hooks receive only `candidate.id` and the verified `artifact` (`name`, the absolute path of a run-owned copy, `sha256`); a full GitHub candidate record also fits `candidate`.
 
 ## Consumer code
 
@@ -27,6 +27,7 @@ Status: **implemented** for the CLI's `run`, `resume` and `reset`: tested agains
 ## State
 
 - Default test root: `.release-qa` under the current directory; default state directory: `.release-qa/runs` (both gitignored). Each run is `runs/<run id>/` with `invocation.json` (what was asked, absolute paths, and the tested artifact's SHA-256), `events.jsonl` (the Task 1.3 journal) and `summary.json`.
+- After checking the source artifact, `run` copies it under the run directory and hashes the copy before any hook uses it. The copy is removed when that run session ends. `resume` re-verifies the manifest and source, replaces any copy left by a crashed session, and checks the fresh copy before continuing. This briefly uses disk space equal to one installer per active run.
 - The machine is identified in run records by a random token kept in the state directory, never the host name.
 - `run` announces `run <id> started` on stderr before anything runs, in every output mode, with the `resume` command to use (including a custom `--state`, quoted so it pastes safely in bash and PowerShell), so a run can be resumed even if the process dies.
 - A run id is a run id, never a path: `resume --run` accepts only the journal's id grammar, which has no path separators (`/`, `\`, `:`).
@@ -54,5 +55,4 @@ A crash can leave owned resources and a dirty marker in the test root, which blo
 
 - Cancellation by a real signal is tested on Linux only (CI). On Windows a console Ctrl+C reaches the same handler, but a test cannot send one to another process.
 - Evidence files (screenshots, logs) are not collected yet; attempts record `evidence: []`.
-- The artifact's contents could still change after verification; only copying it into the run's own storage would close that. Links cannot redirect it, and the install hook consumes it at once.
 - Consumer lifecycle and scenario modules run in a supervised child process. The CLI keeps the journal, test-root lock and resource ledger; the child sends `ctx.own` requests back to the CLI before a hook continues. For `ctx.spawn`, the CLI starts and records the OS process before returning a remote process handle to consumer code. The handle supports exit events, status and asynchronous `kill`; piped stdio and `SpawnOptions.signal` are not bridged, so consumer code must use `stdio: 'ignore'` or `'inherit'` and cancel through `ctx.signal` or the handle's `kill`. If consumer code exits during an active scenario phase, the CLI records an interrupted attempt, starts a fresh child for cleanup, reaps ledger resources, and returns its normal exit code. An import-time exit fails before a run begins. An exit during cleanup records cleanup failure and may leave the attempt's outcome as passed. The restarted cleanup hook has no in-memory state from the crashed child, so cleanup must also work from persisted paths and the runner's owned-resource ledger. An unfinished scenario can then be retried with `resume`.

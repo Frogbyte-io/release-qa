@@ -42,6 +42,7 @@ export interface Consumer {
   failCleanupPath: string;
   profile: string;
   artifactBytes: string;
+  installedBytesPath: string;
 }
 
 export async function writeConsumer(options: ConsumerOptions): Promise<Consumer> {
@@ -57,6 +58,7 @@ export async function writeConsumer(options: ConsumerOptions): Promise<Consumer>
   await mkdir(qa, { recursive: true });
   const profile = hostProfile();
   const logPath = join(dir, 'calls.log');
+  const installedBytesPath = join(dir, 'installed-bytes.bin');
   const ids = Object.keys(options.scenarios);
   const manual = options.manual ?? [];
 
@@ -85,9 +87,10 @@ export async function writeConsumer(options: ConsumerOptions): Promise<Consumer>
   await writeFile(
     join(qa, 'lifecycle.ts'),
     [
-      "import { appendFileSync, existsSync } from 'node:fs';",
+      "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
       'export const lifecycle = {',
-      ...['install', 'reset', 'launch'].map((phase) => `  ${phase}: async (ctx) => { ${log(phase)}; },`),
+      `  install: async (ctx) => { ${log('install')}; writeFileSync(${JSON.stringify(installedBytesPath)}, readFileSync(ctx.artifact.path)); },`,
+      ...['reset', 'launch'].map((phase) => `  ${phase}: async (ctx) => { ${log(phase)}; },`),
       `  cleanup: async (ctx) => { ${log('cleanup')}; if (existsSync(${JSON.stringify(failCleanupPath)})) throw new Error('the uninstaller crashed'); },`,
       '};',
     ].join('\n'),
@@ -124,5 +127,5 @@ export async function writeConsumer(options: ConsumerOptions): Promise<Consumer>
     }),
   );
 
-  return { dir, projectPath: join(qa, 'project.json'), candidatePath, logPath, holdPath, failCleanupPath, profile: profile.id, artifactBytes };
+  return { dir, projectPath: join(qa, 'project.json'), candidatePath, logPath, holdPath, failCleanupPath, installedBytesPath, profile: profile.id, artifactBytes };
 }

@@ -70,7 +70,7 @@ export async function loadCandidate(manifestPath: string, profile: string): Prom
 }
 
 /** Streams the file, so an installer of any size is hashed without being held in memory. */
-function sha256Of(path: string): Promise<string> {
+export function sha256Of(path: string): Promise<string> {
   return new Promise((resolveHash, rejectHash) => {
     const hash = createHash('sha256');
     createReadStream(path)
