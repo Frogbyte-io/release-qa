@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "events": 3,
+  "attempts": [
+    {
+      "id": "run-20260927T141839Z-1cffac.a1",
+      "requirement": "windows/persistence",
+      "outcome": "passed"
+    }
+  ],
+  "pending": [
+    "run-20260927T141839Z-1cffac.e1",
+    "run-20260927T141839Z-1cffac.e2",
+    "run-20260927T141839Z-1cffac.e3"
+  ],
+  "synced": [],
+  "ackMismatches": [],
+  "orphanAcks": [],
+  "missingEvidence": [],
+  "corrupt": 0,
+  "truncated": false,
+  "conflicts": [],
+  "missingPredecessors": [],
+  "cyclic": []
+}

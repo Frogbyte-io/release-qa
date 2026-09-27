@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "events": 3,
+  "attempts": [
+    {
+      "id": "run-20260927T142208Z-49be4c.a1",
+      "requirement": "linux/persistence",
+      "outcome": "passed"
+    }
+  ],
+  "pending": [
+    "run-20260927T142208Z-49be4c.e1",
+    "run-20260927T142208Z-49be4c.e2",
+    "run-20260927T142208Z-49be4c.e3"
+  ],
+  "synced": [],
+  "ackMismatches": [],
+  "orphanAcks": [],
+  "missingEvidence": [],
+  "corrupt": 0,
+  "truncated": false,
+  "conflicts": [],
+  "missingPredecessors": [],
+  "cyclic": []
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "project": "%USERPROFILE%\\.t3\\worktrees\\release-qa\\t3code-2fd86b2b\\examples\\tauri-smoke\\qa\\project.json",
+  "candidate": "%USERPROFILE%\\AppData\\Local\\Temp\\rqa19\\candidate.json",
+  "profile": "windows",
+  "suite": "release",
+  "root": "%USERPROFILE%\\.t3\\worktrees\\release-qa\\t3code-2fd86b2b\\.release-qa",
+  "artifactSha256": "f2e9663903d3345f11e3b2bba3ecfd18a688b7c5124b3ad7186e63af248ff5dd"
+}

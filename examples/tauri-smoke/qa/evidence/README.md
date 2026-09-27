@@ -21,10 +21,40 @@ the package's own metadata changed between builds, the binary did not.
 
 ## Not shown here
 
-- **Evidence files.** Attempts record `evidence: []`: the scenario does not take screenshots yet. The DOM checks and
-  the independent read of `setting.txt` are what prove state, as in Stage 0. Tracked in [#19](https://github.com/Frogbyte-io/release-qa/issues/19).
+- **Screenshots in the runs above.** Those runs predate screenshot evidence, so their attempts record `evidence: []`;
+  see the next section.
 - **Repeated attempts at Stage 0's scale.** Stage 0 ran 10 attempts in each of 3 runs per platform. These runs show
   the same scenario passing through the runner and CLI; they are not a new reliability study.
 - **A runnable Linux candidate.** [`linux/candidate-record.json`](linux/candidate-record.json) is the manifest that
   run used, kept as a record. The `.deb` it names was not committed, so it cannot be passed to `--candidate`; build
   the sample and write a manifest for your own build (see the guide).
+
+## Screenshots as attempt evidence (#19)
+
+One passing run per platform with the scenario's screenshots, kept as the CLI wrote them: the journal, `summary.json`,
+`report.html`, and `evidence/<attempt id>/` with a screenshot after each change (`1-saved`, `2-restarted`,
+`3-cleared`, `4-restarted-cleared`). Open `report.html` in the run's directory to follow the links.
+
+| | Windows | Linux |
+| --- | --- | --- |
+| Run | [`windows/run-20260927T141839Z-1cffac`](windows/run-20260927T141839Z-1cffac/report.html) | [`linux/run-20260927T142208Z-49be4c`](linux/run-20260927T142208Z-49be4c/report.html) |
+| Machine | the same laptop and interactive session as above | the `release-qa-sample` Ubuntu 24.04.5 WSL2 distribution (same kernel as above), Xvfb on `:99`, `WAYLAND_DISPLAY` unset |
+| Candidate | Stage 0's NSIS installer, SHA-256 `f2e96639…` (as above) | built there from this branch (commit `fb33377`): `.deb` SHA-256 `01ebd14993b08b33c50c77aebaad618ef26844a900ae72d67779dd01df209ab4`; the unpacked app binary is again `618eb56f…`, Stage 0's |
+| Native driver | Microsoft Edge WebDriver 154.0.4258.37 for WebView2 154.0.4258.37 (the runtime had updated since the runs above), SHA-256 `ce5f228498566e2b9105dec7cc1f8e68d256f9042f4c66e5f4e3456c1d731308` | `WebKitWebDriver` as above |
+| tauri-driver | as above | as above (`0f4d1c9c…`) |
+| Screenshot size | 842 × 560 | 480 × 320 |
+| Runs | 1 passing | 5 passing in a row (this is the first); none failed the staleness check |
+| Left behind | nothing (checked as above) | nothing (checked as above) |
+
+What was checked by looking at the files: every screenshot shows only the app's page (no desktop, window frame or
+other windows, and no paths or account names), the two taken with the value saved show it, and the two taken after
+Clear show an empty readout. In `invocation.json` of the Windows run the account's profile directory is replaced with
+`%USERPROFILE%`; nothing else was edited.
+
+Before the fix to `restart(ctx)` in the same change, the Windows scenario hung at its first restart until the 5-minute
+steps deadline (with or without screenshots): the relaunched app was owned through the launch hook's context, whose
+call had ended, and the CLI never answered that request. Those runs were debugging runs and are not kept.
+
+Not shown: a stale screenshot. None occurred in these 6 runs, so the check that turns one into an `interrupted`
+attempt is exercised here only on the passing side. Stage 0's numbers (native-automation finding 4) remain the evidence
+that the 500 ms settle matters on WebKitGTK.
