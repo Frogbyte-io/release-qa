@@ -116,7 +116,7 @@ appear on stderr as each phase starts and finishes; the summary on stdout looks 
 
 ```
 run run-20260927T120747Z-41621e (candidate local-demo-1, profile windows, suite release)
-  windows/check: passed
+  windows/persistence: passed
 ```
 
 Before anything runs, `run` announces on stderr:
@@ -176,7 +176,7 @@ A resumed run that only carries results prints them marked `(from earlier)`:
 
 ```
 run run-20260927T120758Z-696e07 (candidate local-demo-1, profile windows, suite release)
-  windows/check: failed (from earlier)
+  windows/persistence: failed (from earlier)
 ```
 
 If the run used a custom `--state`, the announcement includes it: paste the whole `resume --run … --state …` line it

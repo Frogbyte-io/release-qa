@@ -57,7 +57,8 @@ The file is parsed as data before any of your code runs. A malformed file is rep
 
 ## The lifecycle module
 
-Export a `lifecycle` object with four hooks. Each is bounded (2 minutes by default) and abortable:
+Export a `lifecycle` object with four hooks. `install`, `reset` and `launch` are each bounded (2 minutes by default)
+and abortable:
 
 ```ts
 import type { Lifecycle } from '../packages/qa/src/runner/execute.ts';
@@ -112,8 +113,9 @@ export const scenarios = [
 ];
 ```
 
-`setup` runs after launch and before `steps`, per scenario. The steps deadline is 5 minutes by default; each hook's
-is 2 minutes.
+`setup` runs after launch and before `steps`, per scenario. The steps deadline is 5 minutes by default; the
+install/reset/launch/setup phases get 2 minutes each, and cleanup (and reaping what the run still owns) gets 1
+minute.
 
 ### Waiting and asserting
 
