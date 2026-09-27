@@ -107,8 +107,12 @@ export class ConsumerProcess {
     if (message.type === 'rpc') {
       if (message.operation === 'kill') {
         if (this.worker === worker) {
-          const killed = this.children.get(worker)?.get(message.childId)?.kill(message.signal) ?? false;
-          if (worker.connected) worker.send({ type: 'rpc-result', requestId: message.requestId, ok: true, value: killed }, () => undefined);
+          const child = this.children.get(worker)?.get(message.childId);
+          void (child === undefined ? Promise.resolve(false) : child.kill(message.signal)).then((killed) => {
+            if (worker.connected) worker.send({ type: 'rpc-result', requestId: message.requestId, ok: true, value: killed }, () => undefined);
+          }, (error: unknown) => {
+            if (worker.connected) worker.send({ type: 'rpc-result', requestId: message.requestId, ok: false, error: error instanceof Error ? error.message : String(error) }, () => undefined);
+          });
         }
         return;
       }
@@ -132,7 +136,7 @@ export class ConsumerProcess {
               if (worker.connected) worker.send({ type: 'child-exit', childId, code, signal }, () => undefined);
             });
           }
-          if (pending.context!.signal.aborted || !worker.connected) child.kill('SIGKILL');
+          if (pending.context!.signal.aborted || !worker.connected) await child.kill('SIGKILL');
           return { childId, pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode };
         }
         return undefined;

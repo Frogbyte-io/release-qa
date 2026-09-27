@@ -56,10 +56,9 @@ class RemoteChild extends EventEmitter {
     this.signalCode = state.signalCode;
   }
 
-  kill(signal?: NodeJS.Signals | number): boolean {
+  async kill(signal?: NodeJS.Signals | number): Promise<boolean> {
     if (this.exitCode !== null || this.signalCode !== null) return false;
-    void rpc(this.callId, { operation: 'kill', childId: this.childId, signal }).catch(() => undefined);
-    return true;
+    return await rpc(this.callId, { operation: 'kill', childId: this.childId, signal }) as boolean;
   }
 
   exited(code: number | null, signal: NodeJS.Signals | null): void {
@@ -71,9 +70,11 @@ class RemoteChild extends EventEmitter {
 
 /** The parent starts and records the helper before this proxy is returned to consumer code. */
 async function spawnFor(callId: number, label: string, command: string, args: readonly string[], options: SpawnOptions = {}): Promise<OwnedChildProcess> {
-  if (options.stdio === undefined || options.stdio === 'pipe' || Array.isArray(options.stdio) && options.stdio.includes('pipe')) {
+  if (options.stdio !== 'ignore' && options.stdio !== 'inherit') {
     throw new Error('consumer child process bridge requires stdio: ignore or inherit');
   }
+  if (options.signal !== undefined) throw new Error('consumer child process bridge does not support a spawn AbortSignal');
+  if (options.cwd instanceof URL) throw new Error('consumer child process bridge requires a string cwd');
   const state = await rpc(callId, { operation: 'spawn', label, command, args: [...args], options }) as { childId: number; pid?: number; exitCode: number | null; signalCode: NodeJS.Signals | null };
   const child = new RemoteChild(state.childId, callId, state);
   children.set(state.childId, child);
