@@ -1,8 +1,9 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import type { SpawnOptions } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import type { Project } from '../model/project.ts';
 import type { Requirement } from '../model/requirement.ts';
-import { waitFor, type RunContext } from '../runner/execute.ts';
-import { processIdentity, type OwnedResource } from '../runner/resources.ts';
+import { waitFor, type OwnedChildProcess, type RunContext } from '../runner/execute.ts';
+import type { OwnedResource } from '../runner/resources.ts';
 import { loadConsumerInProcess, type InProcessConsumer } from './consumer.ts';
 
 type Inspect = { type: 'inspect'; id: number; projectPath: string; project: Project; requirements: Requirement[] };
@@ -10,12 +11,15 @@ type Invoke = {
   type: 'invoke'; id: number; phase: 'install' | 'reset' | 'launch' | 'cleanup' | 'setup' | 'steps'; scenarioId?: string;
   context: Pick<RunContext, 'candidate' | 'artifact' | 'profile' | 'testRoot'>;
 };
-type RpcResult = { type: 'rpc-result'; requestId: number; ok: boolean; error?: string };
+type RpcResult = { type: 'rpc-result'; requestId: number; ok: boolean; value?: unknown; error?: string };
+type ChildExit = { type: 'child-exit'; childId: number; code: number | null; signal: NodeJS.Signals | null };
 
 let consumer: Extract<InProcessConsumer, { ok: true }> | undefined;
 let nextRpc = 0;
-const rpcReplies = new Map<number, { resolve(): void; reject(error: Error): void }>();
+const rpcReplies = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
 const active = new Map<number, AbortController>();
+const children = new Map<number, RemoteChild>();
+const earlyExits = new Map<number, ChildExit>();
 
 const send = (value: unknown): void => { if (process.send === undefined) throw new Error('consumer IPC channel closed'); process.send(value); };
 const errorInfo = (error: unknown): { name: string; message: string; code?: string } => {
@@ -24,42 +28,61 @@ const errorInfo = (error: unknown): { name: string; message: string; code?: stri
   return { name: error.name, message: error.message, ...(typeof code === 'string' ? { code } : {}) };
 };
 
-function own(callId: number, resource: OwnedResource): Promise<void> {
+function rpc(callId: number, message: Record<string, unknown>): Promise<unknown> {
   const requestId = ++nextRpc;
   return new Promise((resolve, reject) => {
     rpcReplies.set(requestId, { resolve, reject });
-    send({ type: 'rpc', id: callId, requestId, operation: 'own', resource });
+    send({ type: 'rpc', id: callId, requestId, ...message });
   });
 }
 
-/** The child starts its own helper, but the parent records its identity before the hook may use it. */
-async function spawnFor(callId: number, label: string, command: string, args: readonly string[], options: SpawnOptions = {}): Promise<ChildProcess> {
-  const child = spawn(command, [...args], options);
-  await new Promise<void>((resolve, reject) => {
-    child.once('spawn', () => resolve());
-    child.once('error', reject);
-  });
-  const pid = child.pid as number;
-  let exited = false;
-  child.once('exit', () => { exited = true; });
-  const identity = await processIdentity(pid);
-  if (exited || child.exitCode !== null || child.signalCode !== null) return child;
-  if (identity === undefined) {
-    await Promise.race([
-      new Promise<void>((resolve) => child.once('exit', () => resolve())),
-      new Promise<void>((resolve) => setTimeout(resolve, 500)),
-    ]);
-    if (exited || child.exitCode !== null || child.signalCode !== null) return child;
-    child.kill('SIGKILL');
-    throw new Error(`could not identify the process started for "${label}"; it was stopped`);
+function own(callId: number, resource: OwnedResource): Promise<void> {
+  return rpc(callId, { operation: 'own', resource }).then(() => undefined);
+}
+
+class RemoteChild extends EventEmitter {
+  readonly childId: number;
+  readonly callId: number;
+  readonly pid: number | undefined;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+
+  constructor(childId: number, callId: number, state: { pid?: number; exitCode: number | null; signalCode: NodeJS.Signals | null }) {
+    super();
+    this.childId = childId;
+    this.callId = callId;
+    this.pid = state.pid;
+    this.exitCode = state.exitCode;
+    this.signalCode = state.signalCode;
   }
-  try {
-    await own(callId, { kind: 'process', pid, identity, label });
-  } catch (error) {
-    child.kill('SIGKILL');
-    throw error;
+
+  kill(signal?: NodeJS.Signals | number): boolean {
+    if (this.exitCode !== null || this.signalCode !== null) return false;
+    void rpc(this.callId, { operation: 'kill', childId: this.childId, signal }).catch(() => undefined);
+    return true;
   }
-  return child;
+
+  exited(code: number | null, signal: NodeJS.Signals | null): void {
+    this.exitCode = code;
+    this.signalCode = signal;
+    this.emit('exit', code, signal);
+  }
+}
+
+/** The parent starts and records the helper before this proxy is returned to consumer code. */
+async function spawnFor(callId: number, label: string, command: string, args: readonly string[], options: SpawnOptions = {}): Promise<OwnedChildProcess> {
+  if (options.stdio === undefined || options.stdio === 'pipe' || Array.isArray(options.stdio) && options.stdio.includes('pipe')) {
+    throw new Error('consumer child process bridge requires stdio: ignore or inherit');
+  }
+  const state = await rpc(callId, { operation: 'spawn', label, command, args: [...args], options }) as { childId: number; pid?: number; exitCode: number | null; signalCode: NodeJS.Signals | null };
+  const child = new RemoteChild(state.childId, callId, state);
+  children.set(state.childId, child);
+  const early = earlyExits.get(state.childId);
+  if (early !== undefined) {
+    earlyExits.delete(state.childId);
+    queueMicrotask(() => { child.exited(early.code, early.signal); children.delete(state.childId); });
+  }
+  return child as OwnedChildProcess;
 }
 
 async function invoke(message: Invoke): Promise<void> {
@@ -87,12 +110,18 @@ async function invoke(message: Invoke): Promise<void> {
   }
 }
 
-process.on('message', (raw: Inspect | Invoke | RpcResult) => {
+process.on('message', (raw: Inspect | Invoke | RpcResult | ChildExit) => {
+  if (raw.type === 'child-exit') {
+    const child = children.get(raw.childId);
+    if (child === undefined) earlyExits.set(raw.childId, raw);
+    else { child.exited(raw.code, raw.signal); children.delete(raw.childId); }
+    return;
+  }
   if (raw.type === 'rpc-result') {
     const pending = rpcReplies.get(raw.requestId);
     if (pending === undefined) return;
     rpcReplies.delete(raw.requestId);
-    if (raw.ok) pending.resolve();
+    if (raw.ok) pending.resolve(raw.value);
     else pending.reject(new Error(raw.error ?? 'parent refused ownership'));
     return;
   }
