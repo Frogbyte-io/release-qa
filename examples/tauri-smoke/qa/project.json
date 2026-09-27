@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "projectId": "release-qa-tauri-smoke",
+  "releaseBranch": "main",
+  "profiles": [
+    { "id": "windows", "os": "windows", "arch": "x86_64" },
+    { "id": "linux", "os": "linux", "arch": "x86_64" }
+  ],
+  "requirements": [
+    { "key": "windows/persistence", "mode": "automated", "title": "A saved setting survives a restart and Clear removes it", "capabilities": ["display"] },
+    { "key": "linux/persistence", "mode": "automated", "title": "A saved setting survives a restart and Clear removes it", "capabilities": ["display"] }
+  ],
+  "suites": [{ "id": "release", "requirements": ["windows/persistence", "linux/persistence"] }],
+  "scenarioFiles": ["persistence.spec.ts"],
+  "lifecycleModule": "lifecycle.ts",
+  "workflows": { "prepare": "qa-prepare.yml", "gate": "qa-gate.yml", "publish": "qa-publish.yml" },
+  "markers": { "releaseNotes": "release-notes", "qa": "qa" }
+}
