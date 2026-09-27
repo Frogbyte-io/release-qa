@@ -4,6 +4,7 @@ import { mkdir, lstat, readFile, realpath, rm, stat, writeFile } from 'node:fs/p
 import { homedir } from 'node:os';
 import { join, parse, resolve, sep } from 'node:path';
 import { writeFileAtomic } from './journal.ts';
+import { windowsProcessIdentity } from './windows-identity.ts';
 
 /** Something a run created and therefore may remove. Nothing else is ever touched. */
 export type OwnedResource =
@@ -148,8 +149,7 @@ export async function processIdentity(pid: number): Promise<string | undefined> 
     return fields[19] === undefined ? undefined : `linux:${fields[19]}`;
   }
   if (process.platform === 'win32') {
-    const started = await output('powershell', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${Math.trunc(pid)} -ErrorAction Stop).StartTime.ToFileTimeUtc()`]);
-    return started === undefined || started === '' ? undefined : `win32:${started}`;
+    return windowsProcessIdentity(pid);
   }
   const started = await output('ps', ['-o', 'lstart=', '-p', String(Math.trunc(pid))]);
   return started === undefined || started === '' ? undefined : `${process.platform}:${started}`;
@@ -338,7 +338,7 @@ const LOCK_FILE = '.release-qa-lock.json';
 /** Roots this process holds, so a second run in the same process is refused without touching the disk. */
 const heldHere = new Set<string>();
 let ownIdentity: Promise<string | undefined> | undefined;
-/** This process's own identity, read once: on Windows reading it costs a PowerShell start. A failed read is not kept. */
+/** This process's own identity, read once. A failed read is not kept. */
 async function identityOfThisProcess(): Promise<string | undefined> {
   ownIdentity ??= processIdentity(process.pid);
   const identity = await ownIdentity;
