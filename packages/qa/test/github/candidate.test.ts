@@ -367,4 +367,26 @@ describe('candidate preparation preflight', () => {
     expect(result).toMatchObject({ ok: false });
     expect(!result.ok && result.error).toContain('labels changed');
   });
+
+  test('accepts a release branch as the sole release-intent signal', async () => {
+    const branch = { ...pr, head: { ...pr.head, ref: 'release/1.2.3' } };
+    const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api({
+      'repos/team/sample/pulls/9': branch,
+      'repos/team/sample/pulls/9/files?per_page=100': [],
+    }));
+    expect(result).toMatchObject({ ok: true, releaseIntent: ['release branch'] });
+  });
+
+  test('refuses a PR that closes or changes head during the final read', async () => {
+    for (const second of [{ ...pr, state: 'closed' }, { ...pr, head: { ...pr.head, sha: SHA1.tree } }]) {
+      const client = api();
+      let reads = 0;
+      const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, {
+        ...client,
+        get: async (path) => path === 'repos/team/sample/pulls/9' && ++reads === 2 ? { ok: true, value: second } : client.get(path),
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(!result.ok && result.error).toContain('during candidate preparation preflight');
+    }
+  });
 });

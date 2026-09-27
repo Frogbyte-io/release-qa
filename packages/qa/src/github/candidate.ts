@@ -95,8 +95,8 @@ export async function inspectCandidatePreparation(repository: string, prNumber: 
     if (reasons.length === 0) return { ok: false, error: 'PR has no trusted release intent' };
     const current = await api.get(`${prefix}/pulls/${prNumber}`);
     const currentPr = current.ok ? record(current.value) : undefined;
-    if (record(currentPr?.head)?.sha !== expectedHead || record(currentPr?.head)?.ref !== head.ref || record(currentPr?.base)?.ref !== base.ref) {
-      return { ok: false, error: 'PR head or target changed during candidate preparation preflight' };
+    if (currentPr?.state !== 'open' || record(currentPr?.head)?.sha !== expectedHead || record(currentPr?.head)?.ref !== head.ref || record(currentPr?.base)?.ref !== base.ref) {
+      return { ok: false, error: 'PR state, head, or target changed during candidate preparation preflight' };
     }
     const labelNames = (value: Record<string, unknown> | undefined): string =>
       JSON.stringify((Array.isArray(value?.labels) ? value.labels : []).map((label) => record(label)?.name).sort());
