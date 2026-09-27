@@ -26,7 +26,7 @@ Status: **implemented** for the CLI's `run`, `resume` and `reset`: tested agains
 
 ## State
 
-- Default test root: `.release-qa` under the current directory; default state directory: `.release-qa/runs` (both gitignored). Each run is `runs/<run id>/` with `invocation.json` (what was asked, absolute paths, and the tested artifact's SHA-256), `events.jsonl` (the Task 1.3 journal) and `summary.json`.
+- Default test root: `.release-qa` under the current directory; default state directory: `.release-qa/runs` (both gitignored). Each run is `runs/<run id>/` with `invocation.json` (what was asked, absolute paths, and the tested artifact's SHA-256), `events.jsonl` (the Task 1.3 journal), `summary.json`, `report.html` and `evidence/<attempt id>/`.
 - After checking the source artifact, `run` copies it under the run directory and hashes the copy before any hook uses it. The copy is removed when that run session ends. `resume` re-verifies the manifest and source, replaces any copy left by a crashed session, and checks the fresh copy before continuing. This briefly uses disk space equal to one installer per active run.
 - The machine is identified in run records by a random token kept in the state directory, never the host name.
 - `run` announces `run <id> started` on stderr before anything runs, in every output mode, with the `resume` command to use (including a custom `--state`, quoted so it pastes safely in bash and PowerShell), so a run can be resumed even if the process dies.
@@ -43,6 +43,13 @@ Each scenario records a `scenario-started` checkpoint, then an attempt, then a `
 
 A run whose journal has conflicting or cyclic events, or cannot be read, is not continued.
 
+## Evidence and the run's report
+
+- `ctx.evidence(name)` reserves a file in `evidence/<attempt id>/` and returns its absolute path. `name` must be a plain file name, unique within the attempt; like `own` and `spawn`, it is refused once the phase that asked has ended.
+- When the attempt ends, the reserved files that exist become its `evidence`, as paths relative to the run's directory (`evidence/<attempt id>/<name>`), in the order they were reserved. A reserved file that was never written is left out, so `readRun` reports no `missingEvidence` for it. Evidence written before a failure is kept.
+- The attempt id is chosen before the scenario starts, and the session that resumes a crashed run gives the `interrupted` attempt that same id, so files the crashed session wrote are recorded on it.
+- After every `run` and `resume`, `report.html` is rendered with `renderReport` from all the run's attempts and links each attempt's evidence. It is a local view: a local candidate has no policy digest or test revision (shown as `none (local candidate)`), and nothing in it was uploaded, so it is not a report the merge gate could accept. The environment shown is the last one measured in that session.
+
 ## Outcomes and exit codes
 
 One scenario failing does not stop the others; cancellation stops the running scenario (its cleanup still runs) and starts nothing further (`not-run`). Exit codes, highest rule first: any **failed** → `1`; any interrupted, cancelled or not-run, or any cleanup that failed (the environment was left dirty, however the scenario went) → `3`; any blocked or manual → `2`; otherwise `0`. Configuration and verification problems are `3` before anything runs.
@@ -54,5 +61,4 @@ A crash can leave owned resources and a dirty marker in the test root, which blo
 ## Not verified
 
 - Cancellation by a real signal is tested on Linux only (CI). On Windows a console Ctrl+C reaches the same handler, but a test cannot send one to another process.
-- Evidence files (screenshots, logs) are not collected yet; attempts record `evidence: []`.
 - Consumer lifecycle and scenario modules run in a supervised child process. The CLI keeps the journal, test-root lock and resource ledger; the child sends `ctx.own` requests back to the CLI before a hook continues. For `ctx.spawn`, the CLI starts and records the OS process before returning a remote process handle to consumer code. The handle supports exit events, status and asynchronous `kill`; piped stdio and `SpawnOptions.signal` are not bridged, so consumer code must use `stdio: 'ignore'` or `'inherit'` and cancel through `ctx.signal` or the handle's `kill`. If consumer code exits during an active scenario phase, the CLI records an interrupted attempt, starts a fresh child for cleanup, reaps ledger resources, and returns its normal exit code. An import-time exit fails before a run begins. An exit during cleanup records cleanup failure and may leave the attempt's outcome as passed. The restarted cleanup hook has no in-memory state from the crashed child, so cleanup must also work from persisted paths and the runner's owned-resource ledger. An unfinished scenario can then be retried with `resume`.

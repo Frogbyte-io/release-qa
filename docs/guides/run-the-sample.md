@@ -97,7 +97,9 @@ not exercised.
 ## What a run leaves
 
 - A passing run exits `0` and prints `linux/persistence: passed` (or `windows/...`). The run's journal and summary are
-  under `.release-qa/runs/<run id>/`.
+  under `.release-qa/runs/<run id>/`, with a screenshot of the app after each change (saved, restarted, cleared,
+  restarted cleared) in `evidence/<attempt id>/`. Open `report.html` there to see each attempt with links to its
+  screenshots.
 - The app, its data directory (`%APPDATA%\dev.frogbyte.releaseqa.smoke` or `~/.local/share/dev.frogbyte.releaseqa.smoke`)
   and everything the installer created are removed. The sample's data directory is wiped at the start and end of
   every run, so do not use the sample app for anything else on that machine.

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "project": "/root/rqa-19/examples/tauri-smoke/qa/project.json",
+  "candidate": "/root/rqa-19/examples/tauri-smoke/src-tauri/target/release/bundle/candidate.json",
+  "profile": "linux",
+  "suite": "release",
+  "root": "/root/rqa-19/.release-qa",
+  "artifactSha256": "01ebd14993b08b33c50c77aebaad618ef26844a900ae72d67779dd01df209ab4"
+}

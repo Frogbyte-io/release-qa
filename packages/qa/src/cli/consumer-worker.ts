@@ -94,6 +94,7 @@ async function invoke(message: Invoke): Promise<void> {
     ...message.context,
     signal: controller.signal,
     own: (resource) => own(message.id, resource),
+    evidence: async (name) => await rpc(message.id, { operation: 'evidence', name }) as string,
     spawn: (label, command, args, options) => spawnFor(message.id, label, command, args, options),
     waitFor: (condition, options) => waitFor(controller.signal, condition, options),
   };

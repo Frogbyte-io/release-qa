@@ -5,7 +5,7 @@ import type { Requirement } from '../model/requirement.ts';
 import { AssertionFailure, type OwnedChildProcess, type RunContext } from '../runner/execute.ts';
 
 type Reply = { type: 'reply'; id: number; ok: boolean; value?: unknown; error?: { name: string; message: string; code?: string } };
-type Rpc = { type: 'rpc'; id: number; requestId: number; operation: 'own'; resource: unknown } | { type: 'rpc'; id: number; requestId: number; operation: 'spawn'; label: string; command: string; args: string[]; options: SpawnOptions } | { type: 'rpc'; id: number; requestId: number; operation: 'kill'; childId: number; signal?: NodeJS.Signals | number };
+type Rpc = { type: 'rpc'; id: number; requestId: number; operation: 'own'; resource: unknown } | { type: 'rpc'; id: number; requestId: number; operation: 'evidence'; name: string } | { type: 'rpc'; id: number; requestId: number; operation: 'spawn'; label: string; command: string; args: string[]; options: SpawnOptions } | { type: 'rpc'; id: number; requestId: number; operation: 'kill'; childId: number; signal?: NodeJS.Signals | number };
 type Pending = { worker: ChildProcess; context?: RunContext; rpcs: Set<Promise<void>>; resolve(value: unknown): void; reject(error: Error): void; abort?: () => void };
 
 const errorOf = (value: Reply['error']): Error => {
@@ -116,16 +116,22 @@ export class ConsumerProcess {
         }
         return;
       }
-      const pending = this.pending.get(message.id);
-      if (pending?.worker !== worker || pending.context === undefined) return;
       const answer = (ok: boolean, value?: unknown, error?: string): void => {
         if (worker.connected) worker.send({ type: 'rpc-result', requestId: message.requestId, ok, ...(value === undefined ? {} : { value }), ...(error === undefined ? {} : { error }) }, () => undefined);
       };
+      const pending = this.pending.get(message.id);
+      // A request made through the context of a call that has returned (say, by a session object kept from the launch
+      // hook) is refused out loud: left unanswered, the consumer code would wait for it forever.
+      if (pending?.worker !== worker || pending.context === undefined) {
+        answer(false, undefined, `the ${message.operation} request came from a phase that has ended; use the context of the phase that is running`);
+        return;
+      }
       const operation = (async (): Promise<unknown> => {
         if (message.operation === 'own') {
           await pending.context!.own(message.resource as Parameters<RunContext['own']>[0]);
           return undefined;
         }
+        if (message.operation === 'evidence') return await pending.context!.evidence(message.name);
         if (message.operation === 'spawn') {
           const child = await pending.context!.spawn(message.label, message.command, message.args, message.options);
           const childId = message.requestId;

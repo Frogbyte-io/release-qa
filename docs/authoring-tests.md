@@ -90,7 +90,11 @@ outside your immediate control with `ctx.own` (below) so the runner can reap it.
   `exitCode`, `kill()` and `on('exit')`. Use `stdio: 'ignore'` or `'inherit'` (piped stdio is not bridged) and
   cancel through `ctx.signal` or the handle's `kill`, not a `SpawnOptions.signal`.
 
-`own` and `spawn` are refused once the phase that asked has ended, so a hook that was cut off cannot leave resources
+- `ctx.evidence(name)` reserves a file for evidence, such as a screenshot, and returns the absolute path to write it
+  to. `name` is a plain file name, unique within the attempt. Whatever exists at that path when the attempt ends is
+  recorded as the attempt's evidence and linked from the run's `report.html`.
+
+`own`, `spawn` and `evidence` are refused once the phase that asked has ended, so a hook that was cut off cannot leave resources
 behind after cleanup has looked at the ledger. If your consumer code exits mid-run, the runner records an
 interrupted attempt and starts a fresh child for cleanup — which has no in-memory state, so cleanup must work from
 persisted paths and the ledger, not from module-level variables alone.
@@ -148,17 +152,22 @@ and the `waitFor` keeps polling instead.
 ### Driving the app
 
 Scenario code sees the same `ctx` as the hooks (`ctx.artifact`, `ctx.testRoot`, `ctx.signal`, `ctx.own`,
-`ctx.spawn`, `ctx.waitFor`). The application itself is reached through the session your `launch` hook stored; the
+`ctx.spawn`, `ctx.waitFor`, `ctx.evidence`). The application itself is reached through the session your `launch` hook stored; the
 sample's scenario finds elements by id:
 
 ```ts
 await (await session().browser.$('#setting-input')).setValue(value);
 await (await session().browser.$('#save-button')).click();
-await session().restart();
+await session().restart(ctx);
+await session().screenshot(await ctx.evidence('2-restarted.png'));
 ```
 
-`session().browser` is the WebdriverIO browser; `restart()` ends the session, waits for the app to exit and
-launches it again. See the sample's [`persistence.spec.ts`](../examples/tauri-smoke/qa/persistence.spec.ts) for a
+`session().browser` is the WebdriverIO browser. `restart(ctx)` ends the session, waits for the app to exit and
+launches it again; pass the running phase's `ctx`, because the new instance is owned through it (the context the
+launch hook received belongs to a phase that has ended, and using it is refused). `screenshot(path)` waits 500 ms,
+saves a PNG of the app's page (the webview only, no desktop or window frame) and returns its SHA-256. A screenshot is
+a record of what was seen; assert state through the DOM and on disk, never through the screenshot. See the sample's
+[`persistence.spec.ts`](../examples/tauri-smoke/qa/persistence.spec.ts) for a
 complete scenario: save, verify on disk, restart, verify again, clear, restart, verify gone.
 
 ## Worked example
@@ -170,7 +179,7 @@ complete scenario: save, verify on disk, restart, verify again, clear, restart, 
 | [`project.json`](../examples/tauri-smoke/qa/project.json) | two profiles, one automated requirement per profile, one suite |
 | [`lifecycle.ts`](../examples/tauri-smoke/qa/lifecycle.ts) | NSIS install into the test root, `dpkg-deb -x` on Linux, owned launch, cleanup that attempts every step and reports failures together |
 | [`app.ts`](../examples/tauri-smoke/qa/app.ts) | shared paths, `runToEnd` over `ctx.spawn`, Windows registry cleanup, refusing an install the run did not make |
-| [`persistence.spec.ts`](../examples/tauri-smoke/qa/persistence.spec.ts) | `ctx.waitFor` for UI state, `node:assert` for the file on disk |
+| [`persistence.spec.ts`](../examples/tauri-smoke/qa/persistence.spec.ts) | `ctx.waitFor` for UI state, `node:assert` for the file on disk, a screenshot after each change with a check that none is stale |
 
 To write a one-scenario suite for another Tauri app, copy that directory, change `projectId`, the profile list, the
 requirement keys and the paths in `app.ts`, and point `run --project` at the new `qa/project.json`.

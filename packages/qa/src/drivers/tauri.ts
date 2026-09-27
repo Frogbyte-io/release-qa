@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { remote } from 'webdriverio';
@@ -29,6 +30,8 @@ export interface TauriAppOptions {
   startTimeoutMs?: number;
   /** How long the application may take to exit after its session ends. Default 10 s. */
   exitTimeoutMs?: number;
+  /** How long to wait before each screenshot, so it shows what the page shows. Default 500 ms. */
+  screenshotSettleMs?: number;
 }
 
 export type Browser = Awaited<ReturnType<typeof remote>>;
@@ -103,7 +106,8 @@ export async function takeOver(ctx: Pick<RunContext, 'own'>, pids: readonly numb
 }
 
 export class TauriApp {
-  readonly #ctx: RunContext;
+  /** The context of the phase that opened the current session; the application it launched is owned through it. */
+  #ctx: RunContext;
   readonly #options: Required<Omit<TauriAppOptions, 'tauriDriver'>> & { tauriDriver: string };
   #driverPid = 0;
   #browser: Browser | undefined;
@@ -118,6 +122,7 @@ export class TauriApp {
       port: options.port ?? DEFAULT_PORT,
       startTimeoutMs: options.startTimeoutMs ?? 60_000,
       exitTimeoutMs: options.exitTimeoutMs ?? 10_000,
+      screenshotSettleMs: options.screenshotSettleMs ?? 500,
     };
   }
 
@@ -159,9 +164,26 @@ export class TauriApp {
     return this.#browser;
   }
 
-  /** Ends the session and waits for the application to exit, then launches it again. */
-  async restart(): Promise<void> {
+  /**
+   * Saves a PNG of the application's page to `path` (from `ctx.evidence`) and returns its SHA-256. It shows the webview
+   * only: no desktop, other windows or window frame. It first waits `screenshotSettleMs`, because on Linux WebKitGTK
+   * can capture a frame from before the page's last change (Stage 0, native-automation finding 4); even so, a
+   * screenshot is a record of what was seen, never the proof of state, which stays with the scenario's assertions.
+   */
+  async screenshot(path: string): Promise<string> {
+    const browser = this.browser;
+    await sleep(this.#options.screenshotSettleMs);
+    return createHash('sha256').update(await browser.saveScreenshot(path)).digest('hex');
+  }
+
+  /**
+   * Ends the session and waits for the application to exit, then launches it again. `ctx` is the calling phase's own
+   * context: the new instance is owned through it, since the context `start` was given belongs to a phase that has
+   * ended and can no longer take ownership of anything.
+   */
+  async restart(ctx: RunContext): Promise<void> {
     await this.close();
+    this.#ctx = ctx;
     await this.#open();
   }
 
