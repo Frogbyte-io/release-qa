@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { getEventListeners } from 'node:events';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { AssertionFailure, executeScenario } from '../../src/runner/execute.ts';
 import { readDirty, readLedger, resetDirtyEnvironment, spawnOwned } from '../../src/runner/resources.ts';
@@ -382,15 +382,29 @@ describe('evidence files', () => {
   test('a reserved file that was written is the attempt\'s evidence, in reservation order; one never written is not', async () => {
     const evidenceDir = join(await makeTempDir('qa-evidence-'), 'evidence', 'a1');
     const { context } = await arrange({ evidenceDir });
+    const paths: string[] = [];
     const result = await executeScenario(context, scenarioOf({
       steps: async (ctx) => {
-        await writeFile(await ctx.evidence('2-restarted.png'), 'second');
+        paths.push(await ctx.evidence('2-restarted.png'));
+        await writeFile(paths[0]!, 'second');
         await ctx.evidence('never-written.png');
-        await writeFile(await ctx.evidence('1-saved.png'), 'first');
+        paths.push(await ctx.evidence('1-saved.png'));
+        await writeFile(paths[1]!, 'first');
       },
     }));
     expect(result).toMatchObject({ outcome: 'passed', evidence: ['2-restarted.png', '1-saved.png'] });
+    expect(paths).toEqual([join(evidenceDir, '2-restarted.png'), join(evidenceDir, '1-saved.png')]);
+    expect(await readFile(join(evidenceDir, '2-restarted.png'), 'utf8')).toBe('second');
     expect(await readFile(join(evidenceDir, '1-saved.png'), 'utf8')).toBe('first');
+  });
+
+  test('a relative evidence directory still yields an absolute path inside it', async () => {
+    const evidenceDir = await makeTempDir('qa-evidence-');
+    const { context } = await arrange({ evidenceDir: relative(process.cwd(), evidenceDir) });
+    let path = '';
+    await executeScenario(context, scenarioOf({ steps: async (ctx) => { path = await ctx.evidence('shot.png'); } }));
+    expect(isAbsolute(path)).toBe(true);
+    expect(path).toBe(join(evidenceDir, 'shot.png'));
   });
 
   test('evidence written before a failure is kept: it is what shows how the attempt went wrong', async () => {
@@ -411,12 +425,12 @@ describe('evidence files', () => {
     expect(result).toMatchObject({ outcome: 'interrupted', detail: expect.stringContaining('not a plain file name'), evidence: [] });
   });
 
-  test('reserving the same name twice is refused, so one file cannot silently replace another', async () => {
+  test.each([['shot.png'], ['Shot.PNG']])('reserving %j after "shot.png" is refused, so one file cannot silently replace another', async (again) => {
     const { context } = await arrange({ evidenceDir: await makeTempDir('qa-evidence-') });
     const result = await executeScenario(context, scenarioOf({
       steps: async (ctx) => {
         await ctx.evidence('shot.png');
-        await ctx.evidence('shot.png');
+        await ctx.evidence(again);
       },
     }));
     expect(result).toMatchObject({ outcome: 'interrupted', detail: expect.stringContaining('already reserved') });

@@ -31,8 +31,8 @@ the package's own metadata changed between builds, the binary did not.
 
 ## Screenshots as attempt evidence (#19)
 
-One passing run per platform with the scenario's screenshots, kept as the CLI wrote them: the journal, `summary.json`,
-`report.html`, and `evidence/<attempt id>/` with a screenshot after each change (`1-saved`, `2-restarted`,
+One passing run per platform with the scenario's screenshots, kept as the CLI wrote them (except for one file, below):
+the journal, `summary.json`, `report.html`, and `evidence/<attempt id>/` with a screenshot after each change (`1-saved`, `2-restarted`,
 `3-cleared`, `4-restarted-cleared`). Open `report.html` in the run's directory to follow the links.
 
 | | Windows | Linux |
@@ -48,8 +48,11 @@ One passing run per platform with the scenario's screenshots, kept as the CLI wr
 
 What was checked by looking at the files: every screenshot shows only the app's page (no desktop, window frame or
 other windows, and no paths or account names), the two taken with the value saved show it, and the two taken after
-Clear show an empty readout. In `invocation.json` of the Windows run the account's profile directory is replaced with
-`%USERPROFILE%`; nothing else was edited.
+Clear show an empty readout.
+
+The Windows run's `invocation.json` held absolute paths under the account's profile directory. It is kept as
+`invocation.redacted.json`, with that directory replaced by `%USERPROFILE%`: a record of what was asked, not a file
+the CLI can `resume` from. Nothing else in either run was edited.
 
 Before the fix to `restart(ctx)` in the same change, the Windows scenario hung at its first restart until the 5-minute
 steps deadline (with or without screenshots): the relaunched app was owned through the launch hook's context, whose

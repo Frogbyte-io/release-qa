@@ -1,6 +1,6 @@
 import type { SpawnOptions } from 'node:child_process';
 import { mkdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { EnvironmentProfile } from '../model/project.ts';
 import type { Requirement, RequirementKey } from '../model/requirement.ts';
 import type { MeasuredEnvironment, Outcome } from '../model/result.ts';
@@ -90,7 +90,7 @@ export interface RunContext {
   waitFor(condition: () => boolean | Promise<boolean>, options?: { timeoutMs?: number; intervalMs?: number; description?: string }): Promise<void>;
   /**
    * Reserves an evidence file, such as a screenshot, and returns the absolute path to write it to. `name` is a plain
-   * file name, unique within the attempt. The file becomes the attempt's evidence if it exists when the attempt ends.
+   * file name, unique within the attempt (ignoring case). The file becomes the attempt's evidence if it exists when the attempt ends.
    * Refused once the phase ends, and when the run does not collect evidence.
    */
   evidence(name: string): Promise<string>;
@@ -354,6 +354,7 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
     // -- The lifecycle. Each phase is bounded and abortable; a phase that fails ends the run. --------------------
     const { lifecycle } = context;
     const reserved: string[] = [];
+    const evidenceDir = context.evidenceDir === undefined ? undefined : resolve(context.evidenceDir);
     const contextFor = (signal: AbortSignal): RunContext => {
       // A phase that has ended can no longer create anything: a hook that was cut off but is still running must not
       // leave a process or a resource behind after cleanup has looked at the ledger.
@@ -377,12 +378,13 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
         waitFor: (condition, options) => waitFor(signal, condition, options),
         evidence: async (name) => {
           assertActive();
-          if (context.evidenceDir === undefined) throw new Error('this run does not collect evidence');
+          if (evidenceDir === undefined) throw new Error('this run does not collect evidence');
           if (new Collector().fileName(name, '') === undefined) throw new Error(`evidence name ${JSON.stringify(name)} is not a plain file name`);
-          if (reserved.includes(name)) throw new Error(`evidence ${JSON.stringify(name)} was already reserved in this attempt`);
+          // Compared without case: on Windows and macOS `A.png` and `a.png` are one file, and evidence moves between systems.
+          if (reserved.some((taken) => taken.toLowerCase() === name.toLowerCase())) throw new Error(`evidence ${JSON.stringify(name)} was already reserved in this attempt`);
           reserved.push(name);
-          await mkdir(context.evidenceDir, { recursive: true });
-          return join(context.evidenceDir, name);
+          await mkdir(evidenceDir, { recursive: true });
+          return join(evidenceDir, name);
         },
       };
     };
@@ -426,7 +428,7 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
       ...withEnvironment(environment),
       cleanup: { ok: cleanup.ok, failures: cleanup.failures },
       leftover: cleanup.leftover,
-      evidence: await existingFiles(context.evidenceDir, reserved),
+      evidence: await existingFiles(evidenceDir, reserved),
     });
   } finally {
     closed = true;

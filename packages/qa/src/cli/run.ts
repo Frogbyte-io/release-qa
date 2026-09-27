@@ -258,7 +258,12 @@ const evidenceDirOf = (attemptId: string): string => `evidence/${attemptId}`;
 
 /** The files an attempt that never finished left in its evidence directory, sorted by name. */
 async function leftEvidence(runDir: string, attemptId: string): Promise<string[]> {
-  const entries = await readdir(join(runDir, evidenceDirOf(attemptId)), { withFileTypes: true }).catch(() => []);
+  // No directory means the attempt wrote nothing. Any other failure stops the resume: recording the attempt without its
+  // evidence would lose it for good, while stopping lets a later resume try again.
+  const entries = await readdir(join(runDir, evidenceDirOf(attemptId)), { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  });
   // Only names the journal can hold: the run's own evidence always qualifies, anything else is left unrecorded.
   return entries.filter((e) => e.isFile() && new Collector().fileName(e.name, '') !== undefined).map((e) => `${evidenceDirOf(attemptId)}/${e.name}`).sort();
 }

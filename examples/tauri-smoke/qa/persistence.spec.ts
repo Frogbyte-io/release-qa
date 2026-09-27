@@ -24,7 +24,7 @@ const capture = async (ctx: RunContext, name: string): Promise<string> => sessio
  * the previous frame (native-automation finding 4); a stale screenshot is a broken record, not a candidate that
  * misbehaved (the DOM checks already passed), so it is a plain error: the attempt is interrupted, not failed.
  */
-function assertFresh(withValue: Record<string, string>, withoutValue: Record<string, string>): void {
+export function assertFresh(withValue: Record<string, string>, withoutValue: Record<string, string>): void {
   for (const [shown, shownHash] of Object.entries(withValue)) {
     for (const [empty, emptyHash] of Object.entries(withoutValue)) {
       if (shownHash === emptyHash) throw new Error(`screenshot ${shown} is identical to ${empty} although the value was shown only in the first: the screenshot is stale`);
