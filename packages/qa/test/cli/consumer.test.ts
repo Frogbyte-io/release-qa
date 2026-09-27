@@ -123,7 +123,7 @@ test('cancelling while the parent is starting a helper stops it before cleanup c
     candidate: { id: 'local' }, profile: project.profiles[0]!, testRoot: consumer.dir, signal: controller.signal,
     own: async () => undefined,
     spawn: async () => { started(); await allowSpawnToReturn; return handle; },
-    waitFor: async () => undefined,
+    waitFor: async () => undefined, evidence: async () => '',
   };
   try {
     const running = loaded.scenarios[0]!.steps(context);
@@ -164,7 +164,7 @@ export const scenarios = [{ id: 'persistence', steps: async (ctx) => {
   const context: RunContext = {
     candidate: { id: 'local' }, profile: project.profiles[0]!, testRoot: consumer.dir,
     signal: new AbortController().signal, own: async () => undefined,
-    spawn: async () => { spawnCalls += 1; return handle; }, waitFor: async () => undefined,
+    spawn: async () => { spawnCalls += 1; return handle; }, waitFor: async () => undefined, evidence: async () => '',
   };
   try {
     await loaded.scenarios[0]!.steps(context);

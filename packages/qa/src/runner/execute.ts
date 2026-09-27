@@ -1,7 +1,10 @@
 import type { SpawnOptions } from 'node:child_process';
+import { mkdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { EnvironmentProfile } from '../model/project.ts';
 import type { Requirement, RequirementKey } from '../model/requirement.ts';
 import type { MeasuredEnvironment, Outcome } from '../model/result.ts';
+import { Collector } from '../model/validate.ts';
 import { defaultProbes, inspectEnvironment, type EnvironmentProbes } from './environment.ts';
 import {
   acquireTestRoot,
@@ -85,6 +88,12 @@ export interface RunContext {
   spawn(label: string, command: string, args: readonly string[], options?: SpawnOptions): Promise<OwnedChildProcess>;
   /** Polls until `condition` is true. Running out of time is an assertion failure; abort is a cancellation. */
   waitFor(condition: () => boolean | Promise<boolean>, options?: { timeoutMs?: number; intervalMs?: number; description?: string }): Promise<void>;
+  /**
+   * Reserves an evidence file, such as a screenshot, and returns the absolute path to write it to. `name` is a plain
+   * file name, unique within the attempt. The file becomes the attempt's evidence if it exists when the attempt ends.
+   * Refused once the phase ends, and when the run does not collect evidence.
+   */
+  evidence(name: string): Promise<string>;
 }
 
 export interface Lifecycle {
@@ -110,6 +119,8 @@ export interface ExecutionContext {
   signal: AbortSignal;
   emit(event: ScenarioEvent): void | Promise<void>;
   lifecycle: Lifecycle;
+  /** Where this attempt's evidence files go. Without it, `RunContext.evidence` is refused. */
+  evidenceDir?: string;
   probes?: EnvironmentProbes;
   /**
    * Bounds in milliseconds; every wait is bounded, including probes and the event sink. `cleanupMs` applies to the
@@ -142,6 +153,8 @@ export interface ScenarioResult {
   cleanup: { ok: boolean; failures: string[] };
   /** Resources still owned after cleanup, which keep the environment dirty until it is reset. */
   leftover: CleanupFailure[];
+  /** Names of the evidence files in `evidenceDir` that exist when the attempt ends, in the order they were reserved. */
+  evidence: string[];
 }
 
 const DEFAULT_PHASE_MS = 120_000;
@@ -246,7 +259,7 @@ function race<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, outer: A
  */
 export async function executeScenario(context: ExecutionContext, scenario: Scenario): Promise<ScenarioResult> {
   const scenarioId = scenario.id;
-  const base = { scenario: scenarioId, requirement: scenario.requirement.key, cleanup: { ok: true, failures: [] as string[] }, leftover: [] as CleanupFailure[] };
+  const base = { scenario: scenarioId, requirement: scenario.requirement.key, cleanup: { ok: true, failures: [] as string[] }, leftover: [] as CleanupFailure[], evidence: [] as string[] };
   const finish = (result: Pick<ScenarioResult, 'outcome'> & Partial<ScenarioResult>): ScenarioResult => ({ ...base, ...result });
   if (context.signal.aborted) return finish({ outcome: 'cancelled', reason: 'cancelled' });
 
@@ -340,6 +353,7 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
 
     // -- The lifecycle. Each phase is bounded and abortable; a phase that fails ends the run. --------------------
     const { lifecycle } = context;
+    const reserved: string[] = [];
     const contextFor = (signal: AbortSignal): RunContext => {
       // A phase that has ended can no longer create anything: a hook that was cut off but is still running must not
       // leave a process or a resource behind after cleanup has looked at the ledger.
@@ -361,6 +375,15 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
           return ownedHandle(await spawnOwned(root, label, command, args, options));
         },
         waitFor: (condition, options) => waitFor(signal, condition, options),
+        evidence: async (name) => {
+          assertActive();
+          if (context.evidenceDir === undefined) throw new Error('this run does not collect evidence');
+          if (new Collector().fileName(name, '') === undefined) throw new Error(`evidence name ${JSON.stringify(name)} is not a plain file name`);
+          if (reserved.includes(name)) throw new Error(`evidence ${JSON.stringify(name)} was already reserved in this attempt`);
+          reserved.push(name);
+          await mkdir(context.evidenceDir, { recursive: true });
+          return join(context.evidenceDir, name);
+        },
       };
     };
 
@@ -403,11 +426,19 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
       ...withEnvironment(environment),
       cleanup: { ok: cleanup.ok, failures: cleanup.failures },
       leftover: cleanup.leftover,
+      evidence: await existingFiles(context.evidenceDir, reserved),
     });
   } finally {
     closed = true;
     await lock?.release().catch(() => undefined);
   }
+}
+
+/** The names in `names` that are files in `dir`: a reserved file that was never written is not evidence. */
+async function existingFiles(dir: string | undefined, names: readonly string[]): Promise<string[]> {
+  if (dir === undefined) return [];
+  const present = await Promise.all(names.map((name) => stat(join(dir, name)).then((s) => s.isFile(), () => false)));
+  return names.filter((_, i) => present[i]);
 }
 
 async function dirtiness(root: string): Promise<string | undefined> {

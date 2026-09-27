@@ -377,3 +377,54 @@ describe('owning only what the run created', () => {
     await rm(notOurs, { recursive: true, force: true });
   });
 });
+
+describe('evidence files', () => {
+  test('a reserved file that was written is the attempt\'s evidence, in reservation order; one never written is not', async () => {
+    const evidenceDir = join(await makeTempDir('qa-evidence-'), 'evidence', 'a1');
+    const { context } = await arrange({ evidenceDir });
+    const result = await executeScenario(context, scenarioOf({
+      steps: async (ctx) => {
+        await writeFile(await ctx.evidence('2-restarted.png'), 'second');
+        await ctx.evidence('never-written.png');
+        await writeFile(await ctx.evidence('1-saved.png'), 'first');
+      },
+    }));
+    expect(result).toMatchObject({ outcome: 'passed', evidence: ['2-restarted.png', '1-saved.png'] });
+    expect(await readFile(join(evidenceDir, '1-saved.png'), 'utf8')).toBe('first');
+  });
+
+  test('evidence written before a failure is kept: it is what shows how the attempt went wrong', async () => {
+    const evidenceDir = await makeTempDir('qa-evidence-');
+    const { context } = await arrange({ evidenceDir });
+    const result = await executeScenario(context, scenarioOf({
+      steps: async (ctx) => {
+        await writeFile(await ctx.evidence('before.png'), 'x');
+        assert.fail('the saved value was not shown');
+      },
+    }));
+    expect(result).toMatchObject({ outcome: 'failed', evidence: ['before.png'] });
+  });
+
+  test.each([['../outside.png'], ['nested/shot.png'], ['']])('a name that is not a plain file name (%j) is refused', async (name) => {
+    const { context } = await arrange({ evidenceDir: await makeTempDir('qa-evidence-') });
+    const result = await executeScenario(context, scenarioOf({ steps: async (ctx) => { await ctx.evidence(name); } }));
+    expect(result).toMatchObject({ outcome: 'interrupted', detail: expect.stringContaining('not a plain file name'), evidence: [] });
+  });
+
+  test('reserving the same name twice is refused, so one file cannot silently replace another', async () => {
+    const { context } = await arrange({ evidenceDir: await makeTempDir('qa-evidence-') });
+    const result = await executeScenario(context, scenarioOf({
+      steps: async (ctx) => {
+        await ctx.evidence('shot.png');
+        await ctx.evidence('shot.png');
+      },
+    }));
+    expect(result).toMatchObject({ outcome: 'interrupted', detail: expect.stringContaining('already reserved') });
+  });
+
+  test('without an evidence directory, reserving evidence is refused', async () => {
+    const { context } = await arrange();
+    const result = await executeScenario(context, scenarioOf({ steps: async (ctx) => { await ctx.evidence('shot.png'); } }));
+    expect(result).toMatchObject({ outcome: 'interrupted', detail: expect.stringContaining('does not collect evidence'), evidence: [] });
+  });
+});

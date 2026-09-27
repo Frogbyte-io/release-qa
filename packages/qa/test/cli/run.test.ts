@@ -1,4 +1,4 @@
-import { readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { exitCodeOf, resumeRun, startRun, type RequirementResult, type RunOptions, type RunSummary } from '../../src/cli/run.ts';
@@ -135,6 +135,68 @@ describe('starting a run', () => {
     const log = await calls(consumer);
     expect(log.at(-1)).toMatch(/^cleanup /);
     expect(log.some((line) => line.startsWith('steps:uninstall'))).toBe(false);
+  });
+});
+
+describe('evidence', () => {
+  test("files a scenario wrote as evidence are recorded as paths next to the journal, and the run's report links them", async () => {
+    const { stateDir, options, invocation } = await setUp({ persistence: 'evidence', startup: 'pass' });
+
+    const summary = await started(invocation, options);
+
+    const runDir = join(stateDir, summary.runId);
+    const state = await readRun(runDir);
+    const [persistence, startup] = state.attempts;
+    expect(persistence?.evidence).toEqual([`evidence/${persistence?.id}/1-saved.png`, `evidence/${persistence?.id}/2-cleared.png`]);
+    expect(startup?.evidence).toEqual([]);
+    expect(state.missingEvidence).toEqual([]);
+    expect(await readFile(join(runDir, persistence!.evidence[0]!), 'utf8')).toBe('saved');
+
+    const html = await readFile(join(runDir, 'report.html'), 'utf8');
+    for (const path of persistence!.evidence) expect(html).toContain(`<a href="${path}">`);
+    expect(html).toContain('none (local candidate)');
+  });
+
+  test('evidence a scenario wrote before the process died is kept on the interrupted attempt', async () => {
+    const { stateDir, options, invocation } = await setUp({ persistence: 'pass' });
+    const first = await started(invocation, options);
+    const runDir = join(stateDir, first.runId);
+    const { appendEvent } = await import('../../src/runner/journal.ts');
+    const before = await readRun(runDir);
+    await appendEvent(runDir, { schemaVersion: 1, id: `${first.runId}.crash`, prev: before.events.at(-1)!.id, recordedAt: '2026-09-23T10:00:00Z', type: 'checkpoint', data: { name: 'scenario-started', requirement: before.attempts[0]!.requirement } });
+    // What the session that died wrote: its attempt was the run's second.
+    const crashed = `${first.runId}.a2`;
+    await mkdir(join(runDir, 'evidence', crashed), { recursive: true });
+    await writeFile(join(runDir, 'evidence', crashed, '1-saved.png'), 'x');
+
+    await resumed(first.runId, options);
+
+    const state = await readRun(runDir);
+    expect(state.attempts.map((a) => [a.id, a.outcome, a.evidence])).toEqual([
+      [`${first.runId}.a1`, 'passed', []],
+      [crashed, 'interrupted', [`evidence/${crashed}/1-saved.png`]],
+      [`${first.runId}.a3`, 'passed', []],
+    ]);
+    expect(state.missingEvidence).toEqual([]);
+  });
+});
+
+describe('consumer code that keeps a context past its phase', () => {
+  test("taking ownership through the launch hook's context during the steps is refused, not left waiting forever", async () => {
+    const { consumer, options, invocation } = await setUp({ persistence: 'pass' });
+    // Like a driver session that remembers the context it was started with and relaunches the app during the steps.
+    await writeFile(join(consumer.dir, 'qa', 'lifecycle.ts'), `export const lifecycle = {
+  install: async () => {}, reset: async () => {}, cleanup: async () => {},
+  launch: async (ctx) => { globalThis.launchContext = ctx; },
+};`);
+    await writeFile(join(consumer.dir, 'qa', 'scenarios.ts'), `import { join } from 'node:path';
+export const scenarios = [{ id: 'persistence', steps: async (ctx) => {
+  await globalThis.launchContext.own({ kind: 'path', path: join(ctx.testRoot, 'relaunched'), label: 'relaunched' });
+} }];`);
+
+    const summary = await started(invocation, { ...options, timeouts: { stepsMs: 10_000 } });
+
+    expect(summary.results[0]).toMatchObject({ outcome: 'interrupted', reason: 'infrastructure-error', detail: expect.stringContaining('came from a phase that has ended') });
   });
 });
 

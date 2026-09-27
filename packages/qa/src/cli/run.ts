@@ -1,13 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { RequirementKey } from '../model/requirement.ts';
-import type { Attempt, Outcome } from '../model/result.ts';
+import type { Attempt, MeasuredEnvironment, Outcome, Report } from '../model/result.ts';
 import { Collector, parseVersioned, type FieldSpec } from '../model/validate.ts';
 import type { EnvironmentProbes } from '../runner/environment.ts';
 import type { RunEvent } from '../runner/events.ts';
 import { executeScenario, type ExecutionContext, type ScenarioEvent } from '../runner/execute.ts';
 import { appendEvent, readRun, writeFileAtomic, writeSummary, type RunState } from '../runner/journal.ts';
+import { renderReport } from '../runner/report.ts';
 import { loadCandidate } from './candidate.ts';
 import { loadConsumer, type LoadedConsumer } from './consumer.ts';
 import { selectPlan } from './plan.ts';
@@ -65,6 +66,7 @@ export interface RunOptions {
 }
 
 const INVOCATION_FILE = 'invocation.json';
+const REPORT_FILE = 'report.html';
 const MACHINE_FILE = 'machine-id';
 const STARTED = 'scenario-started';
 /** Recorded after an attempt whose cleanup failed, so a resumed run still reports it for the carried result. */
@@ -154,6 +156,7 @@ async function prepare(invocation: RunInvocation) {
 
 async function execute(prepared: Prepared, invocation: RunInvocation, runId: string, journal: Journal, state: RunState, options: RunOptions): Promise<RunSummary> {
   const results: RequirementResult[] = [];
+  let environment: MeasuredEnvironment | undefined;
   let attemptCount = state.attempts.length;
   const newAttemptId = (): string => `${runId}.a${++attemptCount}`;
 
@@ -164,7 +167,10 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
     // The process died after starting this scenario and before recording it: say so before anything else.
     let latest = history.latest;
     if (history.startedAfterLatest) {
-      const interrupted: Attempt = { id: newAttemptId(), requirement: key, outcome: 'interrupted', evidence: [], ...(latest === undefined ? {} : { retryOf: latest.id }) };
+      // The session that died gave its attempt this same id, so whatever evidence it wrote before dying is kept.
+      const id = newAttemptId();
+      const evidence = await leftEvidence(journal.runDir, id);
+      const interrupted: Attempt = { id, requirement: key, outcome: 'interrupted', evidence, ...(latest === undefined ? {} : { retryOf: latest.id }) };
       await journal.append('attempt-recorded', { attempt: interrupted });
       latest = interrupted;
     }
@@ -186,6 +192,7 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
     }
 
     await journal.append('checkpoint', { name: STARTED, requirement: key });
+    const attemptId = newAttemptId();
     const result = await executeScenario(
       {
         candidate: prepared.candidate,
@@ -195,12 +202,15 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
         signal: options.signal,
         emit: (event) => options.onEvent?.(event),
         lifecycle: prepared.consumer.lifecycle,
+        evidenceDir: join(journal.runDir, evidenceDirOf(attemptId)),
         ...(options.probes === undefined ? {} : { probes: options.probes }),
         ...(options.timeouts === undefined ? {} : { timeouts: options.timeouts }),
       },
       scenario,
     );
-    const attempt: Attempt = { id: newAttemptId(), requirement: key, outcome: result.outcome, evidence: [], ...(latest === undefined ? {} : { retryOf: latest.id }) };
+    environment = result.environment ?? environment;
+    const evidence = result.evidence.map((name) => `${evidenceDirOf(attemptId)}/${name}`);
+    const attempt: Attempt = { id: attemptId, requirement: key, outcome: result.outcome, evidence, ...(latest === undefined ? {} : { retryOf: latest.id }) };
     await journal.append('attempt-recorded', { attempt });
     if (!result.cleanup.ok) await journal.append('checkpoint', { name: CLEANUP_FAILED, requirement: key });
     results.push({
@@ -214,8 +224,43 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
   }
 
   for (const requirement of prepared.plan.manual) results.push({ requirement: requirement.key, outcome: 'manual' });
-  await writeSummary(journal.runDir, await readRun(journal.runDir));
+  const final = await readRun(journal.runDir);
+  await writeSummary(journal.runDir, final);
+  await writeFileAtomic(join(journal.runDir, REPORT_FILE), renderReport(localReport(final, prepared.candidate.id, invocation.profile, environment)).html);
   return { runId, candidateId: prepared.candidate.id, profile: invocation.profile, suite: invocation.suite, results, exitCode: exitCodeOf(results) };
+}
+
+const NOT_MEASURED: MeasuredEnvironment = { os: 'not measured in this session', osVersion: '', arch: '', capabilities: [], toolVersion: '' };
+
+/**
+ * The run as a report, for `report.html` next to the journal so every attempt's evidence is a link away. It is a view of
+ * this machine's run and nothing more: a local candidate has no policy digest or test revision, and nothing here was
+ * uploaded, so it is not a report the merge gate could accept.
+ */
+function localReport(state: RunState, candidateId: string, profile: string, environment: MeasuredEnvironment | undefined): Report {
+  const start = state.events.find((e) => e.type === 'run-started');
+  return {
+    schemaVersion: 1,
+    id: start?.type === 'run-started' ? start.data.runId : 'unknown run',
+    candidateId,
+    policyDigest: 'none (local candidate)',
+    testRevision: 'none (local candidate)',
+    profile,
+    actor: 'local run, not uploaded',
+    machineId: start?.type === 'run-started' ? start.data.machineId : 'unknown',
+    environment: environment ?? NOT_MEASURED,
+    attempts: state.attempts,
+  };
+}
+
+/** Where an attempt's evidence files go, relative to the run's directory: the journal records these relative paths. */
+const evidenceDirOf = (attemptId: string): string => `evidence/${attemptId}`;
+
+/** The files an attempt that never finished left in its evidence directory, sorted by name. */
+async function leftEvidence(runDir: string, attemptId: string): Promise<string[]> {
+  const entries = await readdir(join(runDir, evidenceDirOf(attemptId)), { withFileTypes: true }).catch(() => []);
+  // Only names the journal can hold: the run's own evidence always qualifies, anything else is left unrecorded.
+  return entries.filter((e) => e.isFile() && new Collector().fileName(e.name, '') !== undefined).map((e) => `${evidenceDirOf(attemptId)}/${e.name}`).sort();
 }
 
 /**

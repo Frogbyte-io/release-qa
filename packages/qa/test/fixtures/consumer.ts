@@ -10,7 +10,7 @@ import { hostProfile, makeTempDir } from './processes.ts';
  * What a scenario's steps do: pass, fail an assertion, throw, kill the whole process, or `hang`: wait for cancellation
  * for as long as the consumer's `holdPath` file exists, and pass once it has been removed.
  */
-export type Behaviour = 'pass' | 'fail' | 'throw' | 'hang' | 'crash';
+export type Behaviour = 'pass' | 'fail' | 'throw' | 'hang' | 'crash' | 'evidence';
 
 const STEPS: Record<Behaviour, string> = {
   pass: 'async () => {}',
@@ -19,6 +19,8 @@ const STEPS: Record<Behaviour, string> = {
   // An already-aborted signal never fires 'abort' again, so that case must reject straight away.
   hang: "(ctx) => !existsSync(HOLD) ? Promise.resolve() : ctx.signal.aborted ? Promise.reject(ctx.signal.reason) : new Promise((_, reject) => ctx.signal.addEventListener('abort', () => reject(ctx.signal.reason), { once: true }))",
   crash: "async () => { process.exit(70); }",
+  // Writes two evidence files and reserves a third it never writes, then passes.
+  evidence: "async (ctx) => { writeFileSync(await ctx.evidence('1-saved.png'), 'saved'); await ctx.evidence('unwritten.png'); writeFileSync(await ctx.evidence('2-cleared.png'), 'cleared'); }",
 };
 
 export interface ConsumerOptions {
