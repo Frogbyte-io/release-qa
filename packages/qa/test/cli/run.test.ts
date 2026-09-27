@@ -121,11 +121,18 @@ describe('starting a run', () => {
   test('install uses the verified run-owned bytes if the source changes after verification', async () => {
     const { consumer, stateDir, options, invocation } = await setUp({ persistence: 'pass' });
     const source = await realpath(join(consumer.dir, 'setup.bin'));
+    let changed = false;
     const summary = await started(invocation, {
       ...options,
-      onStart: () => writeFileSync(source, 'changed after verification'),
+      onEvent: (event) => {
+        if (!changed && event.phase === 'install' && event.status === 'started') {
+          writeFileSync(source, 'changed after staging');
+          changed = true;
+        }
+      },
     });
 
+    expect(changed).toBe(true);
     expect(summary.exitCode).toBe(0);
     expect(await readFile(consumer.installedBytesPath, 'utf8')).toBe(consumer.artifactBytes);
     const installPath = (await calls(consumer))[0]!.slice('install '.length);
@@ -144,6 +151,28 @@ describe('starting a run', () => {
 
     await expect(stageArtifact(loaded.artifact, runDir)).rejects.toThrow(/expected SHA-256 .* found/);
     expect(await exists(join(runDir, 'verified-artifact'))).toBe(false);
+  });
+
+  test('a failed staging copy leaves a recorded run that can be resumed', async () => {
+    const { consumer, stateDir, options, invocation } = await setUp({ persistence: 'pass' });
+    let runId: string | undefined;
+    const first = await startRun(invocation, {
+      ...options,
+      onStart: (id) => {
+        runId = id;
+        writeFileSync(join(consumer.dir, 'setup.bin'), 'changed before staging');
+      },
+    });
+
+    expect(first.ok).toBe(false);
+    expect(!first.ok && first.error).toMatch(/copied artifact.*expected SHA-256 .*found/);
+    expect(runId).toBeDefined();
+    expect(await calls(consumer)).toEqual([]);
+    expect((await readRun(join(stateDir, runId!))).events[0]).toMatchObject({ type: 'run-started' });
+    await writeFile(join(consumer.dir, 'setup.bin'), consumer.artifactBytes);
+
+    expect((await resumed(runId!, options)).exitCode).toBe(0);
+    expect(await readFile(consumer.installedBytesPath, 'utf8')).toBe(consumer.artifactBytes);
   });
 
   test('an unknown suite or profile is refused before anything is recorded', async () => {

@@ -105,13 +105,13 @@ export async function startRun(input: RunInvocation, options: RunOptions): Promi
   const runDir = join(options.stateDir, runId);
   try {
     await mkdir(runDir, { recursive: true });
+    // Record and announce the run before copying a large installer, so a crash during staging can be resumed.
+    await writeFileAtomic(join(runDir, INVOCATION_FILE), `${JSON.stringify({ schemaVersion: 1, ...invocation, artifactSha256: prepared.artifact.sha256 }, null, 2)}\n`);
+    const journal = new Journal(runDir, runId, undefined, 0);
+    await journal.append('run-started', { runId, candidateId: prepared.candidate.id, profile: invocation.profile, machineId: await machineId(options.stateDir) });
+    options.onStart?.(runId);
     const staged = await stageArtifact(prepared.artifact, runDir);
     try {
-      // The artifact's digest is kept with the invocation, so resume can tell a rebuild under the same candidate id.
-      await writeFileAtomic(join(runDir, INVOCATION_FILE), `${JSON.stringify({ schemaVersion: 1, ...invocation, artifactSha256: prepared.artifact.sha256 }, null, 2)}\n`);
-      const journal = new Journal(runDir, runId, undefined, 0);
-      await journal.append('run-started', { runId, candidateId: prepared.candidate.id, profile: invocation.profile, machineId: await machineId(options.stateDir) });
-      options.onStart?.(runId);
       return { ok: true, summary: await execute({ ...prepared, artifact: staged }, invocation, runId, journal, emptyState(), options) };
     } finally {
       await rm(join(runDir, ARTIFACT_DIR), { recursive: true, force: true });
