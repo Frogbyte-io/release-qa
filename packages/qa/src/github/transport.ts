@@ -40,8 +40,8 @@ export class GhTransport implements GitHubApi {
     catch { return { ok: false, reason: 'network-error' }; }
   }
 
-  async list(path: string): Promise<ApiResult<unknown[]>> {
-    const response = await this.run(['api', '--paginate', path, '--jq', '.[]']);
+  async list(path: string, projection = '.[]'): Promise<ApiResult<unknown[]>> {
+    const response = await this.run(['api', '--paginate', path, '--jq', projection]);
     if (!response.ok) return response;
     try { return { ok: true, value: response.output.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as unknown) }; }
     catch { return { ok: false, reason: 'network-error' }; }

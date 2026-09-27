@@ -4,7 +4,7 @@ import { GhTransport } from './transport.ts';
 
 export interface RepositoryApi {
   get(path: string): Promise<ApiResult<unknown>>;
-  list(path: string): Promise<ApiResult<unknown[]>>;
+  list(path: string, projection?: string): Promise<ApiResult<unknown[]>>;
 }
 
 export interface DiscoveredProject { repository: string; project: Project }
@@ -29,7 +29,8 @@ export async function discoverProjects(api: RepositoryApi = new GhTransport(), m
   const result: Discovery = { projects: [], problems: [] };
   let repositories: unknown[];
   if (manualUrl === undefined) {
-    const listed = await api.list(listPath);
+    // Project at the API boundary so large paginated repository lists do not fill gh's output buffer with unused data.
+    const listed = await api.list(listPath, '.[] | {full_name,default_branch}');
     if (!listed.ok) return { ...result, problems: [{ repository: '*', reason: listed.reason }] };
     repositories = listed.value;
   } else {

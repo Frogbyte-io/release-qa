@@ -23,7 +23,7 @@ const file = (value: unknown) => ({ type: 'file', encoding: 'base64', content: B
 
 describe('repository discovery', () => {
   test('finds projects across accessible repositories by parsing JSON without importing code', async () => {
-    const api = fakeApi({
+    const fake = fakeApi({
       'user/repos?per_page=100&affiliation=owner,collaborator,organization_member': [
         { full_name: 'team/one', default_branch: 'main' },
         { full_name: 'team/two', default_branch: 'v2' },
@@ -31,7 +31,10 @@ describe('repository discovery', () => {
       'repos/team/one/contents/qa/project.json?ref=main': file(project()),
       'repos/team/two/contents/qa/project.json?ref=v2': { type: 'file', encoding: 'base64', content: Buffer.from('not JSON').toString('base64') },
     });
+    let projected: string | undefined;
+    const api: RepositoryApi = { ...fake, list: async (path, projection) => { projected = projection; return fake.list(path); } };
     const result = await discoverProjects(api);
+    expect(projected).toBe('.[] | {full_name,default_branch}');
     expect(result.projects.map((item) => item.repository)).toEqual(['team/one']);
     expect(result.problems).toEqual([{ repository: 'team/two', reason: 'invalid project.json' }]);
   });
@@ -90,6 +93,10 @@ console.log(JSON.stringify({ id: 2 }));`);
       expect(JSON.parse(await readFile(recorded, 'utf8'))).toEqual([
         'api', '--paginate', 'user/repos?per_page=100&affiliation=owner,collaborator,organization_member', '--jq', '.[]',
       ]);
+      expect(await transport.list('user/repos?per_page=100', '.[] | {full_name,default_branch}')).toEqual({ ok: true, value: [{ id: 1 }, { id: 2 }] });
+      expect(JSON.parse(await readFile(recorded, 'utf8'))).toEqual([
+        'api', '--paginate', 'user/repos?per_page=100', '--jq', '.[] | {full_name,default_branch}',
+      ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -108,7 +115,7 @@ console.log(JSON.stringify({ id: 2 }));`);
 });
 
 describe('candidate asset identity', () => {
-  const build = { id: 5000, run_attempt: 1, path: 'team/sample/.github/workflows/qa-prepare.yml@refs/heads/main', head_sha: SHA1.source, conclusion: 'success', repository: { id: 1 } };
+  const build = { id: 5000, run_attempt: 1, path: '.github/workflows/qa-prepare.yml', head_sha: SHA1.source, conclusion: 'success', repository: { id: 1 } };
   const releases = [
     { id: 101, name: 'Release QA Smoke_0.1.0_x64-setup.exe', state: 'uploaded', digest: `sha256:${SHA256.windowsInstaller}` },
     { id: 102, name: 'release-qa-smoke_0.1.0_amd64.deb', state: 'uploaded', digest: `sha256:${SHA256.linuxPackage}` },
@@ -133,7 +140,8 @@ describe('candidate asset identity', () => {
 
   test('rejects the wrong workflow, run attempt, or source', () => {
     for (const changed of [
-      { ...build, path: 'team/sample/.github/workflows/other.yml@refs/heads/main' },
+      { ...build, path: '.github/workflows/other.yml' },
+      { ...build, path: 'unrelated/.github/workflows/qa-prepare.yml' },
       { ...build, run_attempt: 2 },
       { ...build, head_sha: SHA1.base },
       { ...build, conclusion: 'cancelled' },
