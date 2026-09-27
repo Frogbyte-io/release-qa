@@ -63,28 +63,54 @@ describe('taking over what the driver chain started', () => {
   const ctx = (refuse = false) => ({ own: async (resource: OwnedResource) => { if (refuse) throw new Error('this run has been stopped'); owned.push(resource); } });
   afterEach(() => { owned.length = 0; });
 
+  const mine = async () => true;
+
   test('records each process with its identity, so the runner can reap it', async () => {
     const child = sleeper();
-    await takeOver(ctx(), [child.pid as number], 'application');
+    await takeOver(ctx(), [child.pid as number], 'application', { stillMine: mine });
     expect(owned).toEqual([{ kind: 'process', pid: child.pid, identity: await processIdentity(child.pid as number), label: 'application' }]);
   });
 
   test('a process the run can no longer own is stopped, and the start fails saying so', async () => {
     const child = sleeper();
-    await expect(takeOver(ctx(true), [child.pid as number], 'application')).rejects.toThrow(/could not be owned.*stopped/);
+    await expect(takeOver(ctx(true), [child.pid as number], 'application', { stillMine: mine })).rejects.toThrow(/could not be owned.*stopped/);
     await eventually(() => !isAlive(child.pid as number));
+  });
+
+  test('a pid that now belongs to another process is not signalled, even when owning it was refused', async () => {
+    const child = sleeper();
+    let reads = 0;
+    // The first read is the process that was found; later reads see a different one under the same pid.
+    const identityOf = async () => (reads++ === 0 ? 'the process that was found' : 'another process');
+    await expect(takeOver(ctx(true), [child.pid as number], 'application', { stillMine: mine, identityOf })).resolves.toBeUndefined();
+    expect(isAlive(child.pid as number)).toBe(true);
   });
 
   test('a live process that cannot be identified is stopped, not silently left unowned', async () => {
     const child = sleeper();
-    await expect(takeOver(ctx(), [child.pid as number], 'application', async () => undefined)).rejects.toThrow(/could not be identified.*stopped/);
+    await expect(takeOver(ctx(), [child.pid as number], 'application', { stillMine: mine, identityOf: async () => undefined })).rejects.toThrow(/could not be identified.*stopped/);
     await eventually(() => !isAlive(child.pid as number));
     expect(owned).toEqual([]);
+  });
+
+  test('an unidentifiable pid that is no longer below the driver chain is not signalled', async () => {
+    const child = sleeper();
+    await expect(takeOver(ctx(), [child.pid as number], 'application', { stillMine: async () => false, identityOf: async () => undefined })).resolves.toBeUndefined();
+    expect(isAlive(child.pid as number)).toBe(true);
+  });
+
+  test('one that can be identified after a moment is owned, not stopped', async () => {
+    const child = sleeper();
+    let reads = 0;
+    const identityOf = async (pid: number) => (reads++ < 2 ? undefined : processIdentity(pid));
+    await takeOver(ctx(), [child.pid as number], 'application', { stillMine: mine, identityOf });
+    expect(owned).toMatchObject([{ kind: 'process', pid: child.pid, label: 'application' }]);
+    expect(isAlive(child.pid as number)).toBe(true);
   });
 
   test('one that exits while being identified needs nothing', async () => {
     const child = sleeper();
     setTimeout(() => child.kill(), 200);
-    await expect(takeOver(ctx(), [child.pid as number], 'application', async () => undefined)).resolves.toBeUndefined();
+    await expect(takeOver(ctx(), [child.pid as number], 'application', { stillMine: mine, identityOf: async () => undefined })).resolves.toBeUndefined();
   });
 });

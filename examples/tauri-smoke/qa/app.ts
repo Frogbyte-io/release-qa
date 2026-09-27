@@ -77,10 +77,13 @@ export function nativeDriver(): string {
   throw new Error('WebKitWebDriver is not installed: install webkit2gtk-driver, or set RELEASE_QA_NATIVE_DRIVER to its path (see the setup guide)');
 }
 
-/** What a per-user NSIS install left outside its directory, and where each thing points. Windows only. */
+/**
+ * What a per-user NSIS install left outside its directory, and where each thing points. Windows only. A key that is
+ * present is reported even when its location is missing or empty (`location: undefined`), since it still marks an install.
+ */
 interface InstallerTraces {
-  uninstallLocation?: string;
-  rememberedDir?: string;
+  uninstall?: { location: string | undefined };
+  remembered?: { location: string | undefined };
   shortcuts: Array<{ path: string; target: string }>;
 }
 
@@ -92,14 +95,21 @@ async function installerTraces(): Promise<InstallerTraces> {
     $shell = New-Object -ComObject WScript.Shell
     $links = @((Join-Path ([Environment]::GetFolderPath('Programs')) '${PRODUCT}.lnk'), (Join-Path ([Environment]::GetFolderPath('Desktop')) '${PRODUCT}.lnk')) |
       Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { @{ path = $_; target = $shell.CreateShortcut($_).TargetPath } }
-    @{ uninstallLocation = $(if ($u) { $u.InstallLocation } else { $null }); rememberedDir = $(if ($r) { $r.GetValue('') } else { $null }); shortcuts = @($links) } | ConvertTo-Json -Compress -Depth 3`;
+    @{ uninstallPresent = [bool]$u; uninstallLocation = $(if ($u) { $u.InstallLocation } else { $null }); rememberedPresent = [bool]$r; rememberedDir = $(if ($r) { $r.GetValue('') } else { $null }); shortcuts = @($links) } | ConvertTo-Json -Compress -Depth 3`;
   const stdout = await new Promise<string>((resolveOut, rejectOut) =>
     execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true }, (error, out) => (error ? rejectOut(error) : resolveOut(out))),
   );
-  const parsed = JSON.parse(stdout) as { uninstallLocation?: string | null; rememberedDir?: string | null; shortcuts?: Array<{ path: string; target: string }> | null };
+  const parsed = JSON.parse(stdout) as {
+    uninstallPresent: boolean;
+    uninstallLocation?: string | null;
+    rememberedPresent: boolean;
+    rememberedDir?: string | null;
+    shortcuts?: Array<{ path: string; target: string }> | null;
+  };
+  const location = (value: string | null | undefined): string | undefined => (value ? value.replace(/^"|"$/g, '') || undefined : undefined);
   return {
-    ...(parsed.uninstallLocation ? { uninstallLocation: parsed.uninstallLocation.replace(/^"|"$/g, '') } : {}),
-    ...(parsed.rememberedDir ? { rememberedDir: parsed.rememberedDir.replace(/^"|"$/g, '') } : {}),
+    ...(parsed.uninstallPresent ? { uninstall: { location: location(parsed.uninstallLocation) } } : {}),
+    ...(parsed.rememberedPresent ? { remembered: { location: location(parsed.rememberedDir) } } : {}),
     shortcuts: parsed.shortcuts ?? [],
   };
 }
@@ -109,25 +119,28 @@ const samePath = (a: string, b: string): boolean => resolve(a).toLowerCase() ===
 /**
  * A run in this same test root that died before its cleanup (and was then `reset`, which removes the install
  * directory with the uninstaller in it) leaves the installer's outside effects behind, all pointing into this root's
- * install directory. Those are provably that run's, so they are removed here. Anything pointing elsewhere belongs to an
- * install this run did not make, and is refused rather than taken over. Windows only; returns what it removed.
+ * install directory. Those are provably that run's, so they are removed here. Anything pointing elsewhere, or a key
+ * whose location is missing, belongs to an install this run did not make (or cannot be shown to be this root's), and
+ * is refused rather than taken over. Windows only; returns what it removed.
  */
 export async function recoverInstallerTraces(ctx: RunContext): Promise<string[]> {
   const traces = await installerTraces();
   const ours = installDir(ctx);
+  const elsewhere = (trace: { location: string | undefined } | undefined): boolean => trace !== undefined && (trace.location === undefined || !samePath(trace.location, ours));
+  const where = (trace: { location: string | undefined } | undefined): string => trace?.location ?? 'no location recorded';
   const foreign = [
-    ...(traces.uninstallLocation !== undefined && !samePath(traces.uninstallLocation, ours) ? [`${UNINSTALL_KEY} (installed at ${traces.uninstallLocation})`] : []),
-    ...(traces.rememberedDir !== undefined && !samePath(traces.rememberedDir, ours) ? [`${REMEMBERED_DIR_KEY} (${traces.rememberedDir})`] : []),
+    ...(elsewhere(traces.uninstall) ? [`${UNINSTALL_KEY} (installed at ${where(traces.uninstall)})`] : []),
+    ...(elsewhere(traces.remembered) ? [`${REMEMBERED_DIR_KEY} (${where(traces.remembered)})`] : []),
     ...traces.shortcuts.filter((link) => !samePath(link.target, executable(ctx))).map((link) => `${link.path} (to ${link.target})`),
   ];
   if (foreign.length > 0) throw new Error(`${PRODUCT} is already installed for this user outside this run's test root; uninstall it before running: ${foreign.join('; ')}`);
 
   const removed: string[] = [];
-  if (traces.uninstallLocation !== undefined) {
+  if (traces.uninstall !== undefined) {
     await deleteRegistryKey(UNINSTALL_KEY);
     removed.push(UNINSTALL_KEY);
   }
-  if (traces.rememberedDir !== undefined) {
+  if (traces.remembered !== undefined) {
     await deleteRegistryKey(REMEMBERED_DIR_KEY);
     removed.push(REMEMBERED_DIR_KEY);
   }

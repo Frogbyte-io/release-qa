@@ -53,17 +53,24 @@ async function goneWithin(pid: number, ms: number): Promise<boolean> {
   return !alive(pid);
 }
 
+export interface TakeOverChecks {
+  /** Whether `pid` is still below this run's driver chain; a pid that is not may have been reused by another process. */
+  stillMine: (pid: number) => Promise<boolean>;
+  /** Reads a process's identity; default `processIdentity`. */
+  identityOf?: (pid: number) => Promise<string | undefined>;
+}
+
 /**
  * Makes processes the run started indirectly its own, so the runner reaps them. A process that can no longer be owned
  * (the phase that started it was cut off) or that is alive but cannot be identified is stopped instead, and this
  * throws: a process nobody owns must not be left running. One that exits while being identified needs nothing.
+ *
+ * A pid is only signalled while it is still the process that was found: one that could not be owned must still have
+ * the identity read for it, and one that could never be identified must still be below the driver chain. A pid that
+ * fails its check now belongs to someone else, so the process that was found has exited and there is nothing to stop.
  */
-export async function takeOver(
-  ctx: Pick<RunContext, 'own'>,
-  pids: readonly number[],
-  label: string,
-  identityOf: (pid: number) => Promise<string | undefined> = processIdentity,
-): Promise<void> {
+export async function takeOver(ctx: Pick<RunContext, 'own'>, pids: readonly number[], label: string, checks: TakeOverChecks): Promise<void> {
+  const identityOf = checks.identityOf ?? processIdentity;
   const problems: string[] = [];
   const stop = async (pid: number, why: string): Promise<void> => {
     try {
@@ -75,15 +82,21 @@ export async function takeOver(
     problems.push(`${label} ${pid} ${why}, so it was stopped`);
   };
   for (const pid of pids) {
-    const identity = await identityOf(pid);
+    // Identifying a process that has just started can fail for a moment; keep trying while it runs.
+    let identity = await identityOf(pid);
+    const end = Date.now() + 2000;
+    while (identity === undefined && alive(pid) && Date.now() < end) {
+      await sleep(100);
+      identity = await identityOf(pid);
+    }
     if (identity === undefined) {
-      if (!(await goneWithin(pid, 2000))) await stop(pid, 'could not be identified');
+      if (alive(pid) && (await checks.stillMine(pid))) await stop(pid, 'could not be identified');
       continue;
     }
     try {
       await ctx.own({ kind: 'process', pid, identity, label });
     } catch (error) {
-      await stop(pid, `could not be owned (${message(error)})`);
+      if ((await identityOf(pid)) === identity) await stop(pid, `could not be owned (${message(error)})`);
     }
   }
   if (problems.length > 0) throw new Error(problems.join('; '));
@@ -94,6 +107,7 @@ export class TauriApp {
   readonly #options: Required<Omit<TauriAppOptions, 'tauriDriver'>> & { tauriDriver: string };
   #driverPid = 0;
   #browser: Browser | undefined;
+  readonly #checks: TakeOverChecks = { stillMine: async (pid) => (await descendantsOf(this.#driverPid)).includes(pid) };
 
   private constructor(ctx: RunContext, options: TauriAppOptions) {
     this.#ctx = ctx;
@@ -134,7 +148,7 @@ export class TauriApp {
       driver.off('exit', exited);
     }
     // The native driver is tauri-driver's child, not the run's; own it so it cannot outlive the run.
-    await takeOver(ctx, await descendantsOf(app.#driverPid), 'native driver');
+    await takeOver(ctx, await descendantsOf(app.#driverPid), 'native driver', app.#checks);
     await app.#open();
     return app;
   }
@@ -195,7 +209,7 @@ export class TauriApp {
       if (failure === undefined && launched.length === 0) {
         failure = new Error(`the session started, but no ${this.#options.application} was found below this run's tauri-driver, so it could not be owned`);
       }
-      await takeOver(this.#ctx, launched, 'application');
+      await takeOver(this.#ctx, launched, 'application', this.#checks);
     } catch (error) {
       failure ??= error;
     }
