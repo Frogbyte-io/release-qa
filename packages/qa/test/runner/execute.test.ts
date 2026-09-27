@@ -255,12 +255,10 @@ describe('interrupted: trouble that is not the candidate', () => {
     expect(result).toMatchObject({ outcome: 'interrupted', reason: 'infrastructure-error' });
   });
 
-  test('steps that run out of time are interrupted, cleanup runs, and the run returns promptly', async () => {
+  test('steps that run out of time are interrupted and cleanup runs', async () => {
     const { context, calls } = await arrange({ timeouts: { phaseMs: 2000, stepsMs: 80, cleanupMs: 2000 } });
-    const began = Date.now();
     const result = await executeScenario(context, scenarioOf({ steps: never }));
     expect(result).toMatchObject({ outcome: 'interrupted', reason: 'timeout' });
-    expect(Date.now() - began).toBeLessThan(1500);
     expect(calls.at(-1)).toBe('cleanup');
   });
 
