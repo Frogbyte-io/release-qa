@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverProjects, type RepositoryApi } from '../../src/github/discover.ts';
 import { GhTransport, inspectGitHubAccess, type GitHubApi } from '../../src/github/transport.ts';
 import { project } from '../fixtures/records.ts';
 import { candidate, SHA1, SHA256 } from '../fixtures/records.ts';
-import { verifyCandidateAssets } from '../../src/github/candidate.ts';
+import { downloadCandidate, verifyCandidateAssets, type CandidateDownloadApi } from '../../src/github/candidate.ts';
 
 function fakeApi(entries: Record<string, unknown>): RepositoryApi {
   return {
@@ -137,6 +138,24 @@ console.log(JSON.stringify({ id: 2 }));`);
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test('streams release asset bytes by ID through gh without a shell', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-gh-download-'));
+    try {
+      const script = join(dir, 'fake-gh.mjs');
+      const recorded = join(dir, 'args.json');
+      const destination = join(dir, 'asset.bin');
+      await writeFile(script, `import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(recorded)}, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(Buffer.from([0, 255, 1, 254]));`);
+      const result = await new GhTransport(process.execPath, [script]).download('repos/team/sample/releases/assets/101', destination);
+      expect(result).toEqual({ ok: true, value: true });
+      expect(await readFile(destination)).toEqual(Buffer.from([0, 255, 1, 254]));
+      expect(JSON.parse(await readFile(recorded, 'utf8'))).toEqual([
+        'api', '-H', 'Accept: application/octet-stream', 'repos/team/sample/releases/assets/101',
+      ]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
 });
 
 describe('candidate asset identity', () => {
@@ -176,5 +195,60 @@ describe('candidate asset identity', () => {
   test('rejects an Actions archive associated with another run even if its name matches', () => {
     const wrong = { ...actions[0]!, workflow_run: { ...actions[0]!.workflow_run, id: 9999 } };
     expect(verifyCandidateAssets(candidate(), build, releases, [wrong, actions[1]!]).ok).toBe(false);
+  });
+});
+
+describe('downloading a selected candidate artifact', () => {
+  const bytes = Buffer.from('the exact installer bytes');
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const selected = candidate({ artifacts: [{ profile: 'windows', name: 'setup.exe', sha256: digest, assetId: 101, actionsArtifactId: 201 }] });
+  const metadata: Record<string, unknown> = {
+    'repositories/1': { id: 1, full_name: 'team/sample' },
+    'repos/team/sample/actions/runs/5000': { id: 5000, run_attempt: 1, path: selected.build.workflowPath, head_sha: selected.sourceSha, conclusion: 'success', repository: { id: 1 } },
+    'repos/team/sample/releases/assets/101': { id: 101, name: 'setup.exe', state: 'uploaded', digest: `sha256:${digest}` },
+    'repos/team/sample/actions/artifacts/201': { id: 201, name: 'windows', expired: false, workflow_run: { id: 5000, repository_id: 1, head_sha: selected.sourceSha } },
+  };
+  const api = (payload: Buffer, overrides: Record<string, unknown> = {}): CandidateDownloadApi => ({
+    get: async (path) => ({ ok: true, value: { ...metadata, ...overrides }[path] }),
+    download: async (_path, destination) => { await writeFile(destination, payload); return { ok: true, value: true }; },
+  });
+
+  test('uses the recorded asset ID and returns only bytes matching its inner SHA-256', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-download-'));
+    try {
+      const paths: string[] = [];
+      const client = api(bytes);
+      const result = await downloadCandidate(selected, 'windows', dir, {
+        ...client,
+        download: async (path, destination) => { paths.push(path); return client.download(path, destination); },
+      });
+      expect(result).toMatchObject({ ok: true, path: join(dir, 'setup.exe') });
+      expect(paths).toEqual(['repos/team/sample/releases/assets/101']);
+      expect(await readFile(join(dir, 'setup.exe'))).toEqual(bytes);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test('rejects altered download bytes and removes the partial file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-download-'));
+    try {
+      const result = await downloadCandidate(selected, 'windows', dir, api(Buffer.from('different bytes')));
+      expect(result).toMatchObject({ ok: false });
+      expect(!result.ok && result.error).toMatch(/SHA-256/);
+      expect(await readdir(dir)).toEqual([]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test('rejects metadata for another asset before downloading anything', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-download-'));
+    try {
+      let downloaded = false;
+      const client = api(bytes, { 'repos/team/sample/releases/assets/101': { id: 999, name: 'setup.exe', state: 'uploaded', digest: `sha256:${digest}` } });
+      const result = await downloadCandidate(selected, 'windows', dir, {
+        ...client,
+        download: async (path, destination) => { downloaded = true; return client.download(path, destination); },
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(downloaded).toBe(false);
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
