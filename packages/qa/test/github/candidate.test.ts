@@ -139,6 +139,49 @@ console.log(JSON.stringify({ id: 2 }));`);
     }
   });
 
+  test('sends JSON writes through a private body file and removes it after each request', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-gh-write-'));
+    try {
+      const script = join(dir, 'fake-gh.mjs');
+      const recorded = join(dir, 'requests.jsonl');
+      await writeFile(script, `import { appendFileSync, readFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+const input = args.indexOf('--input');
+appendFileSync(${JSON.stringify(recorded)}, JSON.stringify({ args, body: input < 0 ? null : readFileSync(args[input + 1], 'utf8') }) + '\\n');
+if (args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') process.exit(0);
+console.log(JSON.stringify({ id: 17 }));`);
+      const transport = new GhTransport(process.execPath, [script]);
+      const body = { token: 'private-marker', expected_head_sha: SHA1.source };
+      expect(await transport.post('repos/team/sample/actions/workflows/qa-prepare.yml/dispatches', body)).toEqual({ ok: true, value: { id: 17 } });
+      expect(await transport.patch('repos/team/sample/pulls/9', body)).toEqual({ ok: true, value: { id: 17 } });
+      expect(await transport.delete('repos/team/sample/releases/assets/17')).toEqual({ ok: true, value: null });
+      const requests = (await readFile(recorded, 'utf8')).trim().split('\n').map((row) => JSON.parse(row) as { args: string[]; body: string | null });
+      expect(requests.map((request) => request.args[request.args.indexOf('--method') + 1])).toEqual(['POST', 'PATCH', 'DELETE']);
+      expect(requests.slice(0, 2).map((request) => JSON.parse(request.body ?? ''))).toEqual([body, body]);
+      expect(requests[2]?.body).toBeNull();
+      for (const request of requests) {
+        expect(JSON.stringify(request.args)).not.toContain('private-marker');
+        const index = request.args.indexOf('--input');
+        if (index >= 0) await expect(readFile(request.args[index + 1] as string)).rejects.toThrow();
+      }
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test('removes a write body after a rejected API call without exposing the body', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-gh-write-'));
+    try {
+      const script = join(dir, 'fake-gh.mjs');
+      const recorded = join(dir, 'input.txt');
+      await writeFile(script, `import { writeFileSync } from 'node:fs';
+const args = process.argv.slice(2);
+writeFileSync(${JSON.stringify(recorded)}, args[args.indexOf('--input') + 1]);
+console.error('HTTP 403: permission denied; private-marker');
+process.exit(1);`);
+      expect(await new GhTransport(process.execPath, [script]).post('repos/team/sample/dispatches', { token: 'private-marker' })).toEqual({ ok: false, reason: 'insufficient-role' });
+      await expect(readFile(await readFile(recorded, 'utf8'))).rejects.toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   test('streams release asset bytes by ID through gh without a shell', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'qa-gh-download-'));
     try {

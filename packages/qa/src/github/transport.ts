@@ -1,5 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export type AccessProblem = 'logged-out' | 'missing-scope' | 'insufficient-role' | 'organization-rejected' | 'not-found' | 'network-error';
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: AccessProblem };
@@ -47,6 +50,32 @@ export class GhTransport implements GitHubApi {
     try { return { ok: true, value: response.output.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as unknown) }; }
     catch { return { ok: false, reason: 'network-error' }; }
   }
+
+  private async write(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<ApiResult<unknown>> {
+    let directory: string | undefined;
+    try {
+      const args = ['api', '--method', method];
+      if (method !== 'DELETE') {
+        const json = JSON.stringify(body);
+        if (typeof json !== 'string') return { ok: false, reason: 'network-error' };
+        directory = await mkdtemp(join(tmpdir(), 'qa-gh-body-'));
+        const input = join(directory, 'request.json');
+        await writeFile(input, json, { mode: 0o600 });
+        args.push('--input', input);
+      }
+      const response = await this.run([...args, path]);
+      if (!response.ok) return response;
+      return { ok: true, value: response.output.trim() ? JSON.parse(response.output) as unknown : null };
+    } catch {
+      return { ok: false, reason: 'network-error' };
+    } finally {
+      if (directory !== undefined) await rm(directory, { recursive: true, force: true });
+    }
+  }
+
+  post(path: string, body: unknown): Promise<ApiResult<unknown>> { return this.write('POST', path, body); }
+  patch(path: string, body: unknown): Promise<ApiResult<unknown>> { return this.write('PATCH', path, body); }
+  delete(path: string): Promise<ApiResult<unknown>> { return this.write('DELETE', path); }
 
   /** Streams an exact release asset to a new file without buffering installer bytes in memory. */
   download(path: string, destination: string): Promise<ApiResult<true>> {
