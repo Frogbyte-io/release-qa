@@ -56,15 +56,20 @@ describe('repository discovery', () => {
 describe('access inspection', () => {
   const repo = { id: 7, permissions: { pull: true, push: false, admin: false }, full_name: 'team/sample' };
   test('distinguishes logged out from a read-only repository role', async () => {
-    const loggedOut: GitHubApi = { auth: async () => false, get: async () => ({ ok: false, reason: 'logged-out' }) };
+    const loggedOut: GitHubApi = { auth: async () => ({ ok: false, reason: 'logged-out' }), get: async () => ({ ok: false, reason: 'logged-out' }) };
     expect(await inspectGitHubAccess('team/sample', loggedOut)).toEqual({ ok: false, reason: 'logged-out' });
-    const readOnly: GitHubApi = { auth: async () => true, get: async () => ({ ok: true, value: repo }) };
+    const readOnly: GitHubApi = { auth: async () => ({ ok: true, value: true }), get: async () => ({ ok: true, value: repo }) };
     expect(await inspectGitHubAccess('team/sample', readOnly)).toEqual({ ok: true, repositoryId: 7, role: 'read' });
   });
 
   test.each(['missing-scope', 'organization-rejected', 'not-found'] as const)('preserves %s as a distinct access problem', async (reason) => {
-    const api: GitHubApi = { auth: async () => true, get: async () => ({ ok: false, reason }) };
+    const api: GitHubApi = { auth: async () => ({ ok: true, value: true }), get: async () => ({ ok: false, reason }) };
     expect(await inspectGitHubAccess('team/sample', api)).toEqual({ ok: false, reason });
+  });
+
+  test('does not report a network failure during auth as logged out', async () => {
+    const api: GitHubApi = { auth: async () => ({ ok: false, reason: 'network-error' }), get: async () => { throw new Error('must not fetch'); } };
+    expect(await inspectGitHubAccess('team/sample', api)).toEqual({ ok: false, reason: 'network-error' });
   });
 });
 

@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 export type AccessProblem = 'logged-out' | 'missing-scope' | 'insufficient-role' | 'organization-rejected' | 'not-found' | 'network-error';
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: AccessProblem };
 export interface GitHubApi {
-  auth(): Promise<boolean>;
+  auth(): Promise<ApiResult<true>>;
   get(path: string): Promise<ApiResult<unknown>>;
 }
 
@@ -28,8 +28,9 @@ export class GhTransport implements GitHubApi {
     });
   }
 
-  async auth(): Promise<boolean> {
-    return (await this.run(['auth', 'status', '--active'])).ok;
+  async auth(): Promise<ApiResult<true>> {
+    const result = await this.run(['auth', 'status', '--active']);
+    return result.ok ? { ok: true, value: true } : result;
   }
 
   async get(path: string): Promise<ApiResult<unknown>> {
@@ -59,7 +60,8 @@ function classifyGhError(stderr: string): AccessProblem {
 /** Inspection separates authentication, API access, and repository role. Read-only access is still discoverable. */
 export async function inspectGitHubAccess(repository: string, api: GitHubApi = new GhTransport()): Promise<{ ok: true; repositoryId: number; role: string } | { ok: false; reason: AccessProblem }> {
   if (!repositoryName.test(repository)) return { ok: false, reason: 'not-found' };
-  if (!(await api.auth())) return { ok: false, reason: 'logged-out' };
+  const auth = await api.auth();
+  if (!auth.ok) return auth;
   const result = await api.get(`repos/${repository}`);
   if (!result.ok) return result;
   const info = result.value as { id?: unknown; permissions?: Record<string, unknown> };
