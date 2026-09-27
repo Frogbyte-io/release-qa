@@ -65,7 +65,7 @@ export async function inspectGitHubAccess(repository: string, api: GitHubApi = n
   const result = await api.get(`repos/${repository}`);
   if (!result.ok) return result;
   const info = result.value as { id?: unknown; permissions?: Record<string, unknown> };
-  if (!Number.isSafeInteger(info?.id) || !info.permissions?.pull) return { ok: false, reason: 'insufficient-role' };
+  if (!Number.isSafeInteger(info?.id) || !info?.permissions?.pull) return { ok: false, reason: 'insufficient-role' };
   const permissions = info.permissions;
   const role = permissions.admin ? 'admin' : permissions.maintain ? 'maintain' : permissions.push ? 'write' : permissions.triage ? 'triage' : 'read';
   return { ok: true, repositoryId: info.id as number, role };

@@ -54,6 +54,26 @@ describe('repository discovery', () => {
     expect(result.projects).toEqual([]);
     expect(result.problems[0]?.reason).toContain('GitHub repository URL');
   });
+
+  test('bounds concurrent project reads and keeps discovery order', async () => {
+    const repositories = Array.from({ length: 9 }, (_, i) => ({ full_name: `team/repo-${i}`, default_branch: 'main' }));
+    let active = 0;
+    let peak = 0;
+    const api: RepositoryApi = {
+      list: async () => ({ ok: true, value: repositories }),
+      get: async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return { ok: true, value: file(project()) };
+      },
+    };
+    const result = await discoverProjects(api);
+    expect(result.projects.map((item) => item.repository)).toEqual(repositories.map((item) => item.full_name));
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+  });
 });
 
 describe('access inspection', () => {
@@ -73,6 +93,11 @@ describe('access inspection', () => {
   test('does not report a network failure during auth as logged out', async () => {
     const api: GitHubApi = { auth: async () => ({ ok: false, reason: 'network-error' }), get: async () => { throw new Error('must not fetch'); } };
     expect(await inspectGitHubAccess('team/sample', api)).toEqual({ ok: false, reason: 'network-error' });
+  });
+
+  test('handles an empty repository API response as an access failure', async () => {
+    const api: GitHubApi = { auth: async () => ({ ok: true, value: true }), get: async () => ({ ok: true, value: null }) };
+    expect(await inspectGitHubAccess('team/sample', api)).toEqual({ ok: false, reason: 'insufficient-role' });
   });
 });
 

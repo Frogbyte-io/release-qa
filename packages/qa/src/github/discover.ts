@@ -41,28 +41,39 @@ export async function discoverProjects(api: RepositoryApi = new GhTransport(), m
     repositories = [fetched.value];
   }
 
-  for (const entry of repositories) {
+  const inspect = async (entry: unknown): Promise<{ project?: DiscoveredProject; problem?: { repository: string; reason: string } } | undefined> => {
     const repository = entry as { full_name?: unknown; default_branch?: unknown };
-    if (typeof repository?.full_name !== 'string' || !repositoryName.test(repository.full_name) || typeof repository.default_branch !== 'string') continue;
+    if (typeof repository?.full_name !== 'string' || !repositoryName.test(repository.full_name) || typeof repository.default_branch !== 'string') return undefined;
     const name = repository.full_name;
     const path = `repos/${name}/contents/qa/project.json?ref=${encodeURIComponent(repository.default_branch)}`;
-    const fetched = await api.get(path);
+    let fetched: ApiResult<unknown>;
+    try { fetched = await api.get(path); }
+    catch { return { problem: { repository: name, reason: 'network-error' } }; }
     if (!fetched.ok) {
-      if (fetched.reason !== 'not-found' || manualUrl !== undefined) result.problems.push({ repository: name, reason: fetched.reason });
-      continue;
+      return fetched.reason !== 'not-found' || manualUrl !== undefined ? { problem: { repository: name, reason: fetched.reason } } : undefined;
     }
     const file = fetched.value as { type?: unknown; encoding?: unknown; content?: unknown };
     if (file?.type !== 'file' || file.encoding !== 'base64' || typeof file.content !== 'string') {
-      result.problems.push({ repository: name, reason: 'invalid project.json' });
-      continue;
+      return { problem: { repository: name, reason: 'invalid project.json' } };
     }
     try {
       const parsed = parseProject(JSON.parse(Buffer.from(file.content, 'base64').toString('utf8')) as unknown);
-      if (parsed.ok) result.projects.push({ repository: name, project: parsed.value });
-      else result.problems.push({ repository: name, reason: 'invalid project.json' });
+      return parsed.ok ? { project: { repository: name, project: parsed.value } } : { problem: { repository: name, reason: 'invalid project.json' } };
     } catch {
-      result.problems.push({ repository: name, reason: 'invalid project.json' });
+      return { problem: { repository: name, reason: 'invalid project.json' } };
     }
+  };
+  const scanned: Array<Awaited<ReturnType<typeof inspect>>> = new Array(repositories.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(4, repositories.length) }, async () => {
+    while (next < repositories.length) {
+      const index = next++;
+      scanned[index] = await inspect(repositories[index]);
+    }
+  }));
+  for (const entry of scanned) {
+    if (entry?.project !== undefined) result.projects.push(entry.project);
+    if (entry?.problem !== undefined) result.problems.push(entry.problem);
   }
   return result;
 }
