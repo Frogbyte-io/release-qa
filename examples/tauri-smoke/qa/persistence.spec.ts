@@ -5,6 +5,7 @@
 import assert from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { assertScreenshotsDiffer } from '../../../packages/qa/src/drivers/screenshots.ts';
 import type { RunContext } from '../../../packages/qa/src/runner/execute.ts';
 import { session, settingFile } from './app.ts';
 
@@ -18,19 +19,6 @@ const shows = (ctx: RunContext, expected: string, description: string): Promise<
 
 /** Saves a screenshot of the app as the attempt's evidence and returns its SHA-256. */
 const capture = async (ctx: RunContext, name: string): Promise<string> => session().screenshot(await ctx.evidence(name));
-
-/**
- * A screenshot taken while the value is shown must differ from one taken while it is not. Stage 0 saw WebKitGTK return
- * the previous frame (native-automation finding 4); a stale screenshot is a broken record, not a candidate that
- * misbehaved (the DOM checks already passed), so it is a plain error: the attempt is interrupted, not failed.
- */
-export function assertFresh(withValue: Record<string, string>, withoutValue: Record<string, string>): void {
-  for (const [shown, shownHash] of Object.entries(withValue)) {
-    for (const [empty, emptyHash] of Object.entries(withoutValue)) {
-      if (shownHash === emptyHash) throw new Error(`screenshot ${shown} is identical to ${empty} although the value was shown only in the first: the screenshot is stale`);
-    }
-  }
-}
 
 export const scenarios = [
   {
@@ -63,7 +51,8 @@ export const scenarios = [
       // back; the file is the independent check, as after every other step.
       assert.equal(existsSync(settingFile()), false, `${settingFile()} stays removed after a restart`);
 
-      assertFresh({ '1-saved.png': saved, '2-restarted.png': restarted }, { '3-cleared.png': cleared, '4-restarted-cleared.png': restartedCleared });
+      // Taken with the value shown and without it, so each pair must differ; a match is a stale screenshot.
+      assertScreenshotsDiffer({ '1-saved.png': saved, '2-restarted.png': restarted }, { '3-cleared.png': cleared, '4-restarted-cleared.png': restartedCleared });
     },
   },
 ];

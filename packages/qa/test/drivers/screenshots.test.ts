@@ -1,17 +1,17 @@
-// The sample scenario's screenshot staleness check: which pairs it compares, and that only a real match trips it.
 import { describe, expect, test } from 'vitest';
-import { assertFresh } from '../../../../examples/tauri-smoke/qa/persistence.spec.ts';
+import { assertScreenshotsDiffer } from '../../src/drivers/screenshots.ts';
 
+// As the sample uses it: two screenshots with the value shown, two without.
 const shots = { saved: 'a'.repeat(64), restarted: 'b'.repeat(64), cleared: 'c'.repeat(64), restartedCleared: 'd'.repeat(64) };
 const check = (s: typeof shots) => () =>
-  assertFresh({ '1-saved.png': s.saved, '2-restarted.png': s.restarted }, { '3-cleared.png': s.cleared, '4-restarted-cleared.png': s.restartedCleared });
+  assertScreenshotsDiffer({ '1-saved.png': s.saved, '2-restarted.png': s.restarted }, { '3-cleared.png': s.cleared, '4-restarted-cleared.png': s.restartedCleared });
 
-describe('the sample\'s screenshot staleness check', () => {
-  test('passes when every screenshot with the value differs from every one without it', () => {
+describe('checking screenshots for staleness', () => {
+  test('passes when every screenshot on one side differs from every one on the other', () => {
     expect(check(shots)).not.toThrow();
   });
 
-  test('passes when screenshots on the same side match: the two empty states may render identically', () => {
+  test('passes when screenshots on the same side match: two empty states may render identically', () => {
     expect(check({ ...shots, restartedCleared: shots.cleared, restarted: shots.saved })).not.toThrow();
   });
 
@@ -20,7 +20,7 @@ describe('the sample\'s screenshot staleness check', () => {
     ['2-restarted.png', '3-cleared.png', { restarted: shots.cleared }],
     ['1-saved.png', '4-restarted-cleared.png', { saved: shots.restartedCleared }],
     ['2-restarted.png', '4-restarted-cleared.png', { restarted: shots.restartedCleared }],
-  ])('%s identical to %s is a stale screenshot, reported as a plain error (interrupted, not failed)', (shown, empty, change) => {
+  ])('%s identical to %s is stale, reported as a plain error (interrupted, not failed)', (a, b, change) => {
     let thrown: unknown;
     try {
       check({ ...shots, ...change })();
@@ -29,6 +29,6 @@ describe('the sample\'s screenshot staleness check', () => {
     }
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).name).toBe('Error');
-    expect((thrown as Error).message).toBe(`screenshot ${shown} is identical to ${empty} although the value was shown only in the first: the screenshot is stale`);
+    expect((thrown as Error).message).toBe(`screenshot ${a} is identical to ${b}, which was taken in a state that looks different: the screenshot is stale`);
   });
 });
