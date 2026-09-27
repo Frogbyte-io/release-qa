@@ -1,4 +1,4 @@
-import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import type { SpawnOptions } from 'node:child_process';
 import type { EnvironmentProfile } from '../model/project.ts';
 import type { Requirement, RequirementKey } from '../model/requirement.ts';
 import type { MeasuredEnvironment, Outcome } from '../model/result.ts';
@@ -47,6 +47,30 @@ export interface ArtifactRef {
   sha256: string;
 }
 
+/** Process handle supported both in the runner and across the consumer-process boundary. Kill reports the parent's result asynchronously. */
+export interface OwnedChildProcess {
+  pid?: number | undefined;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  kill(signal?: NodeJS.Signals | number): Promise<boolean>;
+  on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+  off(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+}
+
+function ownedHandle(child: import('node:child_process').ChildProcess): OwnedChildProcess {
+  const handle: OwnedChildProcess = {
+    get pid() { return child.pid; },
+    get exitCode() { return child.exitCode; },
+    get signalCode() { return child.signalCode; },
+    kill: async (signal) => child.kill(signal),
+    on(event, listener) { child.on(event, listener); return handle; },
+    once(event, listener) { child.once(event, listener); return handle; },
+    off(event, listener) { child.off(event, listener); return handle; },
+  };
+  return handle;
+}
+
 /** What a lifecycle hook or scenario may do. `own` and `spawn` record ownership before anything is used. */
 export interface RunContext {
   candidate: CandidateRef;
@@ -57,8 +81,8 @@ export interface RunContext {
   signal: AbortSignal;
   /** Records a resource this run created. Refused once the phase that asked has ended. */
   own(resource: OwnedResource): Promise<void>;
-  /** Starts a process the run owns. Refused once the phase that asked has ended. */
-  spawn(label: string, command: string, args: readonly string[], options?: SpawnOptions): Promise<ChildProcess>;
+  /** Starts a process the run owns. Refused once the phase ends. Consumer code uses ignore/inherit stdio and cannot pass SpawnOptions.signal. */
+  spawn(label: string, command: string, args: readonly string[], options?: SpawnOptions): Promise<OwnedChildProcess>;
   /** Polls until `condition` is true. Running out of time is an assertion failure; abort is a cancellation. */
   waitFor(condition: () => boolean | Promise<boolean>, options?: { timeoutMs?: number; intervalMs?: number; description?: string }): Promise<void>;
 }
@@ -334,7 +358,7 @@ export async function executeScenario(context: ExecutionContext, scenario: Scena
         },
         spawn: async (label, command, args, options) => {
           assertActive();
-          return spawnOwned(root, label, command, args, options);
+          return ownedHandle(await spawnOwned(root, label, command, args, options));
         },
         waitFor: (condition, options) => waitFor(signal, condition, options),
       };
@@ -454,7 +478,7 @@ async function cleanUp(
 }
 
 /** Polls a condition, giving up at the deadline even if the condition itself never answers. */
-async function waitFor(
+export async function waitFor(
   signal: AbortSignal,
   condition: () => boolean | Promise<boolean>,
   options: { timeoutMs?: number; intervalMs?: number; description?: string } = {},
