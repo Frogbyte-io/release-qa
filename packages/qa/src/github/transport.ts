@@ -1,8 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 export type AccessProblem = 'logged-out' | 'missing-scope' | 'insufficient-role' | 'organization-rejected' | 'not-found' | 'network-error';
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; reason: AccessProblem };
@@ -23,12 +20,17 @@ export class GhTransport implements GitHubApi {
     this.prefixArgs = prefixArgs;
   }
 
-  private run(args: readonly string[]): Promise<{ ok: true; output: string } | { ok: false; reason: AccessProblem }> {
+  private run(args: readonly string[], input?: string): Promise<{ ok: true; output: string } | { ok: false; reason: AccessProblem }> {
     return new Promise((resolve) => {
-      execFile(this.executable, [...this.prefixArgs, ...args], { windowsHide: true, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const child = execFile(this.executable, [...this.prefixArgs, ...args], { windowsHide: true, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error !== null) return resolve({ ok: false, reason: classifyGhError(stderr) });
         resolve({ ok: true, output: stdout });
       });
+      if (input !== undefined) {
+        // A fast API rejection may close stdin before the body is consumed; the exit callback classifies it.
+        child.stdin?.on('error', () => {});
+        child.stdin?.end(input);
+      }
     });
   }
 
@@ -52,24 +54,19 @@ export class GhTransport implements GitHubApi {
   }
 
   private async write(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<ApiResult<unknown>> {
-    let directory: string | undefined;
     try {
       const args = ['api', '--method', method];
+      let input: string | undefined;
       if (method !== 'DELETE') {
-        const json = JSON.stringify(body);
-        if (typeof json !== 'string') return { ok: false, reason: 'network-error' };
-        directory = await mkdtemp(join(tmpdir(), 'qa-gh-body-'));
-        const input = join(directory, 'request.json');
-        await writeFile(input, json, { mode: 0o600 });
-        args.push('--input', input);
+        input = JSON.stringify(body);
+        if (typeof input !== 'string') return { ok: false, reason: 'network-error' };
+        args.push('--input', '-');
       }
-      const response = await this.run([...args, path]);
+      const response = await this.run([...args, path], input);
       if (!response.ok) return response;
       return { ok: true, value: response.output.trim() ? JSON.parse(response.output) as unknown : null };
     } catch {
       return { ok: false, reason: 'network-error' };
-    } finally {
-      if (directory !== undefined) await rm(directory, { recursive: true, force: true });
     }
   }
 

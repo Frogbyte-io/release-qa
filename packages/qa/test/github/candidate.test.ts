@@ -139,15 +139,16 @@ console.log(JSON.stringify({ id: 2 }));`);
     }
   });
 
-  test('sends JSON writes through a private body file and removes it after each request', async () => {
+  test('sends JSON writes through stdin without putting the body in arguments', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'qa-gh-write-'));
     try {
       const script = join(dir, 'fake-gh.mjs');
       const recorded = join(dir, 'requests.jsonl');
-      await writeFile(script, `import { appendFileSync, readFileSync } from 'node:fs';
+      await writeFile(script, `import { appendFileSync } from 'node:fs';
 const args = process.argv.slice(2);
-const input = args.indexOf('--input');
-appendFileSync(${JSON.stringify(recorded)}, JSON.stringify({ args, body: input < 0 ? null : readFileSync(args[input + 1], 'utf8') }) + '\\n');
+let body = '';
+if (args.includes('--input')) for await (const chunk of process.stdin) body += chunk;
+appendFileSync(${JSON.stringify(recorded)}, JSON.stringify({ args, body: args.includes('--input') ? body : null }) + '\\n');
 if (args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') process.exit(0);
 console.log(JSON.stringify({ id: 17 }));`);
       const transport = new GhTransport(process.execPath, [script]);
@@ -162,23 +163,19 @@ console.log(JSON.stringify({ id: 17 }));`);
       for (const request of requests) {
         expect(JSON.stringify(request.args)).not.toContain('private-marker');
         const index = request.args.indexOf('--input');
-        if (index >= 0) await expect(readFile(request.args[index + 1] as string)).rejects.toThrow();
+        if (index >= 0) expect(request.args[index + 1]).toBe('-');
       }
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  test('removes a write body after a rejected API call without exposing the body', async () => {
+  test('classifies a rejected write without exposing its body', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'qa-gh-write-'));
     try {
       const script = join(dir, 'fake-gh.mjs');
-      const recorded = join(dir, 'input.txt');
-      await writeFile(script, `import { writeFileSync } from 'node:fs';
-const args = process.argv.slice(2);
-writeFileSync(${JSON.stringify(recorded)}, args[args.indexOf('--input') + 1]);
+      await writeFile(script, `for await (const chunk of process.stdin) void chunk;
 console.error('HTTP 403: permission denied; private-marker');
 process.exit(1);`);
       expect(await new GhTransport(process.execPath, [script]).post('repos/team/sample/dispatches', { token: 'private-marker' })).toEqual({ ok: false, reason: 'insufficient-role' });
-      await expect(readFile(await readFile(recorded, 'utf8'))).rejects.toThrow();
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
