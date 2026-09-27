@@ -156,6 +156,19 @@ process.stdout.write(Buffer.from([0, 255, 1, 254]));`);
       ]);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+
+  test('waits for handles to close when the destination cannot be written', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-gh-download-'));
+    try {
+      const script = join(dir, 'fake-gh.mjs');
+      const destination = join(dir, 'existing.bin');
+      await writeFile(script, `process.stdout.write(Buffer.alloc(1024 * 1024)); setTimeout(() => {}, 10000);`);
+      await writeFile(destination, 'already here');
+      const result = await new GhTransport(process.execPath, [script]).download('repos/team/sample/releases/assets/101', destination);
+      expect(result).toEqual({ ok: false, reason: 'network-error' });
+      expect(await readFile(destination, 'utf8')).toBe('already here');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
 });
 
 describe('candidate asset identity', () => {
@@ -209,7 +222,10 @@ describe('downloading a selected candidate artifact', () => {
     'repos/team/sample/actions/artifacts/201': { id: 201, name: 'windows', expired: false, workflow_run: { id: 5000, repository_id: 1, head_sha: selected.sourceSha } },
   };
   const api = (payload: Buffer, overrides: Record<string, unknown> = {}): CandidateDownloadApi => ({
-    get: async (path) => ({ ok: true, value: { ...metadata, ...overrides }[path] }),
+    get: async (path) => {
+      const entries = { ...metadata, ...overrides };
+      return Object.hasOwn(entries, path) ? { ok: true, value: entries[path] } : { ok: false, reason: 'not-found' };
+    },
     download: async (_path, destination) => { await writeFile(destination, payload); return { ok: true, value: true }; },
   });
 
@@ -234,6 +250,20 @@ describe('downloading a selected candidate artifact', () => {
       const result = await downloadCandidate(selected, 'windows', dir, api(Buffer.from('different bytes')));
       expect(result).toMatchObject({ ok: false });
       expect(!result.ok && result.error).toMatch(/SHA-256/);
+      expect(await readdir(dir)).toEqual([]);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test('removes the temporary file after a download transport failure', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-download-'));
+    try {
+      const client = api(bytes);
+      const result = await downloadCandidate(selected, 'windows', dir, {
+        ...client,
+        download: async (_path, destination) => { await writeFile(destination, 'partial'); return { ok: false, reason: 'network-error' }; },
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(!result.ok && result.error).toContain('asset 101');
       expect(await readdir(dir)).toEqual([]);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });

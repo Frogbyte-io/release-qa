@@ -56,20 +56,25 @@ export class GhTransport implements GitHubApi {
       });
       const output = createWriteStream(destination, { flags: 'wx' });
       let stderr = '';
-      let exited: number | null | undefined;
+      let childClosed = false;
+      let outputClosed = false;
       let written = false;
-      let settled = false;
-      const finish = (result: ApiResult<true>): void => { if (!settled) { settled = true; resolve(result); } };
+      let failure: AccessProblem | undefined;
+      const finish = (): void => {
+        // On Windows the caller cannot remove its temporary directory until both handles have closed.
+        if (childClosed && outputClosed) resolve(failure === undefined && written ? { ok: true, value: true } : { ok: false, reason: failure ?? 'network-error' });
+      };
       child.stderr.on('data', (chunk: Buffer) => { if (stderr.length < 4096) stderr += chunk.toString('utf8').slice(0, 4096 - stderr.length); });
       child.stdout.pipe(output);
-      child.on('error', () => { output.destroy(); finish({ ok: false, reason: 'network-error' }); });
+      child.on('error', () => { failure = 'network-error'; output.destroy(); });
       child.on('close', (code) => {
-        exited = code;
-        if (code !== 0) { output.destroy(); finish({ ok: false, reason: classifyGhError(stderr) }); }
-        else if (written) finish({ ok: true, value: true });
+        childClosed = true;
+        if (code !== 0) { failure ??= classifyGhError(stderr); output.destroy(); }
+        finish();
       });
-      output.on('finish', () => { written = true; if (exited === 0) finish({ ok: true, value: true }); });
-      output.on('error', () => { child.kill(); finish({ ok: false, reason: 'network-error' }); });
+      output.on('finish', () => { written = true; });
+      output.on('error', () => { failure = 'network-error'; child.kill(); });
+      output.on('close', () => { outputClosed = true; finish(); });
     });
   }
 }

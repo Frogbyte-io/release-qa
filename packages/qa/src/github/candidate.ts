@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { link, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Candidate } from '../model/candidate.ts';
 import { parseCandidate } from '../model/candidate.ts';
+import { sha256Of } from '../util/sha256.ts';
 import { GhTransport, type ApiResult } from './transport.ts';
 
 export interface BuildRun {
@@ -39,10 +38,6 @@ export type DownloadCandidateResult = { ok: true; path: string; sha256: string }
 
 const repoName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
-const digestOf = (path: string): Promise<string> => new Promise((resolve, reject) => {
-  const hash = createHash('sha256');
-  createReadStream(path).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')));
-});
 
 /** Retrieves one recorded asset by ID, after checking the entire candidate's build and asset origins. */
 export async function downloadCandidate(candidate: Candidate, profile: string, directory: string, api: CandidateDownloadApi = new GhTransport()): Promise<DownloadCandidateResult> {
@@ -79,7 +74,7 @@ export async function downloadCandidate(candidate: Candidate, profile: string, d
       const pending = join(temporary, artifact.name);
       const downloaded = await api.download(`${prefix}/releases/assets/${artifact.assetId}`, pending);
       if (!downloaded.ok) return { ok: false, error: `could not download candidate asset ${artifact.assetId}: ${downloaded.reason}` };
-      const actual = await digestOf(pending);
+      const actual = await sha256Of(pending);
       if (actual !== artifact.sha256) return { ok: false, error: `downloaded asset ${artifact.assetId} does not match the candidate: expected SHA-256 ${artifact.sha256}, found ${actual}` };
       const path = join(directory, artifact.name);
       await link(pending, path); // atomic create: never replace an unrelated file in the destination
