@@ -1,5 +1,29 @@
 import type { Evaluation, Reason } from '../model/evaluate.ts';
 
+export interface ReleaseIntentPolicy {
+  releaseBranchPrefix: string;
+  releaseLabel: string;
+  releaseFiles: readonly string[];
+}
+
+export interface PullRequestSignals {
+  branch: string;
+  labels: readonly string[];
+  files: readonly string[];
+}
+
+export { evaluatePullRequest, type GateApi, type PullRequestGateEvaluation, type PullRequestGateResult } from './pull-request-gate.ts';
+
+/** Uses independent branch, label, and changed-file signals so removing one label cannot bypass release QA. */
+export function hasReleaseIntent(pr: PullRequestSignals, policy: ReleaseIntentPolicy): string[] {
+  const reasons: string[] = [];
+  if (pr.branch.startsWith(policy.releaseBranchPrefix)) reasons.push('release branch');
+  if (pr.labels.includes(policy.releaseLabel)) reasons.push('release label');
+  const files = pr.files.filter((file) => policy.releaseFiles.includes(file));
+  if (files.length > 0) reasons.push(`release file changed: ${files.join(', ')}`);
+  return reasons;
+}
+
 const safe = (value: string): string => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ');
 
 function describe(reason: Reason): string {
