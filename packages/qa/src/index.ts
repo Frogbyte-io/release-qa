@@ -6,6 +6,8 @@ export {
   type CandidatePreparation, type PreparationPreflight, type DownloadCandidateResult,
   type CandidateDispatchApi, type PreparationApi, type CandidateDownloadApi,
 } from './github/candidate.ts';
+export { syncRun, loadCandidateProgress, reconcileRelease, recordScenarioClaim, claimStatus, handoffPlan, type SyncApi, type SyncRunInput, type SyncRunResult, type CandidateProgress, type ScenarioClaim, type HandoffPlan } from './github/sync.ts';
+export { parseSyncedReportManifest, parseSyncedEventRecord, parseSyncedEvidenceRecord, objectSha256, type SyncedReportManifest } from './github/reports.ts';
 
 export { parseCandidate, type Artifact, type Candidate } from './model/candidate.ts';
 export { parseException, type Exception } from './model/exception.ts';
