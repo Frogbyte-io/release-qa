@@ -1,6 +1,7 @@
-import { appendFile, readFile } from 'node:fs/promises';
+import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { GhTransport } from './transport.ts';
 import { evaluatePullRequest } from './pull-request-gate.ts';
+import type { DeferredGateResult } from './gate-finalize.ts';
 import { renderQaSection } from './gate.ts';
 import { ensureManagedSections, proposeReleaseNotes, readManagedSection, updatePullRequestBody } from './pull-request.ts';
 
@@ -29,7 +30,10 @@ if (releaseSnapshotPath !== undefined && releaseSnapshotPath !== '') {
 }
 
 const api = new GhTransport();
-const evaluation = await evaluatePullRequest(repository, pullRequestNumber, api, eventHead, candidateReleaseId, candidateReleaseSnapshot);
+const deferredResultFile = process.env.RELEASE_QA_DEFER_FINALIZATION_FILE;
+const evaluation = await evaluatePullRequest(repository, pullRequestNumber, api, eventHead, candidateReleaseId, candidateReleaseSnapshot, {
+  deferFinalReleaseVerification: deferredResultFile !== undefined && deferredResultFile !== '',
+});
 const state = evaluation.ok && evaluation.value.evaluation.readiness !== 'blocked' ? 'success' : 'failure';
 const description = evaluation.ok
   ? `${evaluation.value.evaluation.readiness === 'approved-with-exceptions' ? 'Approved with exceptions' : evaluation.value.evaluation.readiness === 'passed' ? 'QA passed' : 'QA blocked'} for PR #${pullRequest}`
@@ -37,18 +41,39 @@ const description = evaluation.ok
 const summary = evaluation.ok ? evaluation.value.summary : `**BLOCKED**: ${evaluation.error}`;
 console.log(summary);
 
-// Publish immediately after the evaluator's final identity check; optional PR-summary writes follow.
-const runUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
-  ? `${process.env.GITHUB_SERVER_URL}/${repository}/actions/runs/${process.env.GITHUB_RUN_ID}`
-  : undefined;
-const posted = await api.post(`repos/${repository}/statuses/${eventHead}`, {
-  state,
-  context: 'release-qa',
-  description: description.slice(0, 140),
-  ...(runUrl === undefined ? {} : { target_url: runUrl }),
-});
-if (!posted.ok) throw new Error(`could not publish required release-qa status: ${posted.reason}`);
-if (state !== 'success') process.exitCode = 1;
+if (deferredResultFile !== undefined && deferredResultFile !== '') {
+  const result: DeferredGateResult = {
+    schemaVersion: 1,
+    repository,
+    pullRequest: pullRequestNumber,
+    eventHead,
+    state,
+    description,
+    summary,
+    ...(evaluation.ok ? {
+      headSha: evaluation.value.headSha,
+      baseRef: evaluation.value.baseRef,
+      baseSha: evaluation.value.baseSha,
+      candidateId: evaluation.value.candidateId,
+      candidateReleaseId: evaluation.value.candidateReleaseId,
+      candidateAssetId: evaluation.value.candidateAssetId,
+      releaseIntent: evaluation.value.releaseIntent,
+    } : {}),
+  };
+  await writeFile(deferredResultFile, JSON.stringify(result), { encoding: 'utf8', flag: 'wx' });
+} else {
+  // Direct mode is retained for local diagnostics and workflows without a broker/finalizer boundary.
+  const runUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
+    ? `${process.env.GITHUB_SERVER_URL}/${repository}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    : undefined;
+  const posted = await api.post(`repos/${repository}/statuses/${eventHead}`, {
+    state,
+    context: 'release-qa',
+    description: description.slice(0, 140),
+    ...(runUrl === undefined ? {} : { target_url: runUrl }),
+  });
+  if (!posted.ok) throw new Error(`could not publish required release-qa status: ${posted.reason}`);
+}
 
 if (process.env.GITHUB_STEP_SUMMARY) {
   try { await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Release QA gate\n\n${summary}\n`, 'utf8'); }
@@ -56,7 +81,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
 }
 
 const markers = evaluation.ok ? evaluation.value.markers : evaluation.markers;
-if (markers !== undefined) {
+if (deferredResultFile === undefined && markers !== undefined) {
   const prResponse = await api.get(`repos/${repository}/pulls/${pullRequestNumber}`);
   if (prResponse.ok && typeof prResponse.value === 'object' && prResponse.value !== null) {
   const prBody = (prResponse.value as { body?: unknown }).body;

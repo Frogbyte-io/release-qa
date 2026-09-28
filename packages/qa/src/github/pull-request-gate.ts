@@ -18,8 +18,11 @@ export interface GateApi extends SyncApi {
 export interface PullRequestGateEvaluation {
   pullRequest: number;
   headSha: string;
+  baseRef: string;
   baseSha: string;
   candidateId?: string;
+  candidateReleaseId?: number;
+  candidateAssetId?: number;
   releaseIntent: string[];
   evaluation: Evaluation;
   summary: string;
@@ -34,7 +37,7 @@ const record = (value: unknown): Record<string, unknown> | undefined => value !=
 const fail = (message: string): PullRequestGateResult => ({ ok: false, error: message });
 
 /** Evaluates the live PR against trusted target-branch policy and the exact selected candidate. */
-export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string, candidateReleaseId?: number, candidateReleaseSnapshot?: unknown): Promise<PullRequestGateResult> {
+export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string, candidateReleaseId?: number, candidateReleaseSnapshot?: unknown, options: { deferFinalReleaseVerification?: boolean } = {}): Promise<PullRequestGateResult> {
   let trustedMarkers: { releaseNotes: string; qa: string } | undefined;
   const failure = (message: string): PullRequestGateResult => ({ ok: false, error: message, ...(trustedMarkers === undefined ? {} : { markers: trustedMarkers }) });
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) return failure('invalid repository or pull request number');
@@ -74,7 +77,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
       if (!currentIntent.ok || currentIntent.value.length > 0) return failure('release intent changed during evaluation; evaluate again');
       const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
       if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return failure('pull request or target branch changed during evaluation');
-      return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseSha, releaseIntent, evaluation: passedEvaluation(), summary: 'No release intent; normal merge policy applies.', markers: project.value.markers } };
+      return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseRef: initialBase.ref, baseSha, releaseIntent, evaluation: passedEvaluation(), summary: 'No release intent; normal merge policy applies.', markers: project.value.markers } };
     }
 
     let release: Record<string, unknown> | undefined;
@@ -154,13 +157,15 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     // collaborator permission calls so those calls cannot make the earlier snapshot stale.
     const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
     if (!currentIntent.ok || currentIntent.value.length === 0) return failure('release intent changed during evaluation; evaluate again');
-    const finalReleaseResult = await api.get(`${prefix}/releases/${release.id}`);
-    if (!finalReleaseResult.ok) return failure(`cannot verify active candidate release: ${finalReleaseResult.reason}`);
-    const finalRelease = record(finalReleaseResult.ok ? finalReleaseResult.value : undefined);
-    const finalAssets = Array.isArray(finalRelease?.assets) ? finalRelease.assets.map(record) : [];
-    const finalCandidate = finalAssets.find((item) => item?.name === 'candidate.json');
-    if (finalRelease?.draft !== true || finalRelease.name !== `QA PR #${pullRequest}` || record(finalCandidate)?.id !== candidateAsset.id) {
-      return failure('active candidate release changed during evaluation; run the gate again');
+    if (!options.deferFinalReleaseVerification) {
+      const finalReleaseResult = await api.get(`${prefix}/releases/${release.id}`);
+      if (!finalReleaseResult.ok) return failure(`cannot verify active candidate release: ${finalReleaseResult.reason}`);
+      const finalRelease = record(finalReleaseResult.value);
+      const finalAssets = Array.isArray(finalRelease?.assets) ? finalRelease.assets.map(record) : [];
+      const finalCandidate = finalAssets.find((item) => item?.name === 'candidate.json');
+      if (finalRelease?.draft !== true || finalRelease.name !== `QA PR #${pullRequest}` || record(finalCandidate)?.id !== candidateAsset.id) {
+        return failure('active candidate release changed during evaluation; run the gate again');
+      }
     }
     const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
     if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return failure('pull request or target branch changed during evaluation');
@@ -175,7 +180,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
       retryResolutions,
     });
     const summary = renderQaSection(evaluation);
-    return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseSha, candidateId: candidate.id, releaseIntent, evaluation, summary, markers: project.value.markers } };
+    return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseRef: initialBase.ref, baseSha, candidateId: candidate.id, candidateReleaseId: release.id as number, candidateAssetId: candidateAsset.id as number, releaseIntent, evaluation, summary, markers: project.value.markers } };
   } catch {
     return failure('GitHub state could not be safely evaluated');
   }

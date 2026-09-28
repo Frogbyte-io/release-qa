@@ -244,6 +244,30 @@ describe('live pull request evaluation', () => {
     expect(result.ok && result.value.candidateId).toBe('cand-0001');
   });
 
+  test('defers draft release revalidation and returns candidate identity for privileged finalization', async () => {
+    const api = makeGateApi();
+    let releaseReads = 0;
+    const get = api.get.bind(api);
+    api.get = async (path) => {
+      if (path === 'repos/owner/repo/releases/50') releaseReads += 1;
+      return get(path);
+    };
+    const snapshot = {
+      id: 50,
+      name: 'QA PR #7',
+      draft: true,
+      assets: [{ id: 70, name: 'candidate.json', state: 'uploaded', uploader: { login: 'maintainer' } }],
+      brokeredAssets: { '70': Buffer.from(JSON.stringify(candidate({ repositoryId: 1, pullRequest: 7, sourceSha: SHA1.source, baseSha: SHA1.base, policyDigest: createHashFor(Buffer.from(JSON.stringify({ releaseBranchPrefix: 'release/', releaseLabel: 'release', releaseFiles: ['VERSION'], required: ['windows/persistence', 'windows/device-feel'] })))}))).toString('base64') },
+    };
+    const result = await evaluatePullRequest('owner/repo', 7, api, SHA1.source, undefined, snapshot, { deferFinalReleaseVerification: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.candidateReleaseId).toBe(50);
+      expect(result.value.candidateAssetId).toBe(70);
+    }
+    expect(releaseReads).toBe(0);
+  });
+
   test('rejects a brokered release id that does not name this pull request draft', async () => {
     const api = makeGateApi();
     const get = api.get.bind(api);
