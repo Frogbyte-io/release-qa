@@ -73,8 +73,9 @@ export async function syncRun(input: SyncRunInput): Promise<SyncRunResult> {
     if (!state.exists || state.truncated || state.corrupt.length || state.conflicts.length || state.missingPredecessors.length || state.cyclic.length || state.missingEvidence.length) return { ok: false, error: 'run journal is incomplete or inconsistent' };
     const started = events.find((event) => event.type === 'run-started');
     if (!started || started.type !== 'run-started' || started.data.runId !== input.runId || started.data.candidateId !== input.report.candidateId || started.data.profile !== input.report.profile || started.data.machineId !== input.report.machineId) return { ok: false, error: 'run journal does not match the report' };
-    const eventAttempts = new Map(events.filter((event): event is Extract<RunEvent, { type: 'attempt-recorded' }> => event.type === 'attempt-recorded').map((event) => [event.data.attempt.id, event.data.attempt]));
-    if (eventAttempts.size !== input.report.attempts.length || input.report.attempts.some((attempt) => canonical(eventAttempts.get(attempt.id)) !== canonical(attempt))) return { ok: false, error: 'report attempts do not match the journal' };
+    const attemptEvents = events.filter((event): event is Extract<RunEvent, { type: 'attempt-recorded' }> => event.type === 'attempt-recorded');
+    const eventAttempts = new Map(attemptEvents.map((event) => [event.data.attempt.id, event.data.attempt]));
+    if (eventAttempts.size !== attemptEvents.length || eventAttempts.size !== input.report.attempts.length || input.report.attempts.some((attempt) => canonical(eventAttempts.get(attempt.id)) !== canonical(attempt))) return { ok: false, error: 'report attempts do not match the journal' };
     const assets = await listAssets(input);
     if (!assets.ok) return { ok: false, error: `cannot list release assets: ${assets.reason}` };
     const uploaded: Array<{ name: string; data: Buffer }> = [];
@@ -93,7 +94,7 @@ export async function syncRun(input: SyncRunInput): Promise<SyncRunResult> {
     const eventRefs: SyncedObjectRef[] = [];
     const publishedEvents = events.filter((event) => event.type !== 'upload-acknowledged');
     for (const event of publishedEvents) {
-      const name = `qa-event-${encodeURIComponent(input.runId)}-${encodeURIComponent(event.id)}.json`;
+      const name = `qa-event-${objectSha256(input.runId).slice(0, 16)}-${objectSha256(event.id).slice(0, 32)}.json`;
       const data = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: 'release-qa-event', event }));
       uploaded.push({ name, data });
       eventRefs.push({ name, sha256: objectSha256(data) });
@@ -155,7 +156,7 @@ export async function loadCandidateProgress(repository: string, releaseId: numbe
     let complete = true;
     for (const ref of parsed.value.events) {
       const eventAsset = byName.get(ref.name);
-      if (!eventAsset || eventAsset.uploader?.login !== asset.uploader.login) { complete = false; break; }
+      if (!eventAsset || eventAsset.state !== 'uploaded' || eventAsset.uploader?.login !== asset.uploader.login) { complete = false; break; }
       const bytes = await readAsset(repository, eventAsset, api);
       if (!bytes.ok || objectSha256(bytes.value) !== ref.sha256) { complete = false; break; }
       let json: unknown;
@@ -166,7 +167,7 @@ export async function loadCandidateProgress(repository: string, releaseId: numbe
     }
     for (const ref of parsed.value.evidence) {
       const evidenceAsset = byName.get(ref.name);
-      if (!evidenceAsset || evidenceAsset.uploader?.login !== asset.uploader.login) { complete = false; break; }
+      if (!evidenceAsset || evidenceAsset.state !== 'uploaded' || evidenceAsset.uploader?.login !== asset.uploader.login) { complete = false; break; }
       const bytes = await readAsset(repository, evidenceAsset, api);
       if (!bytes.ok || objectSha256(bytes.value) !== ref.sha256) { complete = false; break; }
       let json: unknown;
@@ -276,10 +277,13 @@ function isScenarioClaim(value: ScenarioClaim): boolean {
 
 function eventsFormOneRun(events: readonly RunEvent[]): boolean {
   const byId = new Map<string, RunEvent>();
+  const childrenByParent = new Map<string, number>();
   for (const event of events) {
     if (byId.has(event.id)) return false;
     byId.set(event.id, event);
+    if (event.prev !== undefined) childrenByParent.set(event.prev, (childrenByParent.get(event.prev) ?? 0) + 1);
   }
+  if ([...childrenByParent.values()].some((count) => count > 1)) return false;
   const roots = events.filter((event) => event.prev === undefined);
   if (roots.length !== 1 || roots[0]?.type !== 'run-started') return false;
   const reachable = new Set<string>([roots[0].id]);

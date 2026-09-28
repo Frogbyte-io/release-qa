@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { RequirementKey } from '../../src/model/requirement.ts';
 import type { Report } from '../../src/model/result.ts';
 import type { RunEvent } from '../../src/runner/events.ts';
-import { objectSha256, parseSyncedReportManifest } from '../../src/github/reports.ts';
+import { objectSha256, parseSyncedEvidenceRecord } from '../../src/github/reports.ts';
 import { claimStatus, handoffPlan, loadCandidateProgress, reconcileRelease, syncRun, type CandidateProgress, type SyncApi, type SyncAsset } from '../../src/github/sync.ts';
 import { report as makeReport } from '../fixtures/records.ts';
 import { readRun } from '../../src/runner/journal.ts';
@@ -39,7 +39,7 @@ class MemoryApi implements SyncApi {
   async dispatchReconciliation() { return { ok: true as const, value: true as const }; }
 }
 
-async function createRun(api: MemoryApi, runId: string, actor: string, attemptId: string, requirement: RequirementKey, authenticatedAs = actor, evidence: string[] = []) {
+async function createRun(api: MemoryApi, runId: string, actor: string, attemptId: string, requirement: RequirementKey, authenticatedAs = actor, evidence: string[] = [], duplicateAttempt = false) {
   const directory = await mkdtemp(join(tmpdir(), 'qa-sync-')); dirs.push(directory);
   await mkdir(join(directory, 'evidence'));
   for (const path of evidence) await writeFile(join(directory, path), `evidence:${path}`);
@@ -47,6 +47,7 @@ async function createRun(api: MemoryApi, runId: string, actor: string, attemptId
     { schemaVersion: 1, id: `${runId}-start`, recordedAt: '2026-09-28T10:00:00Z', type: 'run-started', data: { runId, candidateId: 'cand-0001', profile: requirement.split('/')[0]!, machineId: `machine-${actor}` } },
     { schemaVersion: 1, id: `${runId}-attempt`, prev: `${runId}-start`, recordedAt: '2026-09-28T10:10:00Z', type: 'attempt-recorded', data: { attempt: { id: attemptId, requirement, outcome: 'passed', evidence } } },
   ];
+  if (duplicateAttempt) events.push({ schemaVersion: 1, id: `${runId}-attempt-conflict`, prev: `${runId}-attempt`, recordedAt: '2026-09-28T10:11:00Z', type: 'attempt-recorded', data: { attempt: { id: attemptId, requirement, outcome: 'failed', evidence } } });
   await writeFile(join(directory, 'events.jsonl'), `${events.map((event) => JSON.stringify(event)).join('\n')}\n`);
   const report: Report = { schemaVersion: 1, id: runId, candidateId: 'cand-0001', policyDigest: 'a'.repeat(64), testRevision: '4'.repeat(40), profile: requirement.split('/')[0]!, actor, machineId: `machine-${actor}`, environment: { os: requirement.split('/')[0]!, osVersion: '1', arch: 'x86_64', capabilities: [], toolVersion: '1' }, attempts: [{ id: attemptId, requirement, outcome: 'passed', evidence }] };
   api.actor = authenticatedAs;
@@ -84,11 +85,33 @@ describe('GitHub report synchronization', () => {
     expect(api.assets.filter((asset) => asset.name.startsWith('qa-report-'))).toHaveLength(1);
   });
 
-  test('report actor cannot differ from authenticated uploader; an untrusted role does not count', async () => {
+  test('report actor cannot differ from authenticated uploader', async () => {
     const api = new MemoryApi();
     const result = await createRun(api, 'run-actor', 'forged', 'attempt-actor', 'windows/persistence', 'trusted-uploader');
     expect(result.ok).toBe(false);
     expect(api.assets).toHaveLength(0);
+  });
+
+  test('duplicate attempt IDs in a journal cannot disappear during report matching', async () => {
+    const api = new MemoryApi();
+    const result = await createRun(api, 'run-duplicate', 'tester-a', 'attempt-duplicate', 'windows/persistence', 'tester-a', [], true);
+    expect(result.ok).toBe(false);
+    expect(api.assets).toHaveLength(0);
+  });
+
+  test('forked event chains are rejected during reconciliation', async () => {
+    const api = new MemoryApi();
+    await createRun(api, 'run-fork', 'tester-a', 'attempt-fork', 'windows/persistence');
+    const manifestAsset = api.assets.find((asset) => asset.name === 'qa-report-run-fork.json')!;
+    const manifest = JSON.parse(manifestAsset.bytes.toString('utf8')) as { events: Array<{ name: string; sha256: string }> };
+    const fork = { schemaVersion: 1, kind: 'release-qa-event', event: { schemaVersion: 1, id: 'run-fork-branch', prev: 'run-fork-start', recordedAt: '2026-09-28T10:12:00Z', type: 'checkpoint', data: { name: 'scenario-started', requirement: 'windows/persistence' } } };
+    const bytes = Buffer.from(JSON.stringify(fork));
+    const asset = { id: api.assets.length + 1, name: 'qa-event-forked.json', uploader: { login: 'tester-a' }, state: 'uploaded', bytes };
+    api.assets.push(asset);
+    manifest.events.push({ name: asset.name, sha256: objectSha256(bytes) });
+    manifestAsset.bytes = Buffer.from(JSON.stringify({ ...JSON.parse(manifestAsset.bytes.toString('utf8')), events: manifest.events }));
+    const progress = await loadCandidateProgress('team/app', 7, 'cand-0001', api);
+    expect(progress.ok && progress.value.reports).toHaveLength(0);
   });
 
   test('partial objects without a manifest are invisible and a malformed evidence digest is rejected', async () => {
@@ -96,8 +119,8 @@ describe('GitHub report synchronization', () => {
     api.assets.push({ id: 1, name: 'qa-event-run-start.json', uploader: { login: 'tester-a' }, state: 'uploaded', bytes: Buffer.from('{}') });
     const progress = await loadCandidateProgress('team/app', 7, 'cand-0001', api);
     expect(progress.ok && progress.value.reports).toEqual([]);
-    const invalid = parseSyncedReportManifest({ schemaVersion: 1, kind: 'release-qa-report', report: {}, events: [], evidence: [{ name: 'evidence/a', sha256: objectSha256('wrong') }] });
-    expect(invalid.ok).toBe(false);
+    const badEvidence = parseSyncedEvidenceRecord({ schemaVersion: 1, kind: 'release-qa-evidence', reportId: 'run', path: 'evidence/a', sha256: '0'.repeat(64), contentBase64: Buffer.from('wrong').toString('base64') });
+    expect(badEvidence.ok).toBe(false);
   });
 
   test('evidence is verified before a report can contribute to progress', async () => {
@@ -108,6 +131,18 @@ describe('GitHub report synchronization', () => {
     const progress = await loadCandidateProgress('team/app', 7, 'cand-0001', api);
     expect(progress.ok && progress.value.reports).toHaveLength(0);
     expect(progress.ok && progress.value.incomplete).toContain('qa-report-run-evidence.json');
+  });
+
+  test('in-progress release assets cannot satisfy a committed manifest', async () => {
+    const api = new MemoryApi();
+    await createRun(api, 'run-uploading', 'tester-a', 'attempt-uploading', 'windows/persistence');
+    const event = api.assets.find((asset) => asset.name.startsWith('qa-event-'))!;
+    event.state = 'starter';
+    const incomplete = await loadCandidateProgress('team/app', 7, 'cand-0001', api);
+    expect(incomplete.ok && incomplete.value.reports).toHaveLength(0);
+    event.state = 'uploaded';
+    const complete = await loadCandidateProgress('team/app', 7, 'cand-0001', api);
+    expect(complete.ok && complete.value.reports).toHaveLength(1);
   });
 
   test('read-only uploaders cannot contribute and claims persist with verified actor identity', async () => {
