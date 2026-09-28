@@ -73,6 +73,27 @@ describe('mergeReleasePr', () => {
 });
 
 describe('publishApprovedCandidate', () => {
+  test('refuses a candidate asset whose downloaded bytes changed', async () => {
+    const selected = candidate({ artifacts: [candidate().artifacts[0]!] });
+    const checked = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
+    if (!checked.ok) throw new Error(checked.reasons.join('; '));
+    let uploads = 0;
+    let publishes = 0;
+    const api: PublishApi = {
+      get: async () => ({ ok: false, reason: 'not-found' }),
+      list: async (path) => ({ ok: true, value: path.endsWith('/releases?per_page=100')
+        ? [{ id: 42, tag_name: 'v1.2.3', name: 'v1.2.3', draft: true, body: renderPublicationNotes(checked.manifest) }] : [] }),
+      post: async () => ({ ok: false, reason: 'network-error' }),
+      patch: async () => { publishes++; return { ok: true, value: null }; },
+      upload: async () => { uploads++; return { ok: false, reason: 'network-error' }; },
+      download: async (_path, destination) => { await writeFile(destination, 'different bytes'); return { ok: true, value: true }; },
+      delete: async () => ({ ok: true, value: null }),
+    };
+    expect(await publishApprovedCandidate(checked.manifest, api)).toMatchObject({ ok: false, error: expect.stringContaining('changed after QA') });
+    expect(uploads).toBe(0);
+    expect(publishes).toBe(0);
+  });
+
   test.each(['create', 'publish'] as const)('recovers an uncertain %s response without duplicate bytes or release', async (fault) => {
     const tested = Buffer.from('tested installer');
     const selected = candidate({ artifacts: [{ ...candidate().artifacts[0]!, sha256: createHash('sha256').update(tested).digest('hex') }] });
