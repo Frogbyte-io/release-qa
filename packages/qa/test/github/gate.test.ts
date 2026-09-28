@@ -240,7 +240,6 @@ function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSe
   const assets = [candidateAsset, ...(options.exceptionAsset ? [exceptionAsset] : [])];
   const release = { id: 50, name: 'QA PR #7', draft: true, assets };
   let pullReads = 0;
-  let permissionReads = 0;
   return {
     currentUser: async () => ({ ok: true, value: 'maintainer' }),
     upload: async () => ({ ok: false, reason: 'unused' }),
@@ -255,8 +254,7 @@ function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSe
       if (path === `repos/owner/repo/contents/qa/project.json?ref=${baseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(project())).toString('base64') } };
       if (path === 'repos/owner/repo/releases/50') return { ok: true, value: release };
       if (path === 'repos/owner/repo/collaborators/maintainer/permission') {
-        permissionReads += 1;
-        return { ok: true, value: { permission: options.revokeExceptionPermission && permissionReads > 0 ? 'read' : 'admin' } };
+        return { ok: true, value: { permission: options.revokeExceptionPermission && pullReads > 1 ? 'read' : 'admin' } };
       }
       return { ok: false, reason: 'not-found' };
     },

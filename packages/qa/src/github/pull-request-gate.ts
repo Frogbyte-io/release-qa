@@ -119,6 +119,13 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
       retryUploads.push({ uploader, resolution: { failedAttemptId: resolution.failedAttemptId, passingAttemptId: resolution.passingAttemptId, acknowledgedBy: uploader } });
     }
 
+    // Establish that the PR and target still match the candidate before trusting
+    // uploader permissions, then repeat the complete snapshot after those lookups.
+    const authorityIdentity = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
+    if (!authorityIdentity.ok || authorityIdentity.value.headSha !== initialHead.sha || authorityIdentity.value.baseSha !== baseSha) {
+      return fail('pull request or target branch changed during evaluation');
+    }
+
     const retryResolutions: RetryResolution[] = [];
     for (const login of authorityActors) {
       const permission = await api.get(`${prefix}/collaborators/${encodeURIComponent(login)}/permission`);
