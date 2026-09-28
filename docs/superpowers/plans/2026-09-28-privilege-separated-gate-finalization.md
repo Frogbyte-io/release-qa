@@ -15,6 +15,7 @@
 - Evaluator job must retain only `contents:read` and `pull-requests:read`.
 - Finalizer must execute only the trusted package revision, never code from the candidate PR.
 - Publish `release-qa` only after final identity checks succeed.
+- When event identity is valid but a result or final identity check fails, publish a failing `release-qa` status; suppress publication only when no commit can be safely identified.
 - Preserve current blocked/success semantics and report the exact missing requirements.
 
 ## Review Focus

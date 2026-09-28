@@ -78,6 +78,7 @@ async function verifySuccessfulResult(repository: string, pullRequest: number, r
   const head = record(pull.head);
   const base = record(pull.base);
   const headRef = head?.ref;
+  if (head?.sha !== result.headSha) return 'PR head changed before finalization';
   if (typeof headRef !== 'string' || base?.ref !== result.baseRef || typeof result.baseRef !== 'string' || typeof result.baseSha !== 'string') return 'PR target changed before finalization';
   const branch = await api.get(`repos/${repository}/branches/${encodeURIComponent(result.baseRef)}`);
   const currentBaseSha = branch.ok ? record(record(branch.value)?.commit)?.sha : undefined;

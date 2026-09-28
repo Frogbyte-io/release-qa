@@ -79,9 +79,10 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   try { await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Release QA gate\n\n${summary}\n`, 'utf8'); }
   catch { console.log('Workflow step summary could not be written; the required status was already published.'); }
 }
+if (state !== 'success') process.exitCode = 1;
 
 const markers = evaluation.ok ? evaluation.value.markers : evaluation.markers;
-if (deferredResultFile === undefined && markers !== undefined) {
+if ((deferredResultFile === undefined || deferredResultFile === '') && markers !== undefined) {
   const prResponse = await api.get(`repos/${repository}/pulls/${pullRequestNumber}`);
   if (prResponse.ok && typeof prResponse.value === 'object' && prResponse.value !== null) {
   const prBody = (prResponse.value as { body?: unknown }).body;
