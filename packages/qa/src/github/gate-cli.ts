@@ -43,19 +43,19 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   catch { console.log('Workflow step summary could not be written; the required status was already published.'); }
 }
 
-if (evaluation.ok) {
+const markers = evaluation.ok ? evaluation.value.markers : evaluation.markers;
+if (markers !== undefined) {
   const prResponse = await api.get(`repos/${repository}/pulls/${pullRequestNumber}`);
   if (prResponse.ok && typeof prResponse.value === 'object' && prResponse.value !== null) {
   const prBody = (prResponse.value as { body?: unknown }).body;
   const body = typeof prBody === 'string' ? prBody : '';
-  const markers = evaluation.value.markers;
   const initialized = ensureManagedSections(body, [markers.releaseNotes, markers.qa]);
   if (initialized.ok) {
     const notes = readManagedSection(initialized.body, markers.releaseNotes);
     const qa = readManagedSection(initialized.body, markers.qa);
     if (notes.ok && qa.ok) {
       const proposed = notes.content.trim() ? { ok: true as const, content: notes.content } : await proposeReleaseNotes(api, repository);
-      const qaContent = renderQaSection(evaluation.value.evaluation);
+      const qaContent = evaluation.ok ? renderQaSection(evaluation.value.evaluation) : `**BLOCKED**: ${evaluation.error}`;
       const update = await updatePullRequestBody(api, repository, pullRequestNumber, [
         { name: markers.releaseNotes, content: proposed.ok ? proposed.content : notes.content, expected: notes.content },
         { name: markers.qa, content: qaContent, expected: qa.content },

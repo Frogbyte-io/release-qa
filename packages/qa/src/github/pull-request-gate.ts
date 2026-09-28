@@ -26,7 +26,7 @@ export interface PullRequestGateEvaluation {
   markers: { releaseNotes: string; qa: string };
 }
 
-export type PullRequestGateResult = { ok: true; value: PullRequestGateEvaluation } | { ok: false; error: string };
+export type PullRequestGateResult = { ok: true; value: PullRequestGateEvaluation } | { ok: false; error: string; markers?: { releaseNotes: string; qa: string } };
 
 const gitSha = /^[0-9a-f]{40}$/;
 interface GatePolicy extends ReleaseIntentPolicy { required: string[]; }
@@ -35,65 +35,68 @@ const fail = (message: string): PullRequestGateResult => ({ ok: false, error: me
 
 /** Evaluates the live PR against trusted target-branch policy and the exact selected candidate. */
 export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string): Promise<PullRequestGateResult> {
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) return fail('invalid repository or pull request number');
+  let trustedMarkers: { releaseNotes: string; qa: string } | undefined;
+  const failure = (message: string): PullRequestGateResult => ({ ok: false, error: message, ...(trustedMarkers === undefined ? {} : { markers: trustedMarkers }) });
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) return failure('invalid repository or pull request number');
   try {
     const prefix = `repos/${repository}`;
     const initialResult = await api.get(`${prefix}/pulls/${pullRequest}`);
-    if (!initialResult.ok) return fail(`cannot read pull request: ${initialResult.reason}`);
+    if (!initialResult.ok) return failure(`cannot read pull request: ${initialResult.reason}`);
     const initial = record(initialResult.value);
     const initialHead = record(initial?.head);
     const initialBase = record(initial?.base);
     const repositoryId = record(initialHead?.repo)?.id;
     if (initial?.state !== 'open' || typeof initialHead?.sha !== 'string' || !gitSha.test(initialHead.sha) || typeof initialHead.ref !== 'string' ||
-        typeof initialBase?.ref !== 'string' || !Number.isSafeInteger(repositoryId) || repositoryId !== record(initialBase.repo)?.id) return fail('pull request is closed, malformed, or from a fork');
-    if (expectedHeadSha !== undefined && initialHead.sha !== expectedHeadSha) return fail('pull request head does not match the event head; evaluate again');
+        typeof initialBase?.ref !== 'string' || !Number.isSafeInteger(repositoryId) || repositoryId !== record(initialBase.repo)?.id) return failure('pull request is closed, malformed, or from a fork');
+    if (expectedHeadSha !== undefined && initialHead.sha !== expectedHeadSha) return failure('pull request head does not match the event head; evaluate again');
 
     const branchResult = await api.get(`${prefix}/branches/${encodeURIComponent(initialBase.ref)}`);
     const baseSha = branchResult.ok ? record(record(branchResult.value)?.commit)?.sha : undefined;
-    if (typeof baseSha !== 'string' || !gitSha.test(baseSha)) return fail('cannot verify the current target branch tip');
+    if (typeof baseSha !== 'string' || !gitSha.test(baseSha)) return failure('cannot verify the current target branch tip');
     const policyResult = await readTrustedJson(api, `${prefix}/contents/qa/policy.json?ref=${baseSha}`);
-    if (!policyResult.ok) return fail(`cannot load trusted QA policy: ${policyResult.error}`);
+    if (!policyResult.ok) return failure(`cannot load trusted QA policy: ${policyResult.error}`);
     const policy = parsePolicy(policyResult.value);
-    if (!policy.ok) return fail(policy.error);
+    if (!policy.ok) return failure(policy.error);
     const projectResult = await readTrustedJson(api, `${prefix}/contents/qa/project.json?ref=${baseSha}`);
-    if (!projectResult.ok) return fail(`cannot load trusted QA project: ${projectResult.error}`);
+    if (!projectResult.ok) return failure(`cannot load trusted QA project: ${projectResult.error}`);
     const project = parseProject(projectResult.value);
-    if (!project.ok) return fail(`invalid trusted QA project: ${project.error.message}`);
+    if (!project.ok) return failure(`invalid trusted QA project: ${project.error.message}`);
+    trustedMarkers = project.value.markers;
     const changed = await api.list(`${prefix}/pulls/${pullRequest}/files?per_page=100`);
-    if (!changed.ok) return fail(`cannot inspect changed files: ${changed.reason}`);
+    if (!changed.ok) return failure(`cannot inspect changed files: ${changed.reason}`);
     const files = changed.value.map((file) => record(file)?.filename);
-    if (files.some((file) => typeof file !== 'string')) return fail('pull request changed-file list is incomplete');
+    if (files.some((file) => typeof file !== 'string')) return failure('pull request changed-file list is incomplete');
     const releaseIntent = hasReleaseIntent({ branch: initialHead.ref, labels: labelNames(initial), files: files as string[] }, policy.value);
 
     // A non-release PR is green only if it remains non-release after a fresh read.
     if (releaseIntent.length === 0) {
       const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
-      if (!currentIntent.ok || currentIntent.value.length > 0) return fail('release intent changed during evaluation; evaluate again');
+      if (!currentIntent.ok || currentIntent.value.length > 0) return failure('release intent changed during evaluation; evaluate again');
       const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
-      if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return fail('pull request or target branch changed during evaluation');
+      if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return failure('pull request or target branch changed during evaluation');
       return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseSha, releaseIntent, evaluation: passedEvaluation(), summary: 'No release intent; normal merge policy applies.', markers: project.value.markers } };
     }
 
     const releasesResult = await api.list(`${prefix}/releases?per_page=100`);
-    if (!releasesResult.ok) return fail(`cannot list candidate releases: ${releasesResult.reason}`);
+    if (!releasesResult.ok) return failure(`cannot list candidate releases: ${releasesResult.reason}`);
     const release = releasesResult.value.map(record).find((item) => item?.draft === true && item.name === `QA PR #${pullRequest}`);
-    if (release === undefined || !Number.isSafeInteger(release.id) || !Array.isArray(release.assets)) return fail('manual check required: no draft candidate release for this pull request');
+    if (release === undefined || !Number.isSafeInteger(release.id) || !Array.isArray(release.assets)) return failure('manual check required: no draft candidate release for this pull request');
     const assets = release.assets.map(record).filter((item) => item !== undefined);
     const candidateAsset = assets.find((asset) => asset.name === 'candidate.json');
-    if (candidateAsset === undefined || !Number.isSafeInteger(candidateAsset.id)) return fail('manual check required: no active candidate selected');
+    if (candidateAsset === undefined || !Number.isSafeInteger(candidateAsset.id)) return failure('manual check required: no active candidate selected');
     const candidateJson = await downloadJson(api, `${prefix}/releases/assets/${candidateAsset.id}`);
-    if (!candidateJson.ok) return fail(`cannot load active candidate: ${candidateJson.error}`);
+    if (!candidateJson.ok) return failure(`cannot load active candidate: ${candidateJson.error}`);
     const parsedCandidate = parseCandidate(candidateJson.value);
-    if (!parsedCandidate.ok) return fail(`invalid active candidate: ${parsedCandidate.error.message}`);
+    if (!parsedCandidate.ok) return failure(`invalid active candidate: ${parsedCandidate.error.message}`);
     const candidate = parsedCandidate.value;
-    if (candidate.pullRequest !== pullRequest || candidate.repositoryId !== record(initialHead.repo)?.id) return fail('active candidate belongs to a different pull request or repository');
-    if (candidate.policyDigest !== policyResult.sha256) return fail('candidate was prepared against a different QA policy; prepare it again');
+    if (candidate.pullRequest !== pullRequest || candidate.repositoryId !== record(initialHead.repo)?.id) return failure('active candidate belongs to a different pull request or repository');
+    if (candidate.policyDigest !== policyResult.sha256) return failure('candidate was prepared against a different QA policy; prepare it again');
 
     const required = policy.value.required.map((key) => project.value.requirements.find((requirement) => requirement.key === key));
-    if (required.some((requirement) => requirement === undefined)) return fail('trusted policy requires a check missing from qa/project.json');
+    if (required.some((requirement) => requirement === undefined)) return failure('trusted policy requires a check missing from qa/project.json');
 
     const progress = await loadCandidateProgress(repository, Number(release.id), candidate.id, api);
-    if (!progress.ok) return fail(`cannot load shared QA reports: ${progress.reason}`);
+    if (!progress.ok) return failure(`cannot load shared QA reports: ${progress.reason}`);
     const exceptions: AuthorizedException[] = [];
     const authorityActors = new Set<string>();
     for (const asset of assets.filter((item) => typeof item.name === 'string' && /^(qa-)?exception-/.test(item.name) && item.state === 'uploaded')) {
@@ -123,7 +126,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     // uploader permissions, then repeat the complete snapshot after those lookups.
     const authorityIdentity = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
     if (!authorityIdentity.ok || authorityIdentity.value.headSha !== initialHead.sha || authorityIdentity.value.baseSha !== baseSha) {
-      return fail('pull request or target branch changed during evaluation');
+      return failure('pull request or target branch changed during evaluation');
     }
 
     const retryResolutions: RetryResolution[] = [];
@@ -140,16 +143,16 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     // Recheck release intent, draft identity, candidate identity, and PR/branch identity after all
     // collaborator permission calls so those calls cannot make the earlier snapshot stale.
     const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
-    if (!currentIntent.ok || currentIntent.value.length === 0) return fail('release intent changed during evaluation; evaluate again');
+    if (!currentIntent.ok || currentIntent.value.length === 0) return failure('release intent changed during evaluation; evaluate again');
     const finalReleaseResult = await api.get(`${prefix}/releases/${release.id}`);
     const finalRelease = record(finalReleaseResult.ok ? finalReleaseResult.value : undefined);
     const finalAssets = Array.isArray(finalRelease?.assets) ? finalRelease.assets.map(record) : [];
     const finalCandidate = finalAssets.find((item) => item?.name === 'candidate.json');
     if (finalRelease?.draft !== true || finalRelease.name !== `QA PR #${pullRequest}` || record(finalCandidate)?.id !== candidateAsset.id) {
-      return fail('active candidate release changed during evaluation; run the gate again');
+      return failure('active candidate release changed during evaluation; run the gate again');
     }
     const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
-    if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return fail('pull request or target branch changed during evaluation');
+    if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return failure('pull request or target branch changed during evaluation');
     const evaluation = evaluate({
       candidate,
       currentHeadSha: initialHead.sha,
@@ -163,7 +166,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     const summary = renderQaSection(evaluation);
     return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseSha, candidateId: candidate.id, releaseIntent, evaluation, summary, markers: project.value.markers } };
   } catch {
-    return fail('GitHub state could not be safely evaluated');
+    return failure('GitHub state could not be safely evaluated');
   }
 }
 

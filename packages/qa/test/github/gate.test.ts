@@ -191,7 +191,7 @@ describe('live pull request evaluation', () => {
 
   test('rejects a delayed green result when the PR head changes before revalidation', async () => {
     const api = makeGateApi({ changeHeadOnSecondRead: true });
-    await expect(evaluatePullRequest('owner/repo', 7, api)).resolves.toEqual({ ok: false, error: 'pull request or target branch changed during evaluation' });
+    await expect(evaluatePullRequest('owner/repo', 7, api)).resolves.toEqual({ ok: false, error: 'pull request or target branch changed during evaluation', markers: { releaseNotes: 'release-notes', qa: 'qa' } });
   });
 
   test('rejects an API response that still shows the pre-push head from the workflow event', async () => {
@@ -200,15 +200,15 @@ describe('live pull request evaluation', () => {
 
   test('blocks a candidate prepared against a stale policy digest', async () => {
     const api = makeGateApi({ wrongPolicyDigest: true });
-    await expect(evaluatePullRequest('owner/repo', 7, api)).resolves.toEqual({ ok: false, error: 'candidate was prepared against a different QA policy; prepare it again' });
+    await expect(evaluatePullRequest('owner/repo', 7, api)).resolves.toEqual({ ok: false, error: 'candidate was prepared against a different QA policy; prepare it again', markers: { releaseNotes: 'release-notes', qa: 'qa' } });
   });
 
   test('rechecks target ref and repository identities before a green decision', async () => {
-    await expect(evaluatePullRequest('owner/repo', 7, makeGateApi({ changeBaseOnSecondRead: true }))).resolves.toEqual({ ok: false, error: 'pull request or target branch changed during evaluation' });
+    await expect(evaluatePullRequest('owner/repo', 7, makeGateApi({ changeBaseOnSecondRead: true }))).resolves.toEqual({ ok: false, error: 'pull request or target branch changed during evaluation', markers: { releaseNotes: 'release-notes', qa: 'qa' } });
   });
 
   test('does not pass a non-release PR when a release label is added during evaluation', async () => {
-    await expect(evaluatePullRequest('owner/repo', 7, makeGateApi({ nonReleaseBranch: true, addReleaseLabelDuringRecheck: true }))).resolves.toEqual({ ok: false, error: 'release intent changed during evaluation; evaluate again' });
+    await expect(evaluatePullRequest('owner/repo', 7, makeGateApi({ nonReleaseBranch: true, addReleaseLabelDuringRecheck: true }))).resolves.toEqual({ ok: false, error: 'release intent changed during evaluation; evaluate again', markers: { releaseNotes: 'release-notes', qa: 'qa' } });
   });
 
   test('shows an authenticated maintainer exception prominently', async () => {
