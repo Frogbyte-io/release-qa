@@ -20,7 +20,7 @@ export class GhTransport implements GitHubApi {
     this.prefixArgs = prefixArgs;
   }
 
-  private run(args: readonly string[], input?: string): Promise<{ ok: true; output: string } | { ok: false; reason: AccessProblem }> {
+  private run(args: readonly string[], input?: string | Buffer): Promise<{ ok: true; output: string } | { ok: false; reason: AccessProblem }> {
     return new Promise((resolve) => {
       const child = execFile(this.executable, [...this.prefixArgs, ...args], { windowsHide: true, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error !== null) return resolve({ ok: false, reason: classifyGhError(stderr) });
@@ -52,6 +52,51 @@ export class GhTransport implements GitHubApi {
     try { return { ok: true, value: response.output.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as unknown) }; }
     catch { return { ok: false, reason: 'network-error' }; }
   }
+
+  async currentUser(): Promise<ApiResult<string>> {
+    const result = await this.get('user');
+    const login = result.ok && typeof result.value === 'object' && result.value !== null ? (result.value as { login?: unknown }).login : undefined;
+    return typeof login === 'string' ? { ok: true, value: login } : result.ok ? { ok: false, reason: 'logged-out' } : result;
+  }
+
+  /** Uploads one immutable release asset using the authenticated gh session. */
+  async upload(repository: string, releaseId: number, name: string, content: Buffer): Promise<ApiResult<{ id: number; name: string; state: string }>> {
+    try {
+      if (!Number.isSafeInteger(releaseId) || releaseId <= 0 || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/.test(name)) return { ok: false, reason: 'not-found' };
+      const token = await this.authToken();
+      if (!token.ok) return token;
+      const response = await fetch(`https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token.value}`, accept: 'application/vnd.github+json', 'content-type': 'application/octet-stream' },
+        body: content,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) return { ok: false, reason: classifyGhError(`HTTP ${response.status} ${response.statusText}`) };
+      const value = await response.json() as { id?: unknown; name?: unknown; state?: unknown };
+      if (!Number.isSafeInteger(value.id) || value.name !== name || typeof value.state !== 'string') return { ok: false, reason: 'network-error' };
+      return { ok: true, value: { id: value.id as number, name, state: value.state } };
+    } catch { return { ok: false, reason: 'network-error' }; }
+  }
+
+  /** Reads the active gh token into process memory only; callers never receive or persist it. */
+  private authToken(): Promise<ApiResult<string>> {
+    return new Promise((resolve) => {
+      execFile(this.executable, [...this.prefixArgs, 'auth', 'token', '--hostname', 'github.com'], { windowsHide: true, timeout: 10_000, maxBuffer: 16 * 1024 }, (error, stdout, stderr) => {
+        if (error !== null) return resolve({ ok: false, reason: classifyGhError(stderr) });
+        const token = stdout.trim();
+        resolve(token ? { ok: true, value: token } : { ok: false, reason: 'logged-out' });
+      });
+    });
+  }
+
+  async dispatchReconciliation(repository: string, releaseId: number): Promise<ApiResult<true>> {
+    const repo = await this.get(`repos/${repository}`);
+    const branch = repo.ok && typeof repo.value === 'object' && repo.value !== null ? (repo.value as { default_branch?: unknown }).default_branch : undefined;
+    if (typeof branch !== 'string' || !branch) return { ok: false, reason: 'not-found' };
+    const response = await this.run(['api', '--method', 'POST', `repos/${repository}/actions/workflows/qa-reconcile.yml/dispatches`, '--input', '-', '--silent'], JSON.stringify({ ref: branch, inputs: { release_id: String(releaseId) } }));
+    return response.ok ? { ok: true, value: true } : response;
+  }
+
 
   private async write(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<ApiResult<unknown>> {
     try {

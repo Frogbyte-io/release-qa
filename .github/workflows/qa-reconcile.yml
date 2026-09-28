@@ -1,0 +1,35 @@
+name: qa-reconcile
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Draft release whose QA assets should be reconciled
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-reconcile-${{ github.repository }}-${{ inputs.release_id }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Rebuild shared progress from every release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node --experimental-strip-types packages/qa/src/github/reconcile-cli.ts
