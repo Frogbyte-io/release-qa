@@ -25,7 +25,7 @@ export interface Candidate {
 const SPEC: FieldSpec = {
   required: ['id', 'repositoryId', 'pullRequest', 'sourceSha', 'baseSha', 'sourceTreeSha', 'testRevision', 'policyDigest', 'build', 'artifacts'],
 };
-const BUILD_SPEC: FieldSpec = { required: ['workflowPath', 'runId', 'attempt'] };
+const BUILD_SPEC: FieldSpec = { required: ['workflowPath', 'runId', 'attempt'], optional: ['workflowHeadSha'] };
 const ARTIFACT_SPEC: FieldSpec = { required: ['profile', 'name', 'sha256', 'assetId', 'actionsArtifactId'] };
 
 export function parseCandidate(input: unknown): ParseResult<Candidate> {

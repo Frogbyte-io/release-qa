@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseCandidate } from '../../src/model/candidate.ts';
 import { discoverProjects, type RepositoryApi } from '../../src/github/discover.ts';
 import { GhTransport, inspectGitHubAccess, type GitHubApi } from '../../src/github/transport.ts';
 import { project } from '../fixtures/records.ts';
@@ -252,11 +253,13 @@ describe('candidate asset identity', () => {
 
   test('distinguishes a trusted workflow revision from the packaged PR source', () => {
     const selected = candidate({ build: { ...candidate().build, workflowHeadSha: SHA1.base } });
-    const trustedRun = { ...build, head_sha: SHA1.base };
+    const trustedRun = { ...build, head_sha: SHA1.base, event: 'workflow_dispatch', display_title: `qa-prepare PR #${selected.pullRequest} ${selected.sourceSha}` };
     const trustedArtifacts = actions.map((entry) => ({ ...entry, workflow_run: { ...entry.workflow_run, head_sha: SHA1.base } }));
+    expect(parseCandidate(selected).ok).toBe(true);
     expect(verifyCandidateAssets(selected, trustedRun, releases, trustedArtifacts).ok).toBe(true);
     expect(verifyCandidateAssets(selected, build, releases, trustedArtifacts).ok).toBe(false);
     expect(verifyCandidateAssets(selected, trustedRun, releases, actions).ok).toBe(false);
+    expect(verifyCandidateAssets({ ...selected, sourceSha: SHA1.tree }, trustedRun, releases, trustedArtifacts).ok).toBe(false);
   });
 });
 

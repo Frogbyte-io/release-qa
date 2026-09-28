@@ -11,6 +11,8 @@ export interface BuildRun {
   run_attempt: number;
   path: string;
   head_sha: string;
+  event?: string;
+  display_title?: string;
   conclusion: string | null;
   repository: { id: number };
 }
@@ -202,6 +204,10 @@ export function verifyCandidateAssets(candidate: Candidate, run: BuildRun, relea
       run.path !== candidate.build.workflowPath ||
       run.head_sha !== (candidate.build.workflowHeadSha ?? candidate.sourceSha) || run.repository.id !== candidate.repositoryId || run.conclusion !== 'success') {
     issues.push('recorded build run does not match a successful candidate preparation');
+  }
+  if (candidate.build.workflowHeadSha !== undefined &&
+      (run.event !== 'workflow_dispatch' || run.display_title !== `qa-prepare PR #${candidate.pullRequest} ${candidate.sourceSha}`)) {
+    issues.push('recorded build run is not bound to the candidate PR and source SHA');
   }
   for (const artifact of candidate.artifacts) {
     const release = releases.find((item) => item.id === artifact.assetId);
