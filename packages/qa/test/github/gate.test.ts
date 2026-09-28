@@ -214,6 +214,22 @@ describe('live pull request evaluation', () => {
     expect(result.ok && result.value.candidateId).toBe('cand-0001');
   });
 
+  test('loads candidate bytes from the broker snapshot when draft asset reads are unavailable', async () => {
+    const api = makeGateApi();
+    api.download = async () => ({ ok: false, reason: 'missing-scope' });
+    const policyBytes = Buffer.from(JSON.stringify({ releaseBranchPrefix: 'release/', releaseLabel: 'release', releaseFiles: ['VERSION'], required: ['windows/persistence', 'windows/device-feel'] }));
+    const manifest = candidate({ repositoryId: 1, pullRequest: 7, sourceSha: SHA1.source, baseSha: SHA1.base, policyDigest: createHashFor(policyBytes) });
+    const snapshot = {
+      id: 50,
+      name: 'QA PR #7',
+      draft: true,
+      assets: [{ id: 70, name: 'candidate.json', state: 'uploaded', uploader: { login: 'maintainer' } }],
+      brokeredAssets: { '70': Buffer.from(JSON.stringify(manifest)).toString('base64') },
+    };
+    const result = await evaluatePullRequest('owner/repo', 7, api, SHA1.source, undefined, snapshot);
+    expect(result.ok && result.value.candidateId).toBe('cand-0001');
+  });
+
   test('rejects a brokered release id that does not name this pull request draft', async () => {
     const api = makeGateApi();
     const get = api.get.bind(api);

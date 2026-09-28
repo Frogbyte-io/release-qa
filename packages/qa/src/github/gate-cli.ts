@@ -18,8 +18,12 @@ const pullRequestNumber = pullRequest as number;
 const releaseIdInput = process.env.RELEASE_QA_RELEASE_ID;
 const candidateReleaseId = releaseIdInput === undefined || releaseIdInput === '' ? undefined : Number(releaseIdInput);
 const releaseSnapshotInput = process.env.RELEASE_QA_RELEASE_SNAPSHOT_B64;
+const releaseSnapshotPath = process.env.RELEASE_QA_RELEASE_SNAPSHOT_FILE;
 let candidateReleaseSnapshot: unknown;
-if (releaseSnapshotInput !== undefined && releaseSnapshotInput !== '') {
+if (releaseSnapshotPath !== undefined && releaseSnapshotPath !== '') {
+  try { candidateReleaseSnapshot = JSON.parse(await readFile(releaseSnapshotPath, 'utf8')) as unknown; }
+  catch { candidateReleaseSnapshot = null; }
+} else if (releaseSnapshotInput !== undefined && releaseSnapshotInput !== '') {
   try { candidateReleaseSnapshot = JSON.parse(Buffer.from(releaseSnapshotInput, 'base64').toString('utf8')) as unknown; }
   catch { candidateReleaseSnapshot = null; }
 }

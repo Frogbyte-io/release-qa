@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -93,7 +93,8 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     const assets = release.assets.map(record).filter((item) => item !== undefined);
     const candidateAsset = assets.find((asset) => asset.name === 'candidate.json');
     if (candidateAsset === undefined || !Number.isSafeInteger(candidateAsset.id)) return failure('manual check required: no active candidate selected');
-    const candidateJson = await downloadJson(api, `${prefix}/releases/assets/${candidateAsset.id}`);
+    const releaseApi = withBrokeredAssetDownloads(api, release);
+    const candidateJson = await downloadJson(releaseApi, `${prefix}/releases/assets/${candidateAsset.id}`);
     if (!candidateJson.ok) return failure(`cannot load active candidate: ${candidateJson.error}`);
     const parsedCandidate = parseCandidate(candidateJson.value);
     if (!parsedCandidate.ok) return failure(`invalid active candidate: ${parsedCandidate.error.message}`);
@@ -104,14 +105,14 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     const required = policy.value.required.map((key) => project.value.requirements.find((requirement) => requirement.key === key));
     if (required.some((requirement) => requirement === undefined)) return failure('trusted policy requires a check missing from qa/project.json');
 
-    const progress = await loadCandidateProgress(repository, Number(release.id), candidate.id, api, release.assets as unknown[]);
+    const progress = await loadCandidateProgress(repository, Number(release.id), candidate.id, releaseApi, release.assets as unknown[]);
     if (!progress.ok) return failure(`cannot load shared QA reports: ${progress.reason}`);
     const exceptions: AuthorizedException[] = [];
     const authorityActors = new Set<string>();
     for (const asset of assets.filter((item) => typeof item.name === 'string' && /^(qa-)?exception-/.test(item.name) && item.state === 'uploaded')) {
       const uploader = record(asset.uploader)?.login;
       if (typeof uploader !== 'string' || !Number.isSafeInteger(asset.id)) continue;
-      const raw = await downloadJson(api, `${prefix}/releases/assets/${asset.id}`);
+      const raw = await downloadJson(releaseApi, `${prefix}/releases/assets/${asset.id}`);
       if (!raw.ok) continue;
       const parsed = parseException(raw.value, { candidate, requirements: project.value.requirements.map((item) => item.key) });
       if (!parsed.ok) continue;
@@ -122,7 +123,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     for (const asset of assets.filter((item) => typeof item.name === 'string' && item.name.startsWith('qa-retry-resolution-') && item.state === 'uploaded')) {
       const uploader = record(asset.uploader)?.login;
       if (typeof uploader !== 'string' || !Number.isSafeInteger(asset.id)) continue;
-      const raw = await downloadJson(api, `${prefix}/releases/assets/${asset.id}`);
+      const raw = await downloadJson(releaseApi, `${prefix}/releases/assets/${asset.id}`);
       if (!raw.ok) continue;
       const resolution = record(raw.value);
       if (resolution?.candidateId !== candidate.id || resolution.acknowledgedBy !== uploader ||
@@ -224,6 +225,26 @@ async function downloadJson(api: GateApi, path: string): Promise<{ ok: true; val
     return { ok: true, value: JSON.parse((await readFile(destination, 'utf8'))) as unknown };
   } catch { return { ok: false, error: 'asset record is malformed or unavailable' }; }
   finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+function withBrokeredAssetDownloads(api: GateApi, release: Record<string, unknown>): GateApi {
+  const brokeredAssets = record(release.brokeredAssets);
+  return {
+    get: (path) => api.get(path),
+    list: (path) => api.list(path),
+    currentUser: () => api.currentUser(),
+    upload: (repository, releaseId, name, content) => api.upload(repository, releaseId, name, content),
+    dispatchReconciliation: (repository, releaseId) => api.dispatchReconciliation(repository, releaseId),
+    download: async (path, destination) => {
+      const assetId = /\/releases\/assets\/(\d+)$/.exec(path)?.[1];
+      const bytes = assetId === undefined ? undefined : brokeredAssets?.[assetId];
+      if (typeof bytes !== 'string') return api.download(path, destination);
+      try {
+        await writeFile(destination, Buffer.from(bytes, 'base64'));
+        return { ok: true, value: true };
+      } catch { return { ok: false, reason: 'network-error' }; }
+    },
+  };
 }
 
 function parsePolicy(value: unknown): { ok: true; value: GatePolicy } | { ok: false; error: string } {
