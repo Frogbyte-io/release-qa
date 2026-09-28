@@ -137,8 +137,10 @@ export async function syncRun(input: SyncRunInput): Promise<SyncRunResult> {
 }
 
 /** Reconstructs progress from all committed manifests. Incomplete uploads remain diagnostic-only. */
-export async function loadCandidateProgress(repository: string, releaseId: number, candidateId: string, api: SyncApi): Promise<SyncApiResult<CandidateProgress>> {
-  const assetsResult = await api.list(apiPath(repository, releaseId));
+export async function loadCandidateProgress(repository: string, releaseId: number, candidateId: string, api: SyncApi, releaseAssets?: unknown[]): Promise<SyncApiResult<CandidateProgress>> {
+  const assetsResult = releaseAssets === undefined
+    ? await api.list(apiPath(repository, releaseId))
+    : { ok: true as const, value: releaseAssets };
   if (!assetsResult.ok) return assetsResult;
   const assets = assetsResult.value.map(asAsset).filter((asset): asset is SyncAsset => asset !== undefined);
   const byName = new Map(assets.map((asset) => [asset.name, asset]));
