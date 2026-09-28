@@ -102,6 +102,8 @@ describe('release note proposals', () => {
     const api = {
       get: async (path: string) => path.endsWith('/releases/latest')
         ? { ok: true as const, value: { tag_name: 'v2.0.0', published_at: '2026-09-01T00:00:00Z' } }
+        : path.endsWith('/owner/repo')
+          ? { ok: true as const, value: { default_branch: 'main' } }
         : { ok: false as const, reason: 'not-found' },
       list: async () => ({ ok: true as const, value: [
         { number: 12, title: 'Add orchard mode', body: 'Closes #34', merged_at: '2026-09-10T12:00:00Z', labels: [{ name: 'enhancement' }] },

@@ -65,7 +65,11 @@ export async function proposeReleaseNotes(api: ReleaseNotesApi, repository: stri
   if (typeof tag !== 'string' || !tag || typeof publishedAt !== 'string' || Number.isNaN(Date.parse(publishedAt))) {
     return { ok: false, error: 'latest release has invalid tag or publication date' };
   }
-  const pulls = await api.list(`repos/${repository}/pulls?state=closed&per_page=100&sort=updated&direction=desc`);
+  const repo = await api.get(`repos/${repository}`);
+  if (!repo.ok) return { ok: false, error: `cannot read repository default branch: ${repo.reason}` };
+  const defaultBranch = objectOf(repo.value)?.default_branch;
+  if (typeof defaultBranch !== 'string' || !defaultBranch) return { ok: false, error: 'repository has no valid default branch' };
+  const pulls = await api.list(`repos/${repository}/pulls?state=closed&base=${encodeURIComponent(defaultBranch)}&per_page=100&sort=updated&direction=desc`);
   if (!pulls.ok) return { ok: false, error: `cannot list merged pull requests: ${pulls.reason}` };
   const since = Date.parse(publishedAt);
   const entries = pulls.value.flatMap((value) => {
