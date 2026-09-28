@@ -199,6 +199,21 @@ describe('live pull request evaluation', () => {
     expect(result.ok && result.value.candidateId).toBe('cand-0001');
   });
 
+  test('evaluates with brokered draft metadata without listing releases or assets', async () => {
+    const api = makeGateApi();
+    api.list = async (path) => path.includes('/releases')
+      ? { ok: false, reason: 'missing-scope' }
+      : { ok: true, value: [{ filename: 'VERSION' }] };
+    const snapshot = {
+      id: 50,
+      name: 'QA PR #7',
+      draft: true,
+      assets: [{ id: 70, name: 'candidate.json', state: 'uploaded', uploader: { login: 'maintainer' } }],
+    };
+    const result = await evaluatePullRequest('owner/repo', 7, api, SHA1.source, undefined, snapshot);
+    expect(result.ok && result.value.candidateId).toBe('cand-0001');
+  });
+
   test('rejects a brokered release id that does not name this pull request draft', async () => {
     const api = makeGateApi();
     const get = api.get.bind(api);
