@@ -98,7 +98,7 @@ export class GhTransport implements GitHubApi {
   }
 
 
-  private async write(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<ApiResult<unknown>> {
+  private async write(method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<ApiResult<unknown>> {
     try {
       const args = ['api', '--method', method];
       let input: string | undefined;
@@ -117,6 +117,7 @@ export class GhTransport implements GitHubApi {
 
   post(path: string, body: unknown): Promise<ApiResult<unknown>> { return this.write('POST', path, body); }
   patch(path: string, body: unknown): Promise<ApiResult<unknown>> { return this.write('PATCH', path, body); }
+  put(path: string, body: unknown): Promise<ApiResult<unknown>> { return this.write('PUT', path, body); }
   delete(path: string): Promise<ApiResult<unknown>> { return this.write('DELETE', path); }
 
   /** Streams an exact release asset to a new file without buffering installer bytes in memory. */
