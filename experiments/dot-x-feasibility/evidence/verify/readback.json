@@ -1,0 +1,146 @@
+[
+  {
+    "at": "2026-09-28T10:52:13.063Z",
+    "sessions": [
+      {
+        "volume": 0.44,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:16.745Z",
+    "sessions": [
+      {
+        "volume": 0.28,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:16.905Z",
+    "sessions": [
+      {
+        "volume": 0.07,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:17.068Z",
+    "sessions": [
+      {
+        "volume": 0,
+        "muted": true
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:20.577Z",
+    "sessions": [
+      {
+        "volume": 0.35,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:20.736Z",
+    "sessions": [
+      {
+        "volume": 0.7,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:20.910Z",
+    "sessions": [
+      {
+        "volume": 0.95,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:21.067Z",
+    "sessions": [
+      {
+        "volume": 1,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:25.101Z",
+    "sessions": [
+      {
+        "volume": 0.92,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:25.256Z",
+    "sessions": [
+      {
+        "volume": 0.78,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:25.415Z",
+    "sessions": [
+      {
+        "volume": 0.59,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:25.574Z",
+    "sessions": [
+      {
+        "volume": 0.44,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:25.797Z",
+    "sessions": [
+      {
+        "volume": 0.32,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:25.962Z",
+    "sessions": [
+      {
+        "volume": 0.26,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:26.116Z",
+    "sessions": [
+      {
+        "volume": 0.24,
+        "muted": false
+      }
+    ]
+  },
+  {
+    "at": "2026-09-28T10:52:26.423Z",
+    "sessions": [
+      {
+        "volume": 0.23,
+        "muted": false
+      }
+    ]
+  }
+]
