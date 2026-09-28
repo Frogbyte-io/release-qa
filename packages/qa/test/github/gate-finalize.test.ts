@@ -8,10 +8,10 @@ const POLICY = Buffer.from(JSON.stringify({ releaseBranchPrefix: 'release/', rel
 describe('deferred gate finalization', () => {
   test('publishes success only after the candidate, PR head, and base still match', async () => {
     const api = makeApi();
-    const result = await finalizeGateResult('owner/repo', 7, SHA, passingResult(), api);
+    const result = await finalizeGateResult('owner/repo', 7, SHA, passingResult(), api, 'https://example.test/run');
 
     expect(result).toMatchObject({ ok: true, state: 'success' });
-    expect(api.statuses).toEqual([{ state: 'success', context: 'release-qa', description: 'QA passed for PR #7' }]);
+    expect(api.statuses).toEqual([{ path: `repos/owner/repo/statuses/${SHA}`, body: { state: 'success', context: 'release-qa', description: 'QA passed for PR #7', target_url: 'https://example.test/run' } }]);
   });
 
   test('publishes failure when the active candidate changed after evaluation', async () => {
@@ -19,7 +19,15 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, passingResult(), api);
 
     expect(result).toMatchObject({ ok: true, state: 'failure' });
-    expect(api.statuses[0]?.description).toContain('candidate changed');
+    expect(api.statuses[0]?.body.description).toContain('candidate changed');
+  });
+
+  test('publishes failure when the active draft release changed after evaluation', async () => {
+    const api = makeApi({ candidateReleaseId: 51 });
+    const result = await finalizeGateResult('owner/repo', 7, SHA, passingResult(), api);
+
+    expect(result).toMatchObject({ ok: true, state: 'failure' });
+    expect(api.statuses[0]?.body.description).toContain('candidate changed');
   });
 
   test('preserves an evaluator failure without turning it green', async () => {
@@ -27,7 +35,7 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, { ...passingResult(), state: 'failure', description: 'QA blocked: missing evidence', summary: 'missing evidence' }, api);
 
     expect(result).toMatchObject({ ok: true, state: 'failure', summary: 'missing evidence' });
-    expect(api.statuses[0]?.state).toBe('failure');
+    expect(api.statuses[0]?.body.state).toBe('failure');
   });
 
   test('fails closed when the result artifact is malformed', async () => {
@@ -35,7 +43,7 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, { schemaVersion: 2 }, api);
 
     expect(result).toMatchObject({ ok: true, state: 'failure' });
-    expect(api.statuses[0]?.description).toContain('missing or invalid');
+    expect(api.statuses[0]?.body.description).toContain('missing or invalid');
   });
 
   test('fails closed when the result artifact is missing', async () => {
@@ -43,7 +51,7 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, null, api);
 
     expect(result).toMatchObject({ ok: true, state: 'failure' });
-    expect(api.statuses[0]?.description).toContain('missing or invalid');
+    expect(api.statuses[0]?.body.description).toContain('missing or invalid');
   });
 
   test('publishes failure when the PR head changed after evaluation', async () => {
@@ -51,7 +59,7 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, passingResult(), api);
 
     expect(result).toMatchObject({ ok: true, state: 'failure' });
-    expect(api.statuses[0]?.description).toContain('PR head changed');
+    expect(api.statuses[0]?.body.description).toContain('PR head changed');
   });
 
   test('publishes failure when the target branch changed after evaluation', async () => {
@@ -59,7 +67,7 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, passingResult(), api);
 
     expect(result).toMatchObject({ ok: true, state: 'failure' });
-    expect(api.statuses[0]?.description).toContain('target branch changed');
+    expect(api.statuses[0]?.body.description).toContain('target branch changed');
   });
 
   test('keeps an ordinary PR green while release intent remains absent', async () => {
@@ -68,7 +76,7 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, { ...nonReleaseResult, releaseIntent: [] }, api);
 
     expect(result).toMatchObject({ ok: true, state: 'success' });
-    expect(api.statuses[0]?.state).toBe('success');
+    expect(api.statuses[0]?.body.state).toBe('success');
   });
 
   test('keeps an ordinary PR green only when it remains without release intent', async () => {
@@ -77,7 +85,15 @@ describe('deferred gate finalization', () => {
     const result = await finalizeGateResult('owner/repo', 7, SHA, { ...nonReleaseResult, releaseIntent: [] }, api);
 
     expect(result).toMatchObject({ ok: true, state: 'failure' });
-    expect(api.statuses[0]?.description).toContain('release intent changed');
+    expect(api.statuses[0]?.body.description).toContain('release intent changed');
+  });
+
+  test('publishes failure when the trusted release policy is malformed JSON null', async () => {
+    const api = makeApi({ policyContent: 'null' });
+    const result = await finalizeGateResult('owner/repo', 7, SHA, passingResult(), api);
+
+    expect(result).toMatchObject({ ok: true, state: 'failure' });
+    expect(api.statuses[0]?.body.description).toContain('trusted release policy is invalid');
   });
 });
 
@@ -99,18 +115,18 @@ function passingResult(): DeferredGateResult {
   };
 }
 
-function makeApi(options: { candidateAssetId?: number; releaseLabel?: boolean; branch?: string; headSha?: string; baseSha?: string } = {}): GateFinalizeApi & { statuses: Array<{ state: string; context: string; description: string }> } {
-  const statuses: Array<{ state: string; context: string; description: string }> = [];
+function makeApi(options: { candidateAssetId?: number; candidateReleaseId?: number; releaseLabel?: boolean; branch?: string; headSha?: string; baseSha?: string; policyContent?: string } = {}): GateFinalizeApi & { statuses: Array<{ path: string; body: { state: string; context: string; description: string; target_url?: string } }> } {
+  const statuses: Array<{ path: string; body: { state: string; context: string; description: string; target_url?: string } }> = [];
   return {
     statuses,
     get: async (path) => {
       if (path === 'repos/owner/repo/pulls/7') return { ok: true, value: { state: 'open', head: { sha: options.headSha ?? SHA, ref: options.branch ?? 'release/1', repo: { id: 1 } }, base: { ref: 'main', repo: { id: 1 } }, labels: options.releaseLabel ? [{ name: 'release' }] : [] } };
       if (path === 'repos/owner/repo/branches/main') return { ok: true, value: { commit: { sha: options.baseSha ?? BASE } } };
-      if (path === `repos/owner/repo/contents/qa/policy.json?ref=${BASE}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: POLICY } };
-      if (path === 'repos/owner/repo/releases/50') return { ok: true, value: { id: 50, draft: true, name: 'QA PR #7', assets: [{ id: options.candidateAssetId ?? 70, name: 'candidate.json' }] } };
+      if (path === `repos/owner/repo/contents/qa/policy.json?ref=${BASE}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: Buffer.from(options.policyContent ?? Buffer.from(POLICY, 'base64').toString('utf8')).toString('base64') } };
+      if (path === 'repos/owner/repo/releases/50') return { ok: true, value: { id: options.candidateReleaseId ?? 50, draft: true, name: 'QA PR #7', assets: [{ id: options.candidateAssetId ?? 70, name: 'candidate.json' }] } };
       return { ok: false, reason: 'not-found' };
     },
     list: async (path) => path === 'repos/owner/repo/pulls/7/files?per_page=100' ? { ok: true, value: [] } : { ok: false, reason: 'not-found' },
-    post: async (_path, body) => { statuses.push(body as typeof statuses[number]); return { ok: true, value: {} }; },
+    post: async (path, body) => { statuses.push({ path, body: body as typeof statuses[number]['body'] }); return { ok: true, value: {} }; },
   };
 }

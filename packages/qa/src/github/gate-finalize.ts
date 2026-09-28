@@ -87,17 +87,20 @@ async function verifySuccessfulResult(repository: string, pullRequest: number, r
   const policyResult = await api.get(`repos/${repository}/contents/qa/policy.json?ref=${result.baseSha}`);
   const policyFile = record(policyResult.ok ? policyResult.value : undefined);
   if (policyFile?.encoding !== 'base64' || typeof policyFile.content !== 'string') return 'trusted release policy could not be rechecked';
-  let policy: { releaseBranchPrefix: string; releaseLabel: string; releaseFiles: string[] };
-  try { policy = JSON.parse(Buffer.from(policyFile.content, 'base64').toString('utf8')) as typeof policy; }
+  let policy: JsonRecord | undefined;
+  try { policy = record(JSON.parse(Buffer.from(policyFile.content, 'base64').toString('utf8')) as unknown); }
   catch { return 'trusted release policy could not be rechecked'; }
-  if (typeof policy.releaseBranchPrefix !== 'string' || typeof policy.releaseLabel !== 'string' || !Array.isArray(policy.releaseFiles) || policy.releaseFiles.some((item) => typeof item !== 'string')) return 'trusted release policy is invalid';
+  const releaseBranchPrefix = policy?.releaseBranchPrefix;
+  const releaseLabel = policy?.releaseLabel;
+  const releaseFiles = policy?.releaseFiles;
+  if (typeof releaseBranchPrefix !== 'string' || typeof releaseLabel !== 'string' || !Array.isArray(releaseFiles) || releaseFiles.some((item) => typeof item !== 'string')) return 'trusted release policy is invalid';
 
   const filesResult = await api.list(`repos/${repository}/pulls/${pullRequest}/files?per_page=100`);
   if (!filesResult.ok) return 'PR files could not be rechecked';
   const files = filesResult.value.map((item) => record(item)?.filename);
   if (files.some((item) => typeof item !== 'string')) return 'PR file list is incomplete';
   const labels = Array.isArray(pull.labels) ? pull.labels.map((item) => record(item)?.name).filter((item): item is string => typeof item === 'string') : [];
-  const currentIntent = hasReleaseIntent({ branch: headRef, labels, files: files as string[] }, policy);
+  const currentIntent = hasReleaseIntent({ branch: headRef, labels, files: files as string[] }, { releaseBranchPrefix, releaseLabel, releaseFiles: releaseFiles as string[] });
   if ((result.releaseIntent?.length ?? 0) > 0 && currentIntent.length === 0) return 'release intent changed before finalization';
   if ((result.releaseIntent?.length ?? 0) === 0 && currentIntent.length > 0) return 'release intent changed before finalization';
 
@@ -107,7 +110,7 @@ async function verifySuccessfulResult(repository: string, pullRequest: number, r
     const release = record(releaseResult.ok ? releaseResult.value : undefined);
     const assets = Array.isArray(release?.assets) ? release.assets.map(record) : [];
     const candidate = assets.find((asset) => asset?.name === 'candidate.json');
-    if (!releaseResult.ok || release?.draft !== true || release.name !== `QA PR #${pullRequest}` || record(candidate)?.id !== result.candidateAssetId) return 'active candidate changed before finalization';
+    if (!releaseResult.ok || release?.id !== result.candidateReleaseId || release?.draft !== true || release?.name !== `QA PR #${pullRequest}` || record(candidate)?.id !== result.candidateAssetId) return 'active candidate changed before finalization';
   } else if (currentIntent.length > 0) {
     return 'release candidate was not brokered';
   }

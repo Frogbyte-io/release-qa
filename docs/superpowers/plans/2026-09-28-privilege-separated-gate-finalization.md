@@ -57,7 +57,7 @@
 - Consume the deferred result, event PR/head, current PR/base tip, trusted release policy, and current draft release metadata.
 - Publish `release-qa` with failure on evaluation failure, malformed output, changed PR/base, changed release intent, changed release ID, or changed `candidate.json` asset ID.
 
-- [ ] Add tests for an unchanged passing result, an evaluator-blocked result, a changed candidate, and a missing result file.
+- [ ] Add tests for an unchanged passing result and exact status path, an evaluator-blocked result, changed PR head/base/release intent/release ID/candidate asset, missing or malformed result, and malformed policy JSON.
 - [ ] Run the finalizer tests and verify the newly specified failure cases fail first.
 - [ ] Implement fail-closed finalization and required-status publication.
 - [ ] Run finalizer tests and typecheck; verify they pass.
