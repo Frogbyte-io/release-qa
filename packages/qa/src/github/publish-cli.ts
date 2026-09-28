@@ -20,9 +20,9 @@ async function main(): Promise<void> {
   let expectedHead: string | undefined;
   if (eventName === 'pull_request_target') {
     const pull = record(event.pull_request);
-    if (event.action !== 'closed' || pull?.merged !== true || typeof pull.number !== 'number' || typeof pull.body !== 'string') throw new Error('event is not a merged release PR with reviewed notes');
+    if (event.action !== 'closed' || pull?.merged !== true || typeof pull.number !== 'number') throw new Error('event is not a merged pull request');
     prNumber = pull.number;
-    reviewedBody = pull.body;
+    reviewedBody = typeof pull.body === 'string' ? pull.body : '';
     expectedHead = record(pull.head)?.sha as string | undefined;
   } else if (eventName === 'workflow_dispatch') {
     const inputs = record(event.inputs);
@@ -33,6 +33,10 @@ async function main(): Promise<void> {
   } else throw new Error('unsupported publication event');
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0 || !/^[0-9a-f]{40}$/.test(expectedHead ?? '')) throw new Error('publication PR or source identity is invalid');
   const prepared = await preparePublication(repository, prNumber, reviewedBody, api);
+  if (!prepared.ok && prepared.reasons.length === 1 && prepared.reasons[0] === 'no release intent') {
+    console.log(`PR #${prNumber} has no release intent; publication is not needed`);
+    return;
+  }
   if (!prepared.ok) throw new Error(`publication blocked: ${prepared.reasons.join('; ')}`);
   if (prepared.manifest.sourceSha !== expectedHead) throw new Error('merged source differs from publication event');
   const published = await publishApprovedCandidate(prepared.manifest, api, async () => {

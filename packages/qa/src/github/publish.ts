@@ -88,7 +88,8 @@ export async function preparePublication(repository: string, pullRequest: number
   const checked = await evaluatePullRequest(repository, pullRequest, api, undefined, undefined, undefined, { publication: true });
   if (!checked.ok) return { ok: false, reasons: [checked.error] };
   const gate = checked.value;
-  if (!gate.publication || gate.releaseIntent.length === 0) return { ok: false, reasons: ['merged PR has no active release candidate'] };
+  if (gate.releaseIntent.length === 0) return { ok: false, reasons: ['no release intent'] };
+  if (!gate.publication) return { ok: false, reasons: ['merged PR has no active release candidate'] };
   const { candidate, evaluationInput, policyDigest, mergeSha } = gate.publication;
   const build = await api.get(`repos/${repository}/actions/runs/${candidate.build.runId}`);
   if (!build.ok) return { ok: false, reasons: ['candidate build run is unavailable'] };
