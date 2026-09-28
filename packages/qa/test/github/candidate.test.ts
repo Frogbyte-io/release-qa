@@ -260,6 +260,7 @@ describe('candidate asset identity', () => {
     expect(verifyCandidateAssets(selected, build, releases, trustedArtifacts).ok).toBe(false);
     expect(verifyCandidateAssets(selected, trustedRun, releases, actions).ok).toBe(false);
     expect(verifyCandidateAssets({ ...selected, sourceSha: SHA1.tree }, trustedRun, releases, trustedArtifacts).ok).toBe(false);
+    expect(verifyCandidateAssets(selected, { ...trustedRun, event: 'push' }, releases, trustedArtifacts).ok).toBe(false);
   });
 });
 
@@ -366,7 +367,10 @@ describe('candidate preparation preflight', () => {
 
   test('dispatches the trusted default-branch workflow with exact preflight identities', async () => {
     const calls: Array<{ path: string; body: unknown }> = [];
-    const client = api({ 'repos/team/sample': { ...repository, default_branch: 'main' } });
+    const client = api({
+      'repos/team/sample': { ...repository, default_branch: 'main' },
+      'repos/team/sample/actions/runs/123': { id: 123, path: '.github/workflows/qa-prepare.yml', event: 'workflow_dispatch', display_title: `qa-prepare PR #9 ${SHA1.source}`, head_sha: SHA1.base, repository: { id: 7 } },
+    });
     const result = await prepareCandidate('team/sample', 9, SHA1.source, {
       ...client,
       post: async (path, body) => { calls.push({ path, body }); return { ok: true, value: { workflow_run_id: 123 } }; },
@@ -386,6 +390,18 @@ describe('candidate preparation preflight', () => {
     expect(dispatched).toBe(0);
     expect((await prepareCandidate('team/sample', 9, SHA1.source, dispatch)).ok).toBe(false);
     expect(dispatched).toBe(1);
+  });
+
+  test('rejects a default-branch push between snapshot and dispatch', async () => {
+    const client = api({
+      'repos/team/sample': { ...repository, default_branch: 'main' },
+      'repos/team/sample/actions/runs/123': { id: 123, path: '.github/workflows/qa-prepare.yml', event: 'workflow_dispatch', display_title: `qa-prepare PR #9 ${SHA1.source}`, head_sha: SHA1.tree, repository: { id: 7 } },
+    });
+    const result = await prepareCandidate('team/sample', 9, SHA1.source, {
+      ...client, post: async () => ({ ok: true, value: { workflow_run_id: 123 } }),
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(!result.ok && result.error).toContain('trusted workflow revision');
   });
 
   test('refuses a changed PR head before building or selecting a candidate', async () => {

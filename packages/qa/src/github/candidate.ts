@@ -77,6 +77,18 @@ export async function prepareCandidate(repository: string, prNumber: number, exp
     if (!dispatched.ok) return { ok: false, error: `candidate preparation dispatch failed: ${dispatched.reason}` };
     const runId = record(dispatched.value)?.workflow_run_id;
     if (typeof runId !== 'number' || !Number.isSafeInteger(runId) || runId <= 0) return { ok: false, error: 'candidate preparation dispatch did not return a run ID' };
+    let run: Record<string, unknown> | undefined;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const response = await api.get(`repos/${repository}/actions/runs/${runId}`);
+      if (response.ok) { run = record(response.value); break; }
+      if (response.reason !== 'not-found') return { ok: false, error: `cannot inspect dispatched preparation: ${response.reason}` };
+      if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (run?.id !== runId || run.path !== '.github/workflows/qa-prepare.yml' ||
+        run.event !== 'workflow_dispatch' || run.display_title !== `qa-prepare PR #${prNumber} ${expectedHead}` ||
+        record(run.repository)?.id !== preflight.repositoryId || run.head_sha !== workflowHeadSha) {
+      return { ok: false, error: 'dispatched preparation run does not match the trusted workflow revision and PR source' };
+    }
     return { ok: true, runId, repositoryId: preflight.repositoryId, sourceSha: expectedHead, baseSha: preflight.baseSha, policyDigest: preflight.policyDigest, workflowHeadSha };
   } catch {
     return { ok: false, error: 'candidate preparation dispatch could not verify GitHub state' };
