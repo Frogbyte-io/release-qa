@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { candidate, requirement, SHA1, SHA256 } from '../fixtures/records.ts';
-import { mergeReleasePr, publishApprovedCandidate, verifyPublication, type PublicationInput, type PublishApi } from '../../src/github/publish.ts';
+import { mergeReleasePr, publishApprovedCandidate, renderPublicationNotes, verifyPublication, type PublicationInput, type PublishApi } from '../../src/github/publish.ts';
 
 function publication(overrides: Partial<PublicationInput> = {}): PublicationInput {
   const selected = candidate();
@@ -86,7 +86,7 @@ describe('publishApprovedCandidate', () => {
     const api: PublishApi = {
       get: async () => ({ ok: false, reason: 'not-found' }),
       list: async (path) => ({ ok: true, value: path.endsWith('/releases?per_page=100') ? release ? [release] : [] : [...assets].map(([id, asset]) => ({ id, name: asset.name, state: 'uploaded' })) }),
-      post: async () => { creates++; release = { id: 42, tag_name: 'v1.2.3', name: 'v1.2.3', body: 'Adds orchard mode.', draft: true }; return fault === 'create' && creates === 1 ? { ok: false, reason: 'network-error' } : { ok: true, value: release }; },
+      post: async () => { creates++; release = { id: 42, tag_name: 'v1.2.3', name: 'v1.2.3', body: renderPublicationNotes(checked.manifest), draft: true }; return fault === 'create' && creates === 1 ? { ok: false, reason: 'network-error' } : { ok: true, value: release }; },
       patch: async () => { patches++; if (release) release.draft = false; return fault === 'publish' && patches === 1 ? { ok: false, reason: 'network-error' } : { ok: true, value: release }; },
       upload: async (_repository, _releaseId, name, bytes) => { uploads++; const id = 900 + assets.size; assets.set(id, { name, bytes: Buffer.from(bytes) }); return { ok: true, value: { id, name, state: 'uploaded' } }; },
       download: async (path, destination) => { const id = Number(path.split('/').at(-1)); const bytes = id === selected.artifacts[0]?.assetId ? tested : assets.get(id)?.bytes; if (!bytes) return { ok: false, reason: 'not-found' }; await writeFile(destination, bytes); return { ok: true, value: true }; },
@@ -105,6 +105,8 @@ describe('publishApprovedCandidate', () => {
     const secondBytes = Buffer.from('linux package');
     const digestOf = (data: Buffer): string => createHash('sha256').update(data).digest('hex');
     const selected = candidate({ artifacts: candidate().artifacts.map((item, index) => ({ ...item, sha256: digestOf(index === 0 ? firstBytes : secondBytes) })) });
+    const verified = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
+    if (!verified.ok) throw new Error(verified.reasons.join('; '));
     const byteMap = new Map<number, Buffer>([[101, firstBytes], [102, secondBytes]]);
     const published = new Map<number, { name: string; bytes: Buffer }>();
     let createCount = 0;
@@ -113,7 +115,7 @@ describe('publishApprovedCandidate', () => {
     const api: PublishApi = {
       get: async () => ({ ok: false, reason: 'not-found' }),
       list: async (path) => ({ ok: true, value: path.endsWith('/releases?per_page=100')
-        ? [{ id: 42, tag_name: 'v1.2.3', name: 'v1.2.3', draft: isDraft, body: 'Adds orchard mode.' }]
+        ? [{ id: 42, tag_name: 'v1.2.3', name: 'v1.2.3', draft: isDraft, body: renderPublicationNotes(verified.manifest) }]
         : [...published].map(([id, asset]) => ({ id, name: asset.name, state: 'uploaded' })) }),
       post: async () => { createCount++; return { ok: true, value: { id: 42, tag_name: 'v1.2.3', draft: true } }; },
       patch: async () => { publishCount++; isDraft = false; return { ok: true, value: {} }; },
@@ -127,8 +129,6 @@ describe('publishApprovedCandidate', () => {
       },
       delete: async () => ({ ok: true, value: null }),
     };
-    const verified = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
-    if (!verified.ok) throw new Error(verified.reasons.join('; '));
     const first = await publishApprovedCandidate(verified.manifest, api);
     expect(first.ok).toBe(true);
     expect(createCount).toBe(0);
@@ -146,11 +146,13 @@ describe('publishApprovedCandidate', () => {
       { ...candidate().artifacts[0]!, name: 'one.exe', sha256: createHash('sha256').update(data).digest('hex') },
       { ...candidate().artifacts[1]!, name: 'two.deb', sha256: createHash('sha256').update(data).digest('hex') },
     ] });
+    const checked = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected }, changelog: 'Notes' }));
+    if (!checked.ok) throw new Error(checked.reasons.join('; '));
     let published = false;
     let publishCalls = 0;
     const api: PublishApi = {
       get: async () => ({ ok: false, reason: 'not-found' }),
-      list: async (path) => ({ ok: true, value: path.includes('/assets?') && published ? [{ id: 900, name: 'one.exe', state: 'uploaded' }] : path.includes('/assets?') ? [] : [{ id: 50, tag_name: 'v1.2.3', name: 'v1.2.3', draft: true, body: 'Notes' }] }),
+      list: async (path) => ({ ok: true, value: path.includes('/assets?') && published ? [{ id: 900, name: 'one.exe', state: 'uploaded' }] : path.includes('/assets?') ? [] : [{ id: 50, tag_name: 'v1.2.3', name: 'v1.2.3', draft: true, body: renderPublicationNotes(checked.manifest) }] }),
       post: async () => ({ ok: false, reason: 'network-error' }),
       patch: async () => { publishCalls++; return { ok: true, value: {} }; },
       upload: async (_repo, _release, name) => { if (name === 'one.exe') published = true; return { ok: true, value: { id: 900, name, state: 'uploaded' } }; },
@@ -161,8 +163,6 @@ describe('publishApprovedCandidate', () => {
       },
       delete: async () => ({ ok: true, value: null }),
     };
-    const checked = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected }, changelog: 'Notes' }));
-    if (!checked.ok) throw new Error(checked.reasons.join('; '));
     await expect(publishApprovedCandidate(checked.manifest, api)).resolves.toMatchObject({ ok: false, error: expect.stringContaining('failed byte verification') });
     expect(publishCalls).toBe(0);
   });

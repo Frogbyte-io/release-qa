@@ -124,7 +124,7 @@ export async function preparePublication(repository: string, pullRequest: number
   const freshPr = await api.get(`${prefix}/pulls/${pullRequest}`);
   const freshBranch = await api.get(`${prefix}/branches/${encodeURIComponent(gate.baseRef)}`);
   const pr = asRecord(freshPr.ok ? freshPr.value : undefined);
-  if (pr?.merged !== true || asRecord(pr.head)?.sha !== candidate.sourceSha || pr.merge_commit_sha !== mergeSha || asRecord(asRecord(freshBranch.ok ? freshBranch.value : undefined)?.commit)?.sha !== gate.baseSha) {
+  if (pr?.merged !== true || asRecord(pr.head)?.sha !== candidate.sourceSha || pr.merge_commit_sha !== mergeSha || pr.body !== reviewedBody || asRecord(asRecord(freshBranch.ok ? freshBranch.value : undefined)?.commit)?.sha !== gate.baseSha) {
     return { ok: false, reasons: ['merged PR or target branch changed during publication verification'] };
   }
   return verifyPublication({ repository, candidate, evaluation: evaluationInput, currentPolicyDigest: policyDigest,
@@ -144,22 +144,31 @@ export interface PublishApi {
 
 export type PublishResult = { ok: true; releaseId: number; retried: boolean } | { ok: false; error: string };
 
+export function renderPublicationNotes(manifest: PublicationManifest): string {
+  const decision = manifest.evaluation.readiness === 'approved-with-exceptions'
+    ? `Approved with exceptions: ${manifest.evaluation.exceptionIds.join(', ')}` : 'Passed';
+  return `${manifest.changelog.trim()}\n\n## Release QA\n\n${decision}\n\n` +
+    `Candidate: ${manifest.candidateId}\nSource: ${manifest.sourceSha}\nMerge: ${manifest.mergeSha}\nPolicy: ${manifest.policyDigest}\n\n` +
+    manifest.artifacts.map((artifact) => `- ${artifact.name}: SHA-256 ${artifact.sha256}`).join('\n');
+}
+
 /** Creates or resumes one immutable GitHub release and verifies every published byte against its tested hash. */
 export async function publishApprovedCandidate(manifest: PublicationManifest, api: PublishApi = new GhTransport(), beforePublish?: () => Promise<boolean>): Promise<PublishResult> {
   if (!repoName.test(manifest.repository) || !manifest.tag || manifest.artifacts.length === 0) return { ok: false, error: 'invalid publication manifest' };
   const prefix = `repos/${manifest.repository}`;
+  const body = renderPublicationNotes(manifest);
   const releases = await api.list(`${prefix}/releases?per_page=100`);
   if (!releases.ok) return { ok: false, error: `cannot list releases: ${releases.reason}` };
   let release = releases.value.map(asRecord).find((item) => item?.tag_name === manifest.tag);
   const retried = release !== undefined;
   if (release === undefined) {
-    const created = await api.post(`${prefix}/releases`, { tag_name: manifest.tag, target_commitish: manifest.mergeSha, name: manifest.tag, body: manifest.changelog, draft: true, prerelease: false });
+    const created = await api.post(`${prefix}/releases`, { tag_name: manifest.tag, target_commitish: manifest.mergeSha, name: manifest.tag, body, draft: true, prerelease: false });
     if (!created.ok) return { ok: false, error: `release creation is unconfirmed; retry safely: ${created.reason}` };
     release = asRecord(created.value);
   }
   if (!Number.isSafeInteger(release?.id) || release?.tag_name !== manifest.tag) return { ok: false, error: 'release identity is invalid; retry after repair' };
   const releaseId = release.id as number;
-  if (release.body !== manifest.changelog || release.name !== manifest.tag) return { ok: false, error: 'release has conflicting metadata' };
+  if (release.body !== body || release.name !== manifest.tag) return { ok: false, error: 'release has conflicting metadata' };
   const assetsResult = await api.list(`${prefix}/releases/${releaseId}/assets?per_page=100`);
   if (!assetsResult.ok) return { ok: false, error: `cannot verify release assets: ${assetsResult.reason}` };
   const existing = new Map(assetsResult.value.map(asRecord).filter((x): x is Record<string, unknown> => !!x && typeof x.name === 'string').map((x) => [x.name as string, x]));
