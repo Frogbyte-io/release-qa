@@ -34,7 +34,7 @@ const record = (value: unknown): Record<string, unknown> | undefined => value !=
 const fail = (message: string): PullRequestGateResult => ({ ok: false, error: message });
 
 /** Evaluates the live PR against trusted target-branch policy and the exact selected candidate. */
-export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string): Promise<PullRequestGateResult> {
+export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string, candidateReleaseId?: number): Promise<PullRequestGateResult> {
   let trustedMarkers: { releaseNotes: string; qa: string } | undefined;
   const failure = (message: string): PullRequestGateResult => ({ ok: false, error: message, ...(trustedMarkers === undefined ? {} : { markers: trustedMarkers }) });
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) return failure('invalid repository or pull request number');
@@ -77,10 +77,17 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
       return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseSha, releaseIntent, evaluation: passedEvaluation(), summary: 'No release intent; normal merge policy applies.', markers: project.value.markers } };
     }
 
-    const releasesResult = await api.list(`${prefix}/releases?per_page=100`);
-    if (!releasesResult.ok) return failure(`cannot list candidate releases: ${releasesResult.reason}`);
-    const release = releasesResult.value.map(record).find((item) => item?.draft === true && item.name === `QA PR #${pullRequest}`);
-    if (release === undefined || !Number.isSafeInteger(release.id) || !Array.isArray(release.assets)) return failure('manual check required: no draft candidate release for this pull request');
+    let release: Record<string, unknown> | undefined;
+    if (candidateReleaseId === undefined) {
+      const releasesResult = await api.list(`${prefix}/releases?per_page=100`);
+      if (!releasesResult.ok) return failure(`cannot list candidate releases: ${releasesResult.reason}`);
+      release = releasesResult.value.map(record).find((item) => item?.draft === true && item.name === `QA PR #${pullRequest}`);
+    } else {
+      if (!Number.isSafeInteger(candidateReleaseId) || candidateReleaseId <= 0) return failure('invalid candidate release id');
+      const releaseResult = await api.get(`${prefix}/releases/${candidateReleaseId}`);
+      release = record(releaseResult.ok ? releaseResult.value : undefined);
+    }
+    if (release === undefined || release.draft !== true || release.name !== `QA PR #${pullRequest}` || !Number.isSafeInteger(release.id) || !Array.isArray(release.assets)) return failure('manual check required: no draft candidate release for this pull request');
     const assets = release.assets.map(record).filter((item) => item !== undefined);
     const candidateAsset = assets.find((asset) => asset.name === 'candidate.json');
     if (candidateAsset === undefined || !Number.isSafeInteger(candidateAsset.id)) return failure('manual check required: no active candidate selected');

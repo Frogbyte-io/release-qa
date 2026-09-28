@@ -15,9 +15,11 @@ if (!Number.isSafeInteger(pullRequest) || (pullRequest as number) <= 0 || typeof
   throw new Error('workflow must run from a pull_request_target event with a valid pull request head');
 }
 const pullRequestNumber = pullRequest as number;
+const releaseIdInput = process.env.RELEASE_QA_RELEASE_ID;
+const candidateReleaseId = releaseIdInput === undefined || releaseIdInput === '' ? undefined : Number(releaseIdInput);
 
 const api = new GhTransport();
-const evaluation = await evaluatePullRequest(repository, pullRequestNumber, api, eventHead);
+const evaluation = await evaluatePullRequest(repository, pullRequestNumber, api, eventHead, candidateReleaseId);
 const state = evaluation.ok && evaluation.value.evaluation.readiness !== 'blocked' ? 'success' : 'failure';
 const description = evaluation.ok
   ? `${evaluation.value.evaluation.readiness === 'approved-with-exceptions' ? 'Approved with exceptions' : evaluation.value.evaluation.readiness === 'passed' ? 'QA passed' : 'QA blocked'} for PR #${pullRequest}`
