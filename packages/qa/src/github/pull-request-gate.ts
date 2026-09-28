@@ -155,6 +155,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
     if (!currentIntent.ok || currentIntent.value.length === 0) return failure('release intent changed during evaluation; evaluate again');
     const finalReleaseResult = await api.get(`${prefix}/releases/${release.id}`);
+    if (!finalReleaseResult.ok) return failure(`cannot verify active candidate release: ${finalReleaseResult.reason}`);
     const finalRelease = record(finalReleaseResult.ok ? finalReleaseResult.value : undefined);
     const finalAssets = Array.isArray(finalRelease?.assets) ? finalRelease.assets.map(record) : [];
     const finalCandidate = finalAssets.find((item) => item?.name === 'candidate.json');
