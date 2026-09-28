@@ -72,6 +72,12 @@ describe('managed PR sections', () => {
     expect(ensureManagedSections('<!-- qa:start --><!-- qa:start --><!-- qa:end -->', ['qa']).ok).toBe(false);
   });
 
+  test('rejects same-line prose after an end marker when reading and updating a section', () => {
+    const malformed = '<!-- qa:start -->\nOld QA\n<!-- qa:end -->prose';
+    expect(readManagedSection(malformed, 'qa').ok).toBe(false);
+    expect(updateManagedSections(malformed, [{ name: 'qa', content: 'New QA' }]).ok).toBe(false);
+  });
+
   test('does not overwrite prose edited after the first read', async () => {
     let reads = 0;
     const writes: unknown[] = [];
@@ -106,7 +112,7 @@ describe('release note proposals', () => {
           ? { ok: true as const, value: { default_branch: 'main' } }
         : { ok: false as const, reason: 'not-found' },
       list: async () => ({ ok: true as const, value: [
-        { number: 12, title: 'Add orchard mode', body: 'Closes #34', merged_at: '2026-09-10T12:00:00Z', labels: [{ name: 'enhancement' }] },
+        { number: 12, title: 'Add orchard mode', body: 'Closes #34; related to team/other#35 and https://github.com/owner/repo/issues/36', merged_at: '2026-09-10T12:00:00Z', labels: [{ name: 'enhancement' }] },
         { number: 11, title: 'Fix old installer', body: 'Fixes #29', merged_at: '2026-08-20T12:00:00Z', labels: [{ name: 'bug' }] },
         { number: 13, title: 'Open work', body: '', merged_at: null, labels: [] },
       ] }),
@@ -114,7 +120,7 @@ describe('release note proposals', () => {
     await expect(proposeReleaseNotes(api, 'owner/repo')).resolves.toEqual({
       ok: true,
       tag: 'v2.0.0',
-      content: '- Add orchard mode (#12; #34)',
+      content: '- Add orchard mode (#12; #34, team/other#35, #36)',
       pullRequests: [12],
     });
   });
@@ -201,6 +207,10 @@ describe('live pull request evaluation', () => {
     await expect(evaluatePullRequest('owner/repo', 7, makeGateApi({ changeBaseOnSecondRead: true }))).resolves.toEqual({ ok: false, error: 'pull request or target branch changed during evaluation' });
   });
 
+  test('does not pass a non-release PR when a release label is added during evaluation', async () => {
+    await expect(evaluatePullRequest('owner/repo', 7, makeGateApi({ nonReleaseBranch: true, addReleaseLabelDuringRecheck: true }))).resolves.toEqual({ ok: false, error: 'release intent changed during evaluation; evaluate again' });
+  });
+
   test('shows an authenticated maintainer exception prominently', async () => {
     const result = await evaluatePullRequest('owner/repo', 7, makeGateApi({ exceptionAsset: true }));
     expect(result.ok && result.value.evaluation.readiness).toBe('approved-with-exceptions');
@@ -219,7 +229,7 @@ describe('live pull request evaluation', () => {
   });
 });
 
-function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSecondRead?: boolean; wrongPolicyDigest?: boolean; exceptionAsset?: boolean; exceptionActorMismatch?: boolean; revokeExceptionPermission?: boolean } = {}): GateApi {
+function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSecondRead?: boolean; wrongPolicyDigest?: boolean; exceptionAsset?: boolean; exceptionActorMismatch?: boolean; revokeExceptionPermission?: boolean; nonReleaseBranch?: boolean; addReleaseLabelDuringRecheck?: boolean } = {}): GateApi {
   const headSha = SHA1.source;
   const baseSha = SHA1.base;
   const policy = { releaseBranchPrefix: 'release/', releaseLabel: 'release', releaseFiles: ['VERSION'], required: ['windows/persistence', 'windows/device-feel'] };
@@ -238,7 +248,7 @@ function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSe
     get: async (path) => {
       if (path === 'repos/owner/repo/pulls/7') {
         pullReads += 1;
-        return { ok: true, value: { state: 'open', head: { sha: options.changeHeadOnSecondRead && pullReads > 1 ? SHA1.tree : headSha, ref: 'release/orbit-orchard-0.1.0', repo: { id: 1 } }, base: { ref: options.changeBaseOnSecondRead && pullReads > 1 ? 'release/2.0' : 'main', repo: { id: 1 } }, labels: [] } };
+        return { ok: true, value: { state: 'open', head: { sha: options.changeHeadOnSecondRead && pullReads > 1 ? SHA1.tree : headSha, ref: options.nonReleaseBranch ? 'feature/update' : 'release/orbit-orchard-0.1.0', repo: { id: 1 } }, base: { ref: options.changeBaseOnSecondRead && pullReads > 1 ? 'release/2.0' : 'main', repo: { id: 1 } }, labels: options.addReleaseLabelDuringRecheck && pullReads > 1 ? [{ name: 'release' }] : [] } };
       }
       if (path === 'repos/owner/repo/branches/main') return { ok: true, value: { commit: { sha: baseSha } } };
       if (path === `repos/owner/repo/contents/qa/policy.json?ref=${baseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: policyBytes.toString('base64') } };
@@ -251,7 +261,7 @@ function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSe
       return { ok: false, reason: 'not-found' };
     },
     list: async (path) => {
-      if (path === 'repos/owner/repo/pulls/7/files?per_page=100') return { ok: true, value: [{ filename: 'VERSION' }] };
+      if (path === 'repos/owner/repo/pulls/7/files?per_page=100') return { ok: true, value: [{ filename: options.nonReleaseBranch ? 'README.md' : 'VERSION' }] };
       if (path === 'repos/owner/repo/releases?per_page=100') return { ok: true, value: [release] };
       if (path === 'repos/owner/repo/releases/50/assets?per_page=100') return { ok: true, value: assets };
       return { ok: false, reason: 'not-found' };

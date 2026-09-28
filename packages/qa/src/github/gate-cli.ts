@@ -7,6 +7,7 @@ import { ensureManagedSections, proposeReleaseNotes, readManagedSection, updateP
 const repository = process.env.GITHUB_REPOSITORY;
 const eventPath = process.env.GITHUB_EVENT_PATH;
 if (!repository || !eventPath) throw new Error('GitHub repository and event payload are required');
+if (process.env.GITHUB_EVENT_NAME !== 'pull_request_target') throw new Error('required gate status may only be published from pull_request_target');
 const event = JSON.parse(await readFile(eventPath, 'utf8')) as { pull_request?: { number?: unknown; head?: { sha?: unknown } } };
 const pullRequest = event.pull_request?.number;
 const eventHead = event.pull_request?.head?.sha;
@@ -23,7 +24,6 @@ const description = evaluation.ok
   : `QA blocked: ${evaluation.error}`;
 const summary = evaluation.ok ? evaluation.value.summary : `**BLOCKED**: ${evaluation.error}`;
 console.log(summary);
-if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Release QA gate\n\n${summary}\n`, 'utf8');
 
 // Publish immediately after the evaluator's final identity check; optional PR-summary writes follow.
 const runUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
@@ -38,18 +38,24 @@ const posted = await api.post(`repos/${repository}/statuses/${eventHead}`, {
 if (!posted.ok) throw new Error(`could not publish required release-qa status: ${posted.reason}`);
 if (state !== 'success') process.exitCode = 1;
 
-const prResponse = await api.get(`repos/${repository}/pulls/${pullRequestNumber}`);
-if (prResponse.ok && typeof prResponse.value === 'object' && prResponse.value !== null) {
+if (process.env.GITHUB_STEP_SUMMARY) {
+  try { await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Release QA gate\n\n${summary}\n`, 'utf8'); }
+  catch { console.log('Workflow step summary could not be written; the required status was already published.'); }
+}
+
+if (evaluation.ok) {
+  const prResponse = await api.get(`repos/${repository}/pulls/${pullRequestNumber}`);
+  if (prResponse.ok && typeof prResponse.value === 'object' && prResponse.value !== null) {
   const prBody = (prResponse.value as { body?: unknown }).body;
   const body = typeof prBody === 'string' ? prBody : '';
-  const markers = evaluation.ok ? evaluation.value.markers : { releaseNotes: 'release-notes', qa: 'release-qa' };
+  const markers = evaluation.value.markers;
   const initialized = ensureManagedSections(body, [markers.releaseNotes, markers.qa]);
   if (initialized.ok) {
     const notes = readManagedSection(initialized.body, markers.releaseNotes);
     const qa = readManagedSection(initialized.body, markers.qa);
     if (notes.ok && qa.ok) {
       const proposed = notes.content.trim() ? { ok: true as const, content: notes.content } : await proposeReleaseNotes(api, repository);
-      const qaContent = evaluation.ok ? renderQaSection(evaluation.value.evaluation) : `**QA: Blocked**\n${evaluation.error}`;
+      const qaContent = renderQaSection(evaluation.value.evaluation);
       const update = await updatePullRequestBody(api, repository, pullRequestNumber, [
         { name: markers.releaseNotes, content: proposed.ok ? proposed.content : notes.content, expected: notes.content },
         { name: markers.qa, content: qaContent, expected: qa.content },
@@ -58,5 +64,6 @@ if (prResponse.ok && typeof prResponse.value === 'object' && prResponse.value !=
     }
   } else {
     console.log(`PR summary was not updated: ${initialized.error}`);
+  }
   }
 }

@@ -28,6 +28,11 @@ export function ensureManagedSections(body: string, names: readonly string[]): U
 
 /** Reads one complete managed block without interpreting or altering its human-authored content. */
 export function readManagedSection(body: string, name: string): { ok: true; content: string } | { ok: false; error: string } {
+  const parsed = parseManagedSection(body, name);
+  return parsed.ok ? { ok: true, content: parsed.content } : parsed;
+}
+
+function parseManagedSection(body: string, name: string): { ok: true; start: number; end: number; innerStart: number; newline: string; content: string } | { ok: false; error: string } {
   const startMarker = `<!-- ${name}:start -->`;
   const endMarker = `<!-- ${name}:end -->`;
   const start = body.indexOf(startMarker);
@@ -38,8 +43,10 @@ export function readManagedSection(body: string, name: string): { ok: true; cont
   const innerStart = start + startMarker.length;
   const newline = body.startsWith('\r\n', innerStart) ? '\r\n' : '\n';
   const inner = body.slice(innerStart, end);
-  if (!inner.startsWith(newline) || !inner.endsWith(newline)) return { ok: false, error: `${name} section markers must be on separate lines` };
-  return { ok: true, content: inner.slice(newline.length, -newline.length) };
+  const finish = end + endMarker.length;
+  if ((start > 0 && !body.slice(0, start).endsWith('\n')) || !inner.startsWith(newline) || !inner.endsWith(newline) ||
+      (finish < body.length && !body.startsWith(newline, finish))) return { ok: false, error: `${name} section markers must be on separate lines` };
+  return { ok: true, start, end, innerStart, newline, content: inner.slice(newline.length, -newline.length) };
 }
 
 export interface PullRequestBodyApi {
@@ -76,11 +83,23 @@ export async function proposeReleaseNotes(api: ReleaseNotesApi, repository: stri
     const pull = objectOf(value);
     if (pull === undefined || !Number.isSafeInteger(pull.number) || typeof pull.title !== 'string' || typeof pull.merged_at !== 'string' || Number.isNaN(Date.parse(pull.merged_at)) || Date.parse(pull.merged_at) <= since) return [];
     const body = typeof pull.body === 'string' ? pull.body : '';
-    const references = [...new Set([...body.matchAll(/(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)/gi)].map((match) => `#${match[1]}`))];
+    const references = issueReferences(body, repository);
     const number = pull.number as number;
     return [{ number, line: `- ${pull.title.replace(/[\r\n]+/g, ' ')} (#${number}${references.length ? `; ${references.join(', ')}` : ''})`, mergedAt: pull.merged_at }];
   }).sort((a, b) => a.mergedAt.localeCompare(b.mergedAt) || a.number - b.number);
   return { ok: true, tag, content: entries.map((entry) => entry.line).join('\n'), pullRequests: entries.map((entry) => entry.number) };
+}
+
+function issueReferences(body: string, repository: string): string[] {
+  const references: string[] = [];
+  const pattern = /https?:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/(\d+)|([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)|#(\d+)/gi;
+  for (const match of body.matchAll(pattern)) {
+    const qualifiedRepository = match[1] ?? match[3];
+    const number = match[2] ?? match[4] ?? match[5];
+    if (!number) continue;
+    references.push(qualifiedRepository && qualifiedRepository.toLowerCase() !== repository.toLowerCase() ? `${qualifiedRepository}#${number}` : `#${number}`);
+  }
+  return [...new Set(references)];
 }
 
 function objectOf(value: unknown): Record<string, unknown> | undefined {
@@ -137,21 +156,11 @@ export function updateManagedSections(body: string, sections: readonly ManagedSe
   const markers = [...names].flatMap((name) => [`<!-- ${name}:start -->`, `<!-- ${name}:end -->`]);
   for (const section of sections) {
     const { name } = section;
-    const begin = `<!-- ${name}:start -->`;
-    const finish = `<!-- ${name}:end -->`;
-    const start = body.indexOf(begin);
-    const end = body.indexOf(finish);
-    if (start < 0 || end < 0 || start > end || body.indexOf(begin, start + begin.length) >= 0 || body.indexOf(finish, end + finish.length) >= 0) {
-      return { ok: false, error: `${name} section has missing, duplicate or reversed markers` };
-    }
-    const innerStart = start + begin.length;
-    const newline = body.startsWith('\r\n', innerStart) ? '\r\n' : '\n';
-    const inner = body.slice(innerStart, end);
-    if (!inner.startsWith(newline) || !inner.endsWith(newline)) return { ok: false, error: `${name} section markers must be on separate lines` };
-    const current = inner.slice(newline.length, -newline.length);
-    if (section.expected !== undefined && current !== section.expected) return { ok: false, error: `${name} section changed since it was read` };
+    const parsed = parseManagedSection(body, name);
+    if (!parsed.ok) return parsed;
+    if (section.expected !== undefined && parsed.content !== section.expected) return { ok: false, error: `${name} section changed since it was read` };
     if (markers.some((marker) => section.content.includes(marker))) return { ok: false, error: `${name} section content contains a managed marker` };
-    edits.push({ start: innerStart, end, replacement: `${newline}${section.content.replace(/\r?\n/g, newline)}${newline}` });
+    edits.push({ start: parsed.innerStart, end: parsed.end, replacement: `${parsed.newline}${section.content.replace(/\r?\n/g, parsed.newline)}${parsed.newline}` });
   }
   const ordered = [...edits].sort((a, b) => a.start - b.start);
   if (ordered.some((edit, index) => index > 0 && edit.start < ordered[index - 1]!.end)) {

@@ -65,8 +65,10 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     if (files.some((file) => typeof file !== 'string')) return fail('pull request changed-file list is incomplete');
     const releaseIntent = hasReleaseIntent({ branch: initialHead.ref, labels: labelNames(initial), files: files as string[] }, policy.value);
 
-    // A non-release PR is green by definition, but identity is rechecked before returning any success.
+    // A non-release PR is green only if it remains non-release after a fresh read.
     if (releaseIntent.length === 0) {
+      const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
+      if (!currentIntent.ok || currentIntent.value.length > 0) return fail('release intent changed during evaluation; evaluate again');
       const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
       if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return fail('pull request or target branch changed during evaluation');
       return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseSha, releaseIntent, evaluation: passedEvaluation(), summary: 'No release intent; normal merge policy applies.', markers: project.value.markers } };
@@ -117,12 +119,6 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
       retryUploads.push({ uploader, resolution: { failedAttemptId: resolution.failedAttemptId, passingAttemptId: resolution.passingAttemptId, acknowledgedBy: uploader } });
     }
 
-    const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
-    if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return fail('pull request or target branch changed during evaluation');
-    const freshRelease = await api.get(`${prefix}/releases/${release.id}`);
-    const freshAssets = freshRelease.ok ? record(freshRelease.value)?.assets : undefined;
-    const freshCandidateAsset = Array.isArray(freshAssets) ? freshAssets.map(record).find((item) => item?.name === 'candidate.json') : undefined;
-    if (record(freshCandidateAsset)?.id !== candidateAsset.id) return fail('active candidate changed during evaluation; run the gate again');
     const retryResolutions: RetryResolution[] = [];
     for (const login of authorityActors) {
       const permission = await api.get(`${prefix}/collaborators/${encodeURIComponent(login)}/permission`);
@@ -134,6 +130,19 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
         retryResolutions.push(...retryUploads.filter((item) => item.uploader === login).map((item) => item.resolution));
       }
     }
+    // Recheck release intent, draft identity, candidate identity, and PR/branch identity after all
+    // collaborator permission calls so those calls cannot make the earlier snapshot stale.
+    const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
+    if (!currentIntent.ok || currentIntent.value.length === 0) return fail('release intent changed during evaluation; evaluate again');
+    const finalReleaseResult = await api.get(`${prefix}/releases/${release.id}`);
+    const finalRelease = record(finalReleaseResult.ok ? finalReleaseResult.value : undefined);
+    const finalAssets = Array.isArray(finalRelease?.assets) ? finalRelease.assets.map(record) : [];
+    const finalCandidate = finalAssets.find((item) => item?.name === 'candidate.json');
+    if (finalRelease?.draft !== true || finalRelease.name !== `QA PR #${pullRequest}` || record(finalCandidate)?.id !== candidateAsset.id) {
+      return fail('active candidate release changed during evaluation; run the gate again');
+    }
+    const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
+    if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return fail('pull request or target branch changed during evaluation');
     const evaluation = evaluate({
       candidate,
       currentHeadSha: initialHead.sha,
@@ -149,6 +158,18 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
   } catch {
     return fail('GitHub state could not be safely evaluated');
   }
+}
+
+async function readCurrentReleaseIntent(api: GateApi, prefix: string, pullRequest: number, policy: ReleaseIntentPolicy): Promise<{ ok: true; value: string[] } | { ok: false }> {
+  const prResult = await api.get(`${prefix}/pulls/${pullRequest}`);
+  const pr = record(prResult.ok ? prResult.value : undefined);
+  const head = record(pr?.head);
+  if (pr?.state !== 'open' || typeof head?.ref !== 'string') return { ok: false };
+  const filesResult = await api.list(`${prefix}/pulls/${pullRequest}/files?per_page=100`);
+  if (!filesResult.ok) return { ok: false };
+  const files = filesResult.value.map((value) => record(value)?.filename);
+  if (files.some((file) => typeof file !== 'string')) return { ok: false };
+  return { ok: true, value: hasReleaseIntent({ branch: head.ref, labels: labelNames(pr), files: files as string[] }, policy) };
 }
 
 async function readIdentity(api: GateApi, prefix: string, pullRequest: number, baseBranch: string, repositoryId: number): Promise<{ ok: true; value: { headSha: string; baseSha: string } } | { ok: false }> {
