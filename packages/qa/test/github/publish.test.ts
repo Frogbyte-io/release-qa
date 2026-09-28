@@ -62,13 +62,29 @@ test('resolves an annotated release tag to its commit', async () => {
 });
 
 describe('mergeReleasePr', () => {
+  test('rejects a selected candidate from another repository before merging', async () => {
+    const body = '<!-- release-notes:start -->\nNotes\n<!-- release-notes:end -->';
+    let merges = 0;
+    const result = await mergeReleasePr('owner/app', 7, SHA1.source, {
+      get: async (path) => ({ ok: true, value: path === 'repos/owner/app' ? { id: 1 } : path.endsWith('/releases/50')
+        ? { id: 50, draft: true, name: 'QA PR #7', assets: [{ id: 70, name: 'candidate.json' }] }
+        : { state: 'open', head: { sha: SHA1.source, repo: { id: 1 } }, base: { repo: { id: 1 } }, body } }),
+      list: async () => ({ ok: true, value: [{ id: 50, name: 'QA PR #7', draft: true }] }),
+      put: async () => { merges++; return { ok: true, value: {} }; },
+      upload: async () => ({ ok: false, reason: 'network-error' }),
+      download: async (_path, destination) => { await writeFile(destination, JSON.stringify(candidate({ repositoryId: 2 }))); return { ok: true, value: true }; },
+    });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('active candidate does not match') });
+    expect(merges).toBe(0);
+  });
+
   test('does not merge without a usable active candidate asset id', async () => {
     const body = '<!-- release-notes:start -->\nNotes\n<!-- release-notes:end -->';
     let merges = 0;
     const result = await mergeReleasePr('owner/app', 7, SHA1.source, {
-      get: async (path) => ({ ok: true, value: path.endsWith('/releases/50')
+      get: async (path) => ({ ok: true, value: path === 'repos/owner/app' ? { id: 1 } : path.endsWith('/releases/50')
         ? { id: 50, draft: true, name: 'QA PR #7', assets: [{ id: 0, name: 'candidate.json' }] }
-        : { state: 'open', head: { sha: SHA1.source }, body } }),
+        : { state: 'open', head: { sha: SHA1.source, repo: { id: 1 } }, base: { repo: { id: 1 } }, body } }),
       list: async () => ({ ok: true, value: [{ id: 50, name: 'QA PR #7', draft: true }] }),
       put: async () => { merges++; return { ok: true, value: {} }; },
       upload: async () => ({ ok: false, reason: 'network-error' }),
@@ -97,10 +113,10 @@ describe('mergeReleasePr', () => {
     let notesBytes: Buffer = Buffer.alloc(0);
     const reviewedBody = '<!-- release-notes:start -->\nA tested release\n<!-- release-notes:end -->';
     const result = await mergeReleasePr('owner/app', 7, SHA1.source, {
-      get: async (path) => path.endsWith('/releases/50')
+      get: async (path) => path === 'repos/owner/app' ? { ok: true, value: { id: 1 } } : path.endsWith('/releases/50')
         ? { ok: true, value: { id: 50, name: 'QA PR #7', draft: true, assets: [{ id: 70, name: 'candidate.json' }] } }
         : { ok: true, value: ++reads <= 3
-          ? { state: 'open', head: { sha: SHA1.source }, body: reviewedBody }
+          ? { state: 'open', head: { sha: SHA1.source, repo: { id: 1 } }, base: { repo: { id: 1 } }, body: reviewedBody }
           : { state: 'closed', merged: true, head: { sha: SHA1.source }, merge_commit_sha: '5'.repeat(40) } },
       put: async (path, body) => { paths.push(`${path}:${JSON.stringify(body)}`); return { ok: false, reason: 'network-error' }; },
       list: async () => ({ ok: true, value: [{ id: 50, name: 'QA PR #7', draft: true }] }),

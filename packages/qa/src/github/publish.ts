@@ -246,6 +246,11 @@ export async function mergeReleasePr(repository: string, pr: number, expectedHea
   if (!current.ok || !pull || head?.sha !== expectedHead) return { ok: false, error: 'PR head could not be verified; no merge attempted' };
   if (pull.merged === true) return { ok: false, error: 'PR is already merged; its reviewed notes must come from the merge event or a saved snapshot' };
   if (pull.state !== 'open') return { ok: false, error: 'PR is not open' };
+  const repositoryResult = await api.get(`repos/${repository}`);
+  const repositoryId = asRecord(repositoryResult.ok ? repositoryResult.value : undefined)?.id;
+  if (!Number.isSafeInteger(repositoryId) || asRecord(head.repo)?.id !== repositoryId || asRecord(asRecord(pull.base)?.repo)?.id !== repositoryId) {
+    return { ok: false, error: 'PR is not from the release repository' };
+  }
   if (typeof pull.body !== 'string') return { ok: false, error: 'reviewed PR body is unavailable' };
   const notes = readManagedSection(pull.body, releaseNotesMarker);
   if (!notes.ok || !notes.content.trim()) return { ok: false, error: 'reviewed release notes are missing or ambiguous' };
@@ -268,7 +273,7 @@ export async function mergeReleasePr(repository: string, pr: number, expectedHea
   try { candidateRecord = JSON.parse(selected.bytes.toString('utf8')) as unknown; }
   catch { return { ok: false, error: 'active candidate manifest is malformed' }; }
   const activeCandidate = parseCandidate(candidateRecord);
-  if (!activeCandidate.ok || activeCandidate.value.pullRequest !== pr || activeCandidate.value.sourceSha !== expectedHead ||
+  if (!activeCandidate.ok || activeCandidate.value.pullRequest !== pr || activeCandidate.value.repositoryId !== repositoryId || activeCandidate.value.sourceSha !== expectedHead ||
       activeCandidate.value.artifacts.some((artifact) => artifact.name === `qa-merge-notes-${expectedHead}.json` || artifact.name === 'release-qa-record.json')) {
     return { ok: false, error: 'active candidate does not match the PR head or uses reserved asset names' };
   }
