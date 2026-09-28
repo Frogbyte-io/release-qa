@@ -17,7 +17,8 @@ try {
   // The app fills the page after it loads its stores; the five slot buttons are there once it has. A device is not
   // required to explore, so a missing one is noted rather than waited for.
   await browser.waitUntil(async () => (await browser.$$('button.rounded-full.w-24.h-12.mt-12')).length === 5, { timeout: 30_000, timeoutMsg: 'the slot buttons never appeared' });
-  const connected = await browser.waitUntil(async () => (await (await browser.$('body')).getText()).includes('Connected'), { timeout: 10_000 }).then(() => true, () => false);
+  // The top bar's status label reads exactly "Connected" or "Disconnected".
+  const connected = await browser.waitUntil(async () => (await browser.$$("//span[normalize-space()='Connected']")).length > 0, { timeout: 10_000 }).then(() => true, () => false);
   writeFileSync(join(out, 'title.txt'), `${await browser.getTitle()}\n${await browser.getUrl()}\ndevice connected: ${connected}\n`);
   writeFileSync(join(out, 'page.html'), await browser.getPageSource());
   await browser.saveScreenshot(join(out, 'main.png'));

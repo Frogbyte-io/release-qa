@@ -97,7 +97,8 @@ try {
   log(`launching ${app}`);
   session = await startSession(app, nativeDriver);
   const { browser } = session;
-  await waitFor('the device to connect', async () => (await (await browser.$('body')).getText()).includes('Connected'));
+  // The top bar's status label reads exactly "Connected" or "Disconnected".
+  await waitFor('the device to connect', async () => (await browser.$$("//span[normalize-space()='Connected']")).length > 0);
   await waitFor('the slot buttons', async () => (await browser.$$('button.rounded-full.w-24.h-12.mt-12')).length === 5);
   log('connected');
   log(`initial readback ${JSON.stringify((await readback()).sessions)}`);
