@@ -199,6 +199,23 @@ describe('live pull request evaluation', () => {
     expect(result.ok && result.value.candidateId).toBe('cand-0001');
   });
 
+  test('rejects a brokered release id that does not name this pull request draft', async () => {
+    const api = makeGateApi();
+    const get = api.get.bind(api);
+    api.get = async (path) => {
+      const result = await get(path);
+      if (path === 'repos/owner/repo/releases/50' && result.ok) {
+        return { ok: true, value: { ...(result.value as object), name: 'QA PR #8' } };
+      }
+      return result;
+    };
+    await expect(evaluatePullRequest('owner/repo', 7, api, SHA1.source, 50)).resolves.toEqual({
+      ok: false,
+      error: 'manual check required: no draft candidate release for this pull request',
+      markers: { releaseNotes: 'release-notes', qa: 'qa' },
+    });
+  });
+
   test('rejects a delayed green result when the PR head changes before revalidation', async () => {
     const api = makeGateApi({ changeHeadOnSecondRead: true });
     await expect(evaluatePullRequest('owner/repo', 7, api)).resolves.toEqual({ ok: false, error: 'pull request or target branch changed during evaluation', markers: { releaseNotes: 'release-notes', qa: 'qa' } });
