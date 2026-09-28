@@ -39,6 +39,11 @@ describe('verifyPublication', () => {
     const result = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
     expect(result).toMatchObject({ ok: false, reasons: expect.arrayContaining(['candidate uses a reserved publication asset name']) });
   });
+  test('reserves generated merge-note asset names', () => {
+    const selected = candidate({ artifacts: [{ ...candidate().artifacts[0]!, name: `qa-merge-notes-${SHA1.source}.json` }] });
+    const result = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
+    expect(result).toMatchObject({ ok: false, reasons: expect.arrayContaining(['candidate uses a reserved merge notes asset name']) });
+  });
 
   test('rechecks exception authority through the current evaluation input', () => {
     const selected = candidate();
@@ -57,6 +62,22 @@ test('resolves an annotated release tag to its commit', async () => {
 });
 
 describe('mergeReleasePr', () => {
+  test('does not merge without a usable active candidate asset id', async () => {
+    const body = '<!-- release-notes:start -->\nNotes\n<!-- release-notes:end -->';
+    let merges = 0;
+    const result = await mergeReleasePr('owner/app', 7, SHA1.source, {
+      get: async (path) => ({ ok: true, value: path.endsWith('/releases/50')
+        ? { id: 50, draft: true, name: 'QA PR #7', assets: [{ id: 0, name: 'candidate.json' }] }
+        : { state: 'open', head: { sha: SHA1.source }, body } }),
+      list: async () => ({ ok: true, value: [{ id: 50, name: 'QA PR #7', draft: true }] }),
+      put: async () => { merges++; return { ok: true, value: {} }; },
+      upload: async () => ({ ok: false, reason: 'network-error' }),
+      download: async () => ({ ok: false, reason: 'network-error' }),
+    });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('active candidate release') });
+    expect(merges).toBe(0);
+  });
+
   test('never attempts a merge when PR head differs', async () => {
     let writes = 0;
     const result = await mergeReleasePr('owner/app', 7, SHA1.source, {
@@ -84,7 +105,7 @@ describe('mergeReleasePr', () => {
       put: async (path, body) => { paths.push(`${path}:${JSON.stringify(body)}`); return { ok: false, reason: 'network-error' }; },
       list: async () => ({ ok: true, value: [{ id: 50, name: 'QA PR #7', draft: true }] }),
       upload: async (_repo, _id, _name, bytes) => { notesBytes = bytes; return { ok: true, value: { id: 80, name: `qa-merge-notes-${SHA1.source}.json`, state: 'uploaded' } }; },
-      download: async (_path, destination) => { await writeFile(destination, notesBytes); return { ok: true, value: true }; },
+      download: async (path, destination) => { await writeFile(destination, path.endsWith('/70') ? JSON.stringify(candidate()) : notesBytes); return { ok: true, value: true }; },
     });
     expect(result).toEqual({ ok: true, sha: '5'.repeat(40), reviewedBody, notesAssetId: 80, alreadyMerged: false });
     expect(JSON.parse(notesBytes.toString('utf8'))).toMatchObject({ pullRequest: 7, headSha: SHA1.source, body: reviewedBody });

@@ -26,6 +26,14 @@ async function main(): Promise<void> {
     prNumber = pull.number;
     reviewedBody = typeof pull.body === 'string' ? pull.body : '';
     expectedHead = record(pull.head)?.sha as string | undefined;
+    if (/^[0-9a-f]{40}$/.test(expectedHead ?? '')) {
+      const assetId = await findSavedMergeNotesAssetId(repository, prNumber, expectedHead as string);
+      if (assetId !== undefined) {
+        const savedBody = await readSavedMergeNotes(repository, prNumber, expectedHead as string, assetId);
+        if (savedBody !== reviewedBody) throw new Error('merge event notes differ from the saved reviewed snapshot');
+        reviewedBody = savedBody;
+      }
+    }
   } else if (eventName === 'workflow_dispatch') {
     const inputs = record(event.inputs);
     prNumber = Number(inputs?.pr_number);
@@ -52,6 +60,21 @@ async function main(): Promise<void> {
 }
 
 await main();
+
+async function findSavedMergeNotesAssetId(repository: string, prNumber: number, expectedHead: string): Promise<number | undefined> {
+  const prefix = `repos/${repository}`;
+  const releases = await api.list(`${prefix}/releases?per_page=100`);
+  if (!releases.ok) throw new Error('candidate releases could not be checked for saved notes');
+  const release = releases.value.map(record).find((item) => item?.draft === true && item.name === `QA PR #${prNumber}`);
+  if (release === undefined) return undefined;
+  const details = await api.get(`${prefix}/releases/${release.id}`);
+  const assets = record(details.ok ? details.value : undefined)?.assets;
+  if (!Array.isArray(assets)) throw new Error('candidate release assets could not be checked for saved notes');
+  const saved = assets.map(record).find((item) => item?.name === `qa-merge-notes-${expectedHead}.json`);
+  if (saved === undefined) return undefined;
+  if (!Number.isSafeInteger(saved.id) || (saved.id as number) <= 0) throw new Error('saved notes asset identity is invalid');
+  return saved.id as number;
+}
 
 async function readSavedMergeNotes(repository: string, prNumber: number, expectedHead: string, assetId: number): Promise<string> {
   const prefix = `repos/${repository}`;

@@ -66,6 +66,7 @@ export function verifyPublication(input: PublicationInput): PublicationCheck {
   if (!input.changelog.trim() || /<!--\s*(?:release-notes|changelog):start\s*-->/i.test(input.changelog)) reasons.push('reviewed changelog could not be identified');
   if (new Set(input.candidate.artifacts.map((artifact) => artifact.name)).size !== input.candidate.artifacts.length) reasons.push('final artifact names collide');
   if (input.candidate.artifacts.some((artifact) => artifact.name === 'release-qa-record.json')) reasons.push('candidate uses a reserved publication asset name');
+  if (input.candidate.artifacts.some((artifact) => /^qa-merge-notes-[0-9a-f]{40}\.json$/.test(artifact.name))) reasons.push('candidate uses a reserved merge notes asset name');
   const evaluation = evaluate(input.evaluation);
   if (evaluation.readiness === 'blocked') reasons.push('current QA evidence does not pass');
   if (input.evaluation.candidate.id !== input.candidate.id || input.evaluation.candidate.policyDigest !== input.candidate.policyDigest ||
@@ -258,12 +259,23 @@ export async function mergeReleasePr(repository: string, pr: number, expectedHea
   const releaseId = draft?.id as number;
   const releaseResult = await api.get(`repos/${repository}/releases/${releaseId}`);
   const release = asRecord(releaseResult.ok ? releaseResult.value : undefined);
-  if (release?.draft !== true || release.name !== `QA PR #${pr}` || !Array.isArray(release.assets) ||
-      !release.assets.some((asset) => asRecord(asset)?.name === 'candidate.json')) return { ok: false, error: 'active candidate release is unavailable for notes snapshot' };
+  const releaseAssets = Array.isArray(release?.assets) ? release.assets.map(asRecord) : [];
+  const candidateAsset = releaseAssets.find((asset) => asset?.name === 'candidate.json');
+  if (release?.draft !== true || release.name !== `QA PR #${pr}` || !Number.isSafeInteger(candidateAsset?.id) || (candidateAsset?.id as number) <= 0) return { ok: false, error: 'active candidate release is unavailable for notes snapshot' };
+  const selected = await downloadAndHash(api, `repos/${repository}/releases/assets/${candidateAsset?.id}`);
+  if (!selected.ok) return { ok: false, error: 'active candidate manifest could not be read before merge' };
+  let candidateRecord: unknown;
+  try { candidateRecord = JSON.parse(selected.bytes.toString('utf8')) as unknown; }
+  catch { return { ok: false, error: 'active candidate manifest is malformed' }; }
+  const activeCandidate = parseCandidate(candidateRecord);
+  if (!activeCandidate.ok || activeCandidate.value.pullRequest !== pr || activeCandidate.value.sourceSha !== expectedHead ||
+      activeCandidate.value.artifacts.some((artifact) => artifact.name === `qa-merge-notes-${expectedHead}.json` || artifact.name === 'release-qa-record.json')) {
+    return { ok: false, error: 'active candidate does not match the PR head or uses reserved asset names' };
+  }
   const notesName = `qa-merge-notes-${expectedHead}.json`;
   const notesBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, pullRequest: pr, headSha: expectedHead, body: reviewedBody }));
   const notesHash = createHash('sha256').update(notesBytes).digest('hex');
-  const prior = release.assets.map(asRecord).find((asset) => asset?.name === notesName);
+  const prior = releaseAssets.find((asset) => asset?.name === notesName);
   let notesAssetId: number;
   if (prior) {
     if (!Number.isSafeInteger(prior.id)) return { ok: false, error: 'saved notes snapshot has invalid identity' };
