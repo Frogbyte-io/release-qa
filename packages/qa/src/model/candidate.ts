@@ -18,14 +18,14 @@ export interface Candidate {
   sourceTreeSha: string;
   testRevision: string;
   policyDigest: string;
-  build: { workflowPath: string; runId: number; attempt: number };
+  build: { workflowPath: string; workflowHeadSha?: string; runId: number; attempt: number };
   artifacts: Artifact[];
 }
 
 const SPEC: FieldSpec = {
   required: ['id', 'repositoryId', 'pullRequest', 'sourceSha', 'baseSha', 'sourceTreeSha', 'testRevision', 'policyDigest', 'build', 'artifacts'],
 };
-const BUILD_SPEC: FieldSpec = { required: ['workflowPath', 'runId', 'attempt'] };
+const BUILD_SPEC: FieldSpec = { required: ['workflowPath', 'runId', 'attempt'], optional: ['workflowHeadSha'] };
 const ARTIFACT_SPEC: FieldSpec = { required: ['profile', 'name', 'sha256', 'assetId', 'actionsArtifactId'] };
 
 export function parseCandidate(input: unknown): ParseResult<Candidate> {
@@ -50,6 +50,7 @@ export function parseCandidate(input: unknown): ParseResult<Candidate> {
       policyDigest: c.sha256(rec.policyDigest, 'policyDigest'),
       build: build && {
         workflowPath: c.relativePath(build.workflowPath, 'build.workflowPath'),
+        ...(build.workflowHeadSha === undefined ? {} : { workflowHeadSha: c.gitSha(build.workflowHeadSha, 'build.workflowHeadSha') }),
         runId: c.int(build.runId, 'build.runId'),
         attempt: c.int(build.attempt, 'build.attempt'),
       },

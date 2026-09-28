@@ -1,6 +1,12 @@
 /** Public entry point of the Release QA package. */
 export const toolName = 'release-qa';
 
+export {
+  prepareCandidate, inspectCandidatePreparation, downloadCandidate,
+  type CandidatePreparation, type PreparationPreflight, type DownloadCandidateResult,
+  type CandidateDispatchApi, type PreparationApi, type CandidateDownloadApi,
+} from './github/candidate.ts';
+
 export { parseCandidate, type Artifact, type Candidate } from './model/candidate.ts';
 export { parseException, type Exception } from './model/exception.ts';
 export { parseLocalCandidate, type LocalArtifact, type LocalCandidate } from './model/local-candidate.ts';
