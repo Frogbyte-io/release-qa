@@ -373,7 +373,7 @@ describe('candidate preparation preflight', () => {
     });
     expect(result).toMatchObject({ ok: true, runId: 123, sourceSha: SHA1.source, workflowHeadSha: SHA1.base });
     expect(calls).toEqual([{ path: 'repos/team/sample/actions/workflows/qa-prepare.yml/dispatches', body: {
-      ref: 'main', inputs: { pr_number: '9', expected_head: SHA1.source, expected_base: SHA1.base,
+      ref: 'main', return_run_details: true, inputs: { pr_number: '9', expected_head: SHA1.source, expected_base: SHA1.base,
         policy_digest: createHash('sha256').update(JSON.stringify(policy)).digest('hex') },
     } }]);
   });

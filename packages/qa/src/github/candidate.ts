@@ -71,6 +71,7 @@ export async function prepareCandidate(repository: string, prNumber: number, exp
     const path = `repos/${repository}/actions/workflows/qa-prepare.yml/dispatches`;
     const dispatched = await api.post(path, {
       ref: branchName,
+      return_run_details: true,
       inputs: { pr_number: String(prNumber), expected_head: expectedHead, expected_base: preflight.baseSha, policy_digest: preflight.policyDigest },
     });
     if (!dispatched.ok) return { ok: false, error: `candidate preparation dispatch failed: ${dispatched.reason}` };
