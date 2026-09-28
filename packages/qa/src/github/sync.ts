@@ -213,7 +213,7 @@ export async function recordScenarioClaim(repository: string, releaseId: number,
   const bytes = Buffer.from(JSON.stringify(claim));
   if (existing) {
     const prior = await readAsset(repository, existing, api);
-    return prior.ok && prior.value.equals(bytes) ? { ok: true, value: true } : { ok: false, reason: 'claim ID already exists with different content' };
+    return prior.ok && prior.value.equals(bytes) ? api.dispatchReconciliation(repository, releaseId) : { ok: false, reason: 'claim ID already exists with different content' };
   }
   const uploaded = await api.upload(repository, releaseId, name, bytes);
   if (!uploaded.ok) return uploaded;
