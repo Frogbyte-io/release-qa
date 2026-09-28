@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import type { Evaluation } from '../../src/model/evaluate.ts';
 import { evaluatePullRequest, hasReleaseIntent, renderQaSection, type GateApi } from '../../src/github/gate.ts';
 import { ensureManagedSections, proposeReleaseNotes, readManagedSection, updateManagedSections, updatePullRequestBody } from '../../src/github/pull-request.ts';
+import { preparePublication } from '../../src/github/publish.ts';
 import { candidate, exception, project, SHA1 } from '../fixtures/records.ts';
 
 const evaluation = (changes: Partial<Evaluation> = {}): Evaluation => ({
@@ -178,6 +179,26 @@ describe('release intent', () => {
 });
 
 describe('live pull request evaluation', () => {
+  test('re-evaluates a merged PR against current records for publication', async () => {
+    const api = makeGateApi({ merged: true });
+    expect((await api.get(`repos/owner/repo/contents/qa/policy.json?ref=${SHA1.base}`)).ok).toBe(false);
+    const result = await evaluatePullRequest('owner/repo', 7, api, SHA1.source, undefined, undefined, { publication: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.publication?.mergeSha).toBe('5'.repeat(40));
+    expect(result.value.publication?.candidate.sourceSha).toBe(SHA1.source);
+    expect(result.value.publication?.evaluationInput.currentBaseSha).toBe(SHA1.base);
+    expect(result.value.evaluation.readiness).toBe('blocked');
+    expect(result.value.evaluation.reasons).toContainEqual({ code: 'missing-result', requirement: 'windows/device-feel' });
+  });
+  test('publication mode rejects an open or malformed merged PR', async () => {
+    expect((await evaluatePullRequest('owner/repo', 7, makeGateApi(), SHA1.source, undefined, undefined, { publication: true })).ok).toBe(false);
+    expect((await evaluatePullRequest('owner/repo', 7, makeGateApi({ merged: true, mergedNoSha: true }), SHA1.source, undefined, undefined, { publication: true })).ok).toBe(false);
+  });
+  test('removed release intent does not silently skip a selected candidate', async () => {
+    const result = await preparePublication('owner/repo', 7, '', makeGateApi({ merged: true, nonReleaseBranch: true }));
+    expect(result).toEqual({ ok: false, reasons: ['release intent was removed after a candidate was selected; repair required'] });
+  });
   test('blocks a release candidate with missing required reports using the shared evaluator', async () => {
     const api = makeGateApi();
     const result = await evaluatePullRequest('owner/repo', 7, api);
@@ -325,9 +346,10 @@ describe('live pull request evaluation', () => {
   });
 });
 
-function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSecondRead?: boolean; wrongPolicyDigest?: boolean; exceptionAsset?: boolean; exceptionActorMismatch?: boolean; revokeExceptionPermission?: boolean; nonReleaseBranch?: boolean; addReleaseLabelDuringRecheck?: boolean; failReleaseRecheck?: boolean } = {}): GateApi {
+function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSecondRead?: boolean; wrongPolicyDigest?: boolean; exceptionAsset?: boolean; exceptionActorMismatch?: boolean; revokeExceptionPermission?: boolean; nonReleaseBranch?: boolean; addReleaseLabelDuringRecheck?: boolean; failReleaseRecheck?: boolean; merged?: boolean; mergedNoSha?: boolean } = {}): GateApi {
   const headSha = SHA1.source;
   const baseSha = SHA1.base;
+  const currentBaseSha = options.merged ? '5'.repeat(40) : baseSha;
   const policy = { releaseBranchPrefix: 'release/', releaseLabel: 'release', releaseFiles: ['VERSION'], required: ['windows/persistence', 'windows/device-feel'] };
   const policyBytes = Buffer.from(JSON.stringify(policy));
   const candidateRecord = { ...candidate({ repositoryId: 1, pullRequest: 7, sourceSha: headSha, baseSha }), policyDigest: options.wrongPolicyDigest ? '0'.repeat(64) : createHashFor(policyBytes) };
@@ -343,11 +365,11 @@ function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSe
     get: async (path) => {
       if (path === 'repos/owner/repo/pulls/7') {
         pullReads += 1;
-        return { ok: true, value: { state: 'open', head: { sha: options.changeHeadOnSecondRead && pullReads > 1 ? SHA1.tree : headSha, ref: options.nonReleaseBranch ? 'feature/update' : 'release/orbit-orchard-0.1.0', repo: { id: 1 } }, base: { ref: options.changeBaseOnSecondRead && pullReads > 1 ? 'release/2.0' : 'main', repo: { id: 1 } }, labels: options.addReleaseLabelDuringRecheck && pullReads > 1 ? [{ name: 'release' }] : [] } };
+        return { ok: true, value: { state: options.merged ? 'closed' : 'open', merged: options.merged ?? false, merge_commit_sha: options.merged && !options.mergedNoSha ? '5'.repeat(40) : undefined, head: { sha: options.changeHeadOnSecondRead && pullReads > 1 ? SHA1.tree : headSha, ref: options.nonReleaseBranch ? 'feature/update' : 'release/orbit-orchard-0.1.0', repo: { id: 1 } }, base: { ref: options.changeBaseOnSecondRead && pullReads > 1 ? 'release/2.0' : 'main', repo: { id: 1 } }, labels: options.addReleaseLabelDuringRecheck && pullReads > 1 ? [{ name: 'release' }] : [] } };
       }
-      if (path === 'repos/owner/repo/branches/main') return { ok: true, value: { commit: { sha: baseSha } } };
-      if (path === `repos/owner/repo/contents/qa/policy.json?ref=${baseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: policyBytes.toString('base64') } };
-      if (path === `repos/owner/repo/contents/qa/project.json?ref=${baseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(project())).toString('base64') } };
+      if (path === 'repos/owner/repo/branches/main') return { ok: true, value: { commit: { sha: currentBaseSha } } };
+      if (path === `repos/owner/repo/contents/qa/policy.json?ref=${currentBaseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: policyBytes.toString('base64') } };
+      if (path === `repos/owner/repo/contents/qa/project.json?ref=${currentBaseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(project())).toString('base64') } };
       if (path === 'repos/owner/repo/releases/50') return options.failReleaseRecheck ? { ok: false, reason: 'missing-scope' } : { ok: true, value: release };
       if (path === 'repos/owner/repo/collaborators/maintainer/permission') {
         return { ok: true, value: { permission: options.revokeExceptionPermission && pullReads > 1 ? 'read' : 'admin' } };

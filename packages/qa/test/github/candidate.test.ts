@@ -156,11 +156,12 @@ console.log(JSON.stringify({ id: 17 }));`);
       const body = { token: 'private-marker', expected_head_sha: SHA1.source };
       expect(await transport.post('repos/team/sample/actions/workflows/qa-prepare.yml/dispatches', body)).toEqual({ ok: true, value: { id: 17 } });
       expect(await transport.patch('repos/team/sample/pulls/9', body)).toEqual({ ok: true, value: { id: 17 } });
+      expect(await transport.put('repos/team/sample/pulls/9/merge', body)).toEqual({ ok: true, value: { id: 17 } });
       expect(await transport.delete('repos/team/sample/releases/assets/17')).toEqual({ ok: true, value: null });
       const requests = (await readFile(recorded, 'utf8')).trim().split('\n').map((row) => JSON.parse(row) as { args: string[]; body: string | null });
-      expect(requests.map((request) => request.args[request.args.indexOf('--method') + 1])).toEqual(['POST', 'PATCH', 'DELETE']);
-      expect(requests.slice(0, 2).map((request) => JSON.parse(request.body ?? ''))).toEqual([body, body]);
-      expect(requests[2]?.body).toBeNull();
+      expect(requests.map((request) => request.args[request.args.indexOf('--method') + 1])).toEqual(['POST', 'PATCH', 'PUT', 'DELETE']);
+      expect(requests.slice(0, 3).map((request) => JSON.parse(request.body ?? ''))).toEqual([body, body, body]);
+      expect(requests[3]?.body).toBeNull();
       for (const request of requests) {
         expect(JSON.stringify(request.args)).not.toContain('private-marker');
         const index = request.args.indexOf('--input');

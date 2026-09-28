@@ -2,8 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { evaluate, type Evaluation, type AuthorizedException, type RetryResolution } from '../model/evaluate.ts';
-import { parseCandidate } from '../model/candidate.ts';
+import { evaluate, type Evaluation, type EvaluationInput, type AuthorizedException, type RetryResolution } from '../model/evaluate.ts';
+import { parseCandidate, type Candidate } from '../model/candidate.ts';
 import { parseException } from '../model/exception.ts';
 import { parseProject } from '../model/project.ts';
 import { loadCandidateProgress, type SyncApi } from './sync.ts';
@@ -27,6 +27,7 @@ export interface PullRequestGateEvaluation {
   evaluation: Evaluation;
   summary: string;
   markers: { releaseNotes: string; qa: string };
+  publication?: { candidate: Candidate; evaluationInput: EvaluationInput; policyDigest: string; mergeSha: string };
 }
 
 export type PullRequestGateResult = { ok: true; value: PullRequestGateEvaluation } | { ok: false; error: string; markers?: { releaseNotes: string; qa: string } };
@@ -37,7 +38,7 @@ const record = (value: unknown): Record<string, unknown> | undefined => value !=
 const fail = (message: string): PullRequestGateResult => ({ ok: false, error: message });
 
 /** Evaluates the live PR against trusted target-branch policy and the exact selected candidate. */
-export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string, candidateReleaseId?: number, candidateReleaseSnapshot?: unknown, options: { deferFinalReleaseVerification?: boolean } = {}): Promise<PullRequestGateResult> {
+export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string, candidateReleaseId?: number, candidateReleaseSnapshot?: unknown, options: { deferFinalReleaseVerification?: boolean; publication?: boolean } = {}): Promise<PullRequestGateResult> {
   let trustedMarkers: { releaseNotes: string; qa: string } | undefined;
   const failure = (message: string): PullRequestGateResult => ({ ok: false, error: message, ...(trustedMarkers === undefined ? {} : { markers: trustedMarkers }) });
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) return failure('invalid repository or pull request number');
@@ -49,7 +50,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     const initialHead = record(initial?.head);
     const initialBase = record(initial?.base);
     const repositoryId = record(initialHead?.repo)?.id;
-    if (initial?.state !== 'open' || typeof initialHead?.sha !== 'string' || !gitSha.test(initialHead.sha) || typeof initialHead.ref !== 'string' ||
+    if (initial === undefined || !(options.publication ? initial.state === 'closed' && initial.merged === true && typeof initial.merge_commit_sha === 'string' && gitSha.test(initial.merge_commit_sha) : initial.state === 'open') || typeof initialHead?.sha !== 'string' || !gitSha.test(initialHead.sha) || typeof initialHead.ref !== 'string' ||
         typeof initialBase?.ref !== 'string' || !Number.isSafeInteger(repositoryId) || repositoryId !== record(initialBase.repo)?.id) return failure('pull request is closed, malformed, or from a fork');
     if (expectedHeadSha !== undefined && initialHead.sha !== expectedHeadSha) return failure('pull request head does not match the event head; evaluate again');
 
@@ -73,9 +74,9 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
 
     // A non-release PR is green only if it remains non-release after a fresh read.
     if (releaseIntent.length === 0) {
-      const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
+      const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value, options.publication);
       if (!currentIntent.ok || currentIntent.value.length > 0) return failure('release intent changed during evaluation; evaluate again');
-      const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
+      const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number, options.publication);
       if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return failure('pull request or target branch changed during evaluation');
       return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseRef: initialBase.ref, baseSha, releaseIntent, evaluation: passedEvaluation(), summary: 'No release intent; normal merge policy applies.', markers: project.value.markers } };
     }
@@ -137,7 +138,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
 
     // Establish that the PR and target still match the candidate before trusting
     // uploader permissions, then repeat the complete snapshot after those lookups.
-    const authorityIdentity = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
+    const authorityIdentity = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number, options.publication);
     if (!authorityIdentity.ok || authorityIdentity.value.headSha !== initialHead.sha || authorityIdentity.value.baseSha !== baseSha) {
       return failure('pull request or target branch changed during evaluation');
     }
@@ -155,7 +156,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     }
     // Recheck release intent, draft identity, candidate identity, and PR/branch identity after all
     // collaborator permission calls so those calls cannot make the earlier snapshot stale.
-    const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value);
+    const currentIntent = await readCurrentReleaseIntent(api, prefix, pullRequest, policy.value, options.publication);
     if (!currentIntent.ok || currentIntent.value.length === 0) return failure('release intent changed during evaluation; evaluate again');
     if (!options.deferFinalReleaseVerification) {
       const finalReleaseResult = await api.get(`${prefix}/releases/${release.id}`);
@@ -167,30 +168,32 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
         return failure('active candidate release changed during evaluation; run the gate again');
       }
     }
-    const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number);
+    const fresh = await readIdentity(api, prefix, pullRequest, initialBase.ref, repositoryId as number, options.publication);
     if (!fresh.ok || fresh.value.headSha !== initialHead.sha || fresh.value.baseSha !== baseSha) return failure('pull request or target branch changed during evaluation');
-    const evaluation = evaluate({
+    const evaluationInput: EvaluationInput = {
       candidate,
       currentHeadSha: initialHead.sha,
-      currentBaseSha: baseSha,
+      currentBaseSha: options.publication ? candidate.baseSha : baseSha,
       required: required as NonNullable<(typeof required)[number]>[],
       profiles: project.value.profiles,
       reports: progress.value.reports.map(({ report, uploader, assetId }) => ({ report, provenance: { uploader, uploadedAt: '', assetId } })),
       exceptions,
       retryResolutions,
-    });
+    };
+    const evaluation = evaluate(evaluationInput);
     const summary = renderQaSection(evaluation);
-    return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseRef: initialBase.ref, baseSha, candidateId: candidate.id, candidateReleaseId: release.id as number, candidateAssetId: candidateAsset.id as number, releaseIntent, evaluation, summary, markers: project.value.markers } };
+    return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseRef: initialBase.ref, baseSha, candidateId: candidate.id, candidateReleaseId: release.id as number, candidateAssetId: candidateAsset.id as number, releaseIntent, evaluation, summary, markers: project.value.markers,
+      ...(options.publication ? { publication: { candidate, evaluationInput, policyDigest: policyResult.sha256, mergeSha: initial.merge_commit_sha as string } } : {}) } };
   } catch {
     return failure('GitHub state could not be safely evaluated');
   }
 }
 
-async function readCurrentReleaseIntent(api: GateApi, prefix: string, pullRequest: number, policy: ReleaseIntentPolicy): Promise<{ ok: true; value: string[] } | { ok: false }> {
+async function readCurrentReleaseIntent(api: GateApi, prefix: string, pullRequest: number, policy: ReleaseIntentPolicy, publication = false): Promise<{ ok: true; value: string[] } | { ok: false }> {
   const prResult = await api.get(`${prefix}/pulls/${pullRequest}`);
   const pr = record(prResult.ok ? prResult.value : undefined);
   const head = record(pr?.head);
-  if (pr?.state !== 'open' || typeof head?.ref !== 'string') return { ok: false };
+  if (pr === undefined || !(publication ? pr.state === 'closed' && pr.merged === true : pr.state === 'open') || typeof head?.ref !== 'string') return { ok: false };
   const filesResult = await api.list(`${prefix}/pulls/${pullRequest}/files?per_page=100`);
   if (!filesResult.ok) return { ok: false };
   const files = filesResult.value.map((value) => record(value)?.filename);
@@ -198,12 +201,12 @@ async function readCurrentReleaseIntent(api: GateApi, prefix: string, pullReques
   return { ok: true, value: hasReleaseIntent({ branch: head.ref, labels: labelNames(pr), files: files as string[] }, policy) };
 }
 
-async function readIdentity(api: GateApi, prefix: string, pullRequest: number, baseBranch: string, repositoryId: number): Promise<{ ok: true; value: { headSha: string; baseSha: string } } | { ok: false }> {
+async function readIdentity(api: GateApi, prefix: string, pullRequest: number, baseBranch: string, repositoryId: number, publication = false): Promise<{ ok: true; value: { headSha: string; baseSha: string } } | { ok: false }> {
   const pr = await api.get(`${prefix}/pulls/${pullRequest}`);
   const pull = record(pr.ok ? pr.value : undefined);
   const head = record(pull?.head);
   const base = record(pull?.base);
-  if (pull?.state !== 'open' || base?.ref !== baseBranch || record(head?.repo)?.id !== repositoryId || record(base.repo)?.id !== repositoryId) return { ok: false };
+  if (!(publication ? pull?.state === 'closed' && pull.merged === true : pull?.state === 'open') || base?.ref !== baseBranch || record(head?.repo)?.id !== repositoryId || record(base.repo)?.id !== repositoryId) return { ok: false };
   const branch = await api.get(`${prefix}/branches/${encodeURIComponent(String(base.ref))}`);
   const headSha = head?.sha;
   const baseSha = record(record(branch.ok ? branch.value : undefined)?.commit)?.sha;
