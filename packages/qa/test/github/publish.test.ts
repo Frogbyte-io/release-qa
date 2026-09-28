@@ -93,6 +93,31 @@ describe('mergeReleasePr', () => {
 });
 
 describe('publishApprovedCandidate', () => {
+  test('removes superseded final-download assets before publishing a draft', async () => {
+    const tested = Buffer.from('approved installer');
+    const selected = candidate({ artifacts: [{ ...candidate().artifacts[0]!, sha256: createHash('sha256').update(tested).digest('hex') }] });
+    const checked = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
+    if (!checked.ok) throw new Error(checked.reasons.join('; '));
+    const assets = new Map<number, { name: string; bytes: Buffer }>([[800, { name: 'old-installer.exe', bytes: Buffer.from('old') }]]);
+    let removed = 0;
+    let published = 0;
+    const api: PublishApi = {
+      get: async () => ({ ok: false, reason: 'not-found' }),
+      list: async (path) => ({ ok: true, value: path.endsWith('/releases?per_page=100')
+        ? [{ id: 42, tag_name: 'v1.2.3', name: 'v1.2.3', draft: true, body: renderPublicationNotes(checked.manifest) }]
+        : [...assets].map(([id, item]) => ({ id, name: item.name, state: 'uploaded' })) }),
+      post: async () => ({ ok: false, reason: 'network-error' }),
+      patch: async () => { published++; return { ok: true, value: null }; },
+      upload: async (_repository, _release, name, bytes) => { const id = 900 + assets.size; assets.set(id, { name, bytes: Buffer.from(bytes) }); return { ok: true, value: { id, name, state: 'uploaded' } }; },
+      download: async (path, destination) => { const id = Number(path.split('/').at(-1)); const bytes = id === 101 ? tested : assets.get(id)?.bytes; if (!bytes) return { ok: false, reason: 'not-found' }; await writeFile(destination, bytes); return { ok: true, value: true }; },
+      delete: async (path) => { removed++; assets.delete(Number(path.split('/').at(-1))); return { ok: true, value: null }; },
+    };
+    expect((await publishApprovedCandidate(checked.manifest, api)).ok).toBe(true);
+    expect(removed).toBe(1);
+    expect(published).toBe(1);
+    expect([...assets.values()].map((item) => item.name).sort()).toEqual([selected.artifacts[0]!.name, 'release-qa-record.json'].sort());
+  });
+
   test.each(['missing-assets', 'conflicting-metadata'] as const)('does not mutate an already published release with %s', async (problem) => {
     const selected = candidate({ artifacts: [candidate().artifacts[0]!] });
     const checked = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));

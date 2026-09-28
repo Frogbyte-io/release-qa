@@ -89,7 +89,13 @@ export async function preparePublication(repository: string, pullRequest: number
   const checked = await evaluatePullRequest(repository, pullRequest, api, undefined, undefined, undefined, { publication: true });
   if (!checked.ok) return { ok: false, reasons: [checked.error] };
   const gate = checked.value;
-  if (gate.releaseIntent.length === 0) return { ok: false, reasons: ['no release intent'] };
+  if (gate.releaseIntent.length === 0) {
+    const releases = await api.list(`repos/${repository}/releases?per_page=100`);
+    if (!releases.ok) return { ok: false, reasons: ['cannot determine whether a prior release candidate exists'] };
+    const prior = releases.value.map(asRecord).find((item) => item?.draft === true && item.name === `QA PR #${pullRequest}`);
+    if (prior) return { ok: false, reasons: ['release intent was removed after a candidate was selected; repair required'] };
+    return { ok: false, reasons: ['no release intent'] };
+  }
   if (!gate.publication) return { ok: false, reasons: ['merged PR has no active release candidate'] };
   const { candidate, evaluationInput, policyDigest, mergeSha } = gate.publication;
   const build = await api.get(`repos/${repository}/actions/runs/${candidate.build.runId}`);
@@ -172,7 +178,17 @@ export async function publishApprovedCandidate(manifest: PublicationManifest, ap
   if (release.body !== body || release.name !== manifest.tag) return { ok: false, error: 'release has conflicting metadata' };
   const assetsResult = await api.list(`${prefix}/releases/${releaseId}/assets?per_page=100`);
   if (!assetsResult.ok) return { ok: false, error: `cannot verify release assets: ${assetsResult.reason}` };
-  const existing = new Map(assetsResult.value.map(asRecord).filter((x): x is Record<string, unknown> => !!x && typeof x.name === 'string').map((x) => [x.name as string, x]));
+  const listedAssets = assetsResult.value.map(asRecord);
+  if (listedAssets.some((asset) => !asset || typeof asset.name !== 'string' || !Number.isSafeInteger(asset.id))) return { ok: false, error: 'release asset listing is incomplete' };
+  const allowed = new Set([...manifest.artifacts.map((artifact) => artifact.name), 'release-qa-record.json']);
+  for (const asset of listedAssets) {
+    if (asset && !allowed.has(asset.name as string)) {
+      if (release.draft !== true) return { ok: false, error: 'published release contains an unapproved asset; repair required' };
+      const removed = await api.delete(`${prefix}/releases/assets/${asset.id}`);
+      if (!removed.ok) return { ok: false, error: `superseded asset ${asset.name} could not be removed from the final draft` };
+    }
+  }
+  const existing = new Map(listedAssets.filter((x): x is Record<string, unknown> => !!x && allowed.has(x.name as string)).map((x) => [x.name as string, x]));
   if (release.draft !== true && [...manifest.artifacts.map((artifact) => artifact.name), 'release-qa-record.json'].some((name) => !existing.has(name))) {
     return { ok: false, error: 'published release is incomplete; repair required before retry' };
   }
