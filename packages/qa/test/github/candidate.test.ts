@@ -401,7 +401,22 @@ describe('candidate preparation preflight', () => {
       ...client, post: async () => ({ ok: true, value: { workflow_run_id: 123 } }),
     });
     expect(result).toMatchObject({ ok: false });
-    expect(!result.ok && result.error).toContain('trusted workflow revision');
+    expect(!result.ok && result.error).toContain('different workflow revision');
+  });
+
+  test('waits for a newly dispatched run to acquire its source-bound title', async () => {
+    const client = api({ 'repos/team/sample': { ...repository, default_branch: 'main' } });
+    let reads = 0;
+    const result = await prepareCandidate('team/sample', 9, SHA1.source, {
+      ...client,
+      get: async (path) => path === 'repos/team/sample/actions/runs/123'
+        ? { ok: true, value: { id: 123, path: '.github/workflows/qa-prepare.yml', event: 'workflow_dispatch',
+          display_title: ++reads === 1 ? 'qa-prepare' : `qa-prepare PR #9 ${SHA1.source}`, head_sha: SHA1.base, repository: { id: 7 } } }
+        : client.get(path),
+      post: async () => ({ ok: true, value: { workflow_run_id: 123 } }),
+    });
+    expect(result).toMatchObject({ ok: true, runId: 123 });
+    expect(reads).toBe(2);
   });
 
   test('refuses a changed PR head before building or selecting a candidate', async () => {
