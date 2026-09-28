@@ -70,7 +70,7 @@ function parseResult(input: unknown, repository: string, pullRequest: number, ev
   const value = record(input);
   if (value?.schemaVersion !== 1 || value.repository !== repository || value.pullRequest !== pullRequest || value.eventHead !== eventHead ||
       !['success', 'failure'].includes(String(value.state)) || typeof value.description !== 'string' || typeof value.summary !== 'string') return undefined;
-  if (value.state === 'success' && (typeof value.headSha !== 'string' || typeof value.baseRef !== 'string' || typeof value.baseSha !== 'string' || !Array.isArray(value.releaseIntent))) return undefined;
+  if (value.state === 'success' && (value.headSha !== eventHead || typeof value.baseRef !== 'string' || typeof value.baseSha !== 'string' || !/^[0-9a-f]{40}$/.test(value.baseSha) || !Array.isArray(value.releaseIntent) || value.releaseIntent.some((item) => typeof item !== 'string'))) return undefined;
   return value as unknown as DeferredGateResult;
 }
 

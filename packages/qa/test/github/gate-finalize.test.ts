@@ -38,6 +38,15 @@ describe('deferred gate finalization', () => {
     expect(api.statuses[0]?.description).toContain('missing or invalid');
   });
 
+  test('keeps an ordinary PR green while release intent remains absent', async () => {
+    const api = makeApi({ branch: 'feature/update' });
+    const { candidateReleaseId: _releaseId, candidateAssetId: _assetId, ...nonReleaseResult } = passingResult();
+    const result = await finalizeGateResult('owner/repo', 7, SHA, { ...nonReleaseResult, releaseIntent: [] }, api);
+
+    expect(result).toMatchObject({ ok: true, state: 'success' });
+    expect(api.statuses[0]?.state).toBe('success');
+  });
+
   test('keeps an ordinary PR green only when it remains without release intent', async () => {
     const api = makeApi({ releaseLabel: true, branch: 'feature/update' });
     const { candidateReleaseId: _releaseId, candidateAssetId: _assetId, ...nonReleaseResult } = passingResult();
