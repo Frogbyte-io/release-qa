@@ -3,42 +3,32 @@
 //
 //   node explore.mjs <Dot X.exe> <msedgedriver.exe> <output dir>
 //
-// Everything it starts is stopped by the pid it captured; nothing is matched by name.
-import { spawn } from 'node:child_process';
+// Everything it starts is stopped through driver.mjs; nothing is matched by name.
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { connect } from 'node:net';
 import { join } from 'node:path';
-import { remote } from 'webdriverio';
+import { startSession } from './driver.mjs';
 
 const [app, nativeDriver, out] = process.argv.slice(2);
 if (!app || !nativeDriver || !out) throw new Error('usage: node explore.mjs <Dot X.exe> <msedgedriver.exe> <output dir>');
 mkdirSync(out, { recursive: true });
-const PORT = 4444;
 
-const listening = (port) => new Promise((resolve) => {
-  const socket = connect(port, '127.0.0.1');
-  socket.once('connect', () => { socket.destroy(); resolve(true); });
-  socket.once('error', () => resolve(false));
-});
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const driver = spawn('tauri-driver', ['--native-driver', nativeDriver, '--port', String(PORT), '--native-port', String(PORT + 1)], { stdio: 'ignore', windowsHide: true });
-let browser;
+const { browser, stop } = await startSession(app, nativeDriver);
 try {
-  for (let i = 0; i < 100 && !(await listening(PORT)); i++) await sleep(100);
-  browser = await remote({
-    hostname: '127.0.0.1', port: PORT, path: '/', logLevel: 'warn', connectionRetryTimeout: 60_000,
-    capabilities: { 'tauri:options': { application: app } },
-  });
-  // The app loads its stores and device list after the page appears.
-  await sleep(8000);
-  writeFileSync(join(out, 'title.txt'), `${await browser.getTitle()}\n${await browser.getUrl()}\n`);
+  // The app fills the page after it loads its stores; the five slot buttons are there once it has. A device is not
+  // required to explore, so a missing one is noted rather than waited for.
+  await browser.waitUntil(async () => (await browser.$$('button.rounded-full.w-24.h-12.mt-12')).length === 5, { timeout: 30_000, timeoutMsg: 'the slot buttons never appeared' });
+  const connected = await browser.waitUntil(async () => (await (await browser.$('body')).getText()).includes('Connected'), { timeout: 10_000 }).then(() => true, () => false);
+  writeFileSync(join(out, 'title.txt'), `${await browser.getTitle()}\n${await browser.getUrl()}\ndevice connected: ${connected}\n`);
   writeFileSync(join(out, 'page.html'), await browser.getPageSource());
   await browser.saveScreenshot(join(out, 'main.png'));
   const handles = await browser.getWindowHandles();
   writeFileSync(join(out, 'windows.json'), JSON.stringify(handles, null, 2));
-  console.log(`title: ${await browser.getTitle()}; windows: ${handles.length}`);
+  console.log(`title: ${await browser.getTitle()}; windows: ${handles.length}; device connected: ${connected}`);
+} catch (error) {
+  console.error(`FAILED: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
 } finally {
-  await browser?.deleteSession().catch(() => undefined);
-  driver.kill();
+  const problems = await stop();
+  for (const problem of problems) console.error(`cleanup: ${problem}`);
+  if (problems.length > 0) process.exitCode = 1;
 }

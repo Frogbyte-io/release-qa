@@ -17,7 +17,7 @@ and a runnable sample consumer exist: the sample passes through `release-qa run`
 Xvfb ([guide](docs/guides/run-the-sample.md), [evidence](examples/tauri-smoke/qa/evidence/)). The dashboard and the
 GitHub integration do not exist yet.
 
-- [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. The Dot X feasibility check is still open.
+- [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. Dot X's first flow is feasible with named constraints: slider input needs the device or a USB serial fixture, and signing and a dedicated test machine are not ready yet.
 - [GitHub merge gate](docs/decisions/github-gate.md): a no-service required check works, with documented design changes and unproven items.
 - [Tool layout and defaults](docs/decisions/tool-layout.md): runtime, package manager, baselines and repository structure.
 - [Local runs](docs/decisions/local-runs.md): the local candidate manifest, run state, resume rules and exit codes.

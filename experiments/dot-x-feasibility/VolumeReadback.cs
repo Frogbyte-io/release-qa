@@ -60,13 +60,15 @@ public static class VolumeReadback
     {
         int SetMasterVolume(float level, ref Guid context);
         int GetMasterVolume(out float level);
-        int SetMute(bool mute, ref Guid context);
-        int GetMute(out bool mute);
+        // BOOL is 4 bytes; a bool in a COM interface would otherwise marshal as 2-byte VARIANT_BOOL.
+        int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
+        int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 
     public static int Main(string[] args)
     {
-        uint pid = uint.Parse(args[0]);
+        uint pid;
+        if (args.Length != 1 || !uint.TryParse(args[0], out pid)) { Console.Error.WriteLine("usage: rqa-volume-readback.exe <pid>"); return 2; }
         var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
         IMMDevice device;
         Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0 /* render */, 1 /* multimedia */, out device));
@@ -76,20 +78,22 @@ public static class VolumeReadback
         IAudioSessionEnumerator sessions;
         Marshal.ThrowExceptionForHR(((IAudioSessionManager2)manager).GetSessionEnumerator(out sessions));
         int count;
-        sessions.GetCount(out count);
+        Marshal.ThrowExceptionForHR(sessions.GetCount(out count));
         var found = new List<string>();
         for (int i = 0; i < count; i++)
         {
             IAudioSessionControl2 control;
-            sessions.GetSession(i, out control);
+            Marshal.ThrowExceptionForHR(sessions.GetSession(i, out control));
             uint owner;
-            control.GetProcessId(out owner);
-            if (owner != pid) continue;
+            // Another process's session can fail here (a multi-process session reports AUDCLNT_S_NO_SINGLE_PROCESS);
+            // it is not the one being read, so only a session that names this pid counts.
+            if (control.GetProcessId(out owner) != 0 || owner != pid) continue;
             var volume = (ISimpleAudioVolume)control;
             float level;
             bool muted;
-            volume.GetMasterVolume(out level);
-            volume.GetMute(out muted);
+            // A failure here is an error, never a sample: the probe must not record a volume that was not read.
+            Marshal.ThrowExceptionForHR(volume.GetMasterVolume(out level));
+            Marshal.ThrowExceptionForHR(volume.GetMute(out muted));
             found.Add(string.Format(CultureInfo.InvariantCulture, "{{\"volume\":{0:0.0000},\"muted\":{1}}}", level, muted ? "true" : "false"));
         }
         Console.WriteLine("{\"pid\":" + pid + ",\"sessions\":[" + string.Join(",", found) + "]}");

@@ -13,7 +13,9 @@ public static class AudioFixture
 {
     public static void Main(string[] args)
     {
-        int seconds = args.Length > 0 ? int.Parse(args[0]) : 600;
+        int seconds;
+        if (args.Length == 0) seconds = 600;
+        else if (!int.TryParse(args[0], out seconds) || seconds <= 0) { Console.Error.WriteLine("usage: rqa-audio-fixture.exe [seconds > 0]"); Environment.Exit(2); return; }
         // One second of a 440 Hz tone at amplitude 2 of 32767: inaudible, but real samples, so the session is active.
         const int rate = 44100;
         var wav = new MemoryStream();

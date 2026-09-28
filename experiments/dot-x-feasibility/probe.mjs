@@ -8,12 +8,12 @@
 // `map` launches Dot X, maps the fixture's session to the slot, checks the mapping on screen and on disk, then records
 // the fixture's volume while the slider is moved. `verify` launches Dot X again (a restart), checks the mapping is
 // still there, records volume again, then removes the mapping and checks it is gone. Each mode ends its session, which
-// closes the app; everything it starts is stopped by the pid it captured.
-import { execFile, spawn } from 'node:child_process';
+// closes the app; driver.mjs stops everything the session started. A watch window passes only if the readback saw the
+// whole range (1.0, and 0 muted), so a run cannot pass without the slider having reached the fixture.
+import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { connect } from 'node:net';
 import { join } from 'node:path';
-import { remote } from 'webdriverio';
+import { startSession } from './driver.mjs';
 
 const [mode, app, nativeDriver, fixturePid, out, slotArg = '4', watchArg = '60'] = process.argv.slice(2);
 if (!['map', 'verify'].includes(mode) || !app || !nativeDriver || !fixturePid || !out) {
@@ -22,18 +22,12 @@ if (!['map', 'verify'].includes(mode) || !app || !nativeDriver || !fixturePid ||
 const slot = Number(slotArg) - 1;
 const watchMs = Number(watchArg) * 1000;
 const FIXTURE = 'rqa-audio-fixture';
-const PORT = 4444;
 const readbackExe = join(process.env.TEMP, 'dotx-probe', 'bin', 'rqa-volume-readback.exe');
 const selectedAppsFile = join(process.env.APPDATA, 'com.dot-x.dev', 'selectedApps.json');
 const dir = join(out, mode);
 mkdirSync(dir, { recursive: true });
 const log = (line) => { const text = `${new Date().toISOString()} ${line}`; console.log(text); appendFileSync(join(dir, 'log.txt'), `${text}\n`); };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const listening = (port) => new Promise((resolve) => {
-  const socket = connect(port, '127.0.0.1');
-  socket.once('connect', () => { socket.destroy(); resolve(true); });
-  socket.once('error', () => resolve(false));
-});
 const readback = () => new Promise((resolve, reject) =>
   execFile(readbackExe, [fixturePid], { windowsHide: true }, (error, stdout) => (error ? reject(error) : resolve(JSON.parse(stdout)))));
 const mappedOnDisk = () => readFileSync(selectedAppsFile, 'utf8').toLowerCase().includes(FIXTURE);
@@ -91,18 +85,18 @@ async function watchVolume(label) {
     await sleep(100);
   }
   writeFileSync(join(dir, 'readback.json'), `${JSON.stringify(samples, null, 2)}\n`);
+  const seen = samples.flatMap((sample) => sample.sessions);
+  if (!seen.some((v) => v.volume >= 0.99 && !v.muted) || !seen.some((v) => v.volume === 0 && v.muted)) {
+    throw new Error('the readback never saw both the top (1.0) and the bottom (0, muted): the slider did not reach the fixture over its whole range');
+  }
   return samples;
 }
 
-const driver = spawn('tauri-driver', ['--native-driver', nativeDriver, '--port', String(PORT), '--native-port', String(PORT + 1)], { stdio: 'ignore', windowsHide: true });
-let browser;
+let session;
 try {
-  for (let i = 0; i < 100 && !(await listening(PORT)); i++) await sleep(100);
   log(`launching ${app}`);
-  browser = await remote({
-    hostname: '127.0.0.1', port: PORT, path: '/', logLevel: 'warn', connectionRetryTimeout: 60_000,
-    capabilities: { 'tauri:options': { application: app } },
-  });
+  session = await startSession(app, nativeDriver);
+  const { browser } = session;
   await waitFor('the device to connect', async () => (await (await browser.$('body')).getText()).includes('Connected'));
   await waitFor('the slot buttons', async () => (await browser.$$('button.rounded-full.w-24.h-12.mt-12')).length === 5);
   log('connected');
@@ -126,9 +120,11 @@ try {
   log('ok');
 } catch (error) {
   log(`FAILED: ${error instanceof Error ? error.message : String(error)}`);
-  await browser?.saveScreenshot(join(dir, 'failure.png')).catch(() => undefined);
+  await session?.browser.saveScreenshot(join(dir, 'failure.png')).catch(() => undefined);
   process.exitCode = 1;
 } finally {
-  await browser?.deleteSession().catch(() => undefined);
-  driver.kill();
+  for (const problem of (await session?.stop()) ?? []) {
+    log(`cleanup: ${problem}`);
+    process.exitCode = 1;
+  }
 }
