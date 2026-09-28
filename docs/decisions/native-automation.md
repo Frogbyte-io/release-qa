@@ -1,6 +1,6 @@
 # Decision: automating unchanged packaged Tauri applications (Task 0.1)
 
-Status: **partly complete.** The sample-app half is proven on Windows and on Ubuntu 24.04/Xvfb. The Dot X first-flow feasibility check was **not attempted** (see [Not attempted](#not-attempted)), so the task's exit condition is not fully met.
+Status: **complete.** The sample-app half is proven on Windows and on Ubuntu 24.04/Xvfb. The Dot X half was run on 2026-09-28: Dot X's first flow is **feasible with named constraints** (see [Dot X](#dot-x)).
 
 Date: 2026-09-20. Sample: [`examples/tauri-smoke`](../../examples/tauri-smoke). Harness and reproduction steps: [`experiments/native-automation`](../../experiments/native-automation). Raw records: [`evidence/`](../../experiments/native-automation/evidence).
 
@@ -8,7 +8,7 @@ Date: 2026-09-20. Sample: [`examples/tauri-smoke`](../../examples/tauri-smoke). 
 
 For the sample app, **unchanged release packages are automatable on both platforms** with an external `tauri-driver` 2.0.6, WebdriverIO 9.31.9 (`remote()` API) and the platform's native driver: Microsoft Edge WebDriver on Windows, `WebKitWebDriver` on Linux. The installed binaries were launched as shipped; no flag, feature, embedded server or other change was made to the app or its package.
 
-This decision is about the sample only. It does not establish the same for Dot X (different window, plugins, signing, and audio behaviour).
+The same chain drives an unchanged Dot X release build on Windows; the constraints that come with Dot X are in [Dot X](#dot-x).
 
 ## Evidence record
 
@@ -54,24 +54,58 @@ Two single-attempt probes were run first to debug the harness and are not counte
 
 - **The Windows machine is an everyday laptop, not a dedicated test machine.** The maintainer chose it after being told the design advises against it. The app was installed per-user into a directory on `D:`. The installer created an `HKCU` uninstall key and a Start menu shortcut; the silent uninstaller removed both and the binary, but **left the app-data directories** (`%APPDATA%` and the `%LOCALAPPDATA%` WebView2 profile), which were then deleted by hand. Only directories named exactly after the sample's unique identifier were ever cleaned or deleted. A "clean profile" here means deleting those directories, not a fresh OS profile.
 - **The Linux environment is a throwaway WSL2 distro, not bare metal.** WSLg also adds a Start menu shortcut for the distro's installed app on the host, which disappears when the distro is unregistered. The kernel is Microsoft's. Only a virtual display was used, so nothing here says anything about real Wayland, tray, audio devices or suspend/resume, as the design already states.
-- **The sample is unsigned.** Signing readiness for Dot X was not checked.
+- **The sample is unsigned.** For Dot X's signing readiness see [Dot X](#dot-x).
 - **Environment set by the drivers was not captured.** The app is launched by the drivers; I did not record the environment variables or arguments they set (for example a WebView2 remote-debugging port), so "no flags" is about what we passed, not proof that the driver adds nothing.
 - **Harness safety checks were exercised by hand, not recorded.** With a copy of the app already running and a file in its profile, the harness refused (`already running: <pid>`), left the file and the running app untouched, and killed nothing; `COUNT=0` and `COUNT=abc` are rejected with exit 2. Those runs are not in `evidence/`. The interrupt (`SIGINT`/`SIGTERM`) cleanup and the per-user `HKCU` WebView2 lookup are implemented but were **not exercised**; this machine has the per-machine registry key.
 - **Sample only, one app, one build.** Thirty attempts per platform show the mechanism works, not a failure rate.
 
-## Not attempted
+## Dot X
 
-The plan's Dot X bullet was not run:
+Result: **feasible with named constraints.** An unchanged Dot X release build was driven through the same chain:
+launched, an audio session discovered, mapped to a slider through the app picker, its volume read back independently
+while the Decker's slider moved, the mapping found again after a restart, and removed again. Measured once, on
+2026-09-28; harness, fixtures and reproduction steps in
+[`experiments/dot-x-feasibility`](../../experiments/dot-x-feasibility), raw records in its
+[`evidence/`](../../experiments/dot-x-feasibility/evidence).
 
-- Launch the packaged Dot X on its designated Windows test machine.
-- Find an existing or external way to supply slider input without a physical device.
-- Independently read an audio session's volume.
-- Check signing readiness.
+| | Windows |
+| --- | --- |
+| Machine | the same everyday laptop and interactive session as above, WebView2 154.0.4258.37; the maintainer's Decker on USB serial `COM13` (VID `04D8`, PID `E626`) |
+| Build | Dot X `v2` at `e595496` (version 2.0.0-1), `yarn tauri build --bundles nsis` in a separate worktree, **unsigned** (signing and updater artifacts turned off for that command; no repository file changed) |
+| Package SHA-256 | installer `ecb705d2cd4f7e1786ee0a063ee73ff6812b49be025c87fb6992b53b03dbfb3d`; `Dot X.exe` `14b1b265c6bfd7794be92c299b75004671919763fcc2f2a79d6c3ed63a1cd210`, byte-identical to the copy inside the installer (extracted with 7-Zip) |
+| What ran | that `Dot X.exe` from the build tree, **not installed** (see constraint 2) |
+| Driver/version | tauri-driver 2.0.6 (Stage 0's binary, SHA-256 `61de0025…`), msedgedriver 154.0.4258.37, WebdriverIO 9.31.9, Node 24.13.0 |
+| Launch | the window loaded and showed `Connected`: the build found and opened the Decker on its own |
+| Audio session | [`rqa-audio-fixture.exe`](../../experiments/dot-x-feasibility/AudioFixture.cs), a uniquely named process playing an inaudible tone; Dot X listed it in the picker as `Rqa-Audio-Fixture` |
+| Mapping | slot 4's picker: search, click; the fixture was ticked and written to `%APPDATA%\com.dot-x.dev\selectedApps.json` |
+| Volume readback | [`rqa-volume-readback.exe`](../../experiments/dot-x-feasibility/VolumeReadback.cs) reads the fixture's session from Windows Core Audio, sharing no code with Dot X. Mapping alone moved it from 1.0 to 0.42 (the slider's position). While a person moved the slider it followed across the full range: 1.0 at the top, 0 **and muted** at the bottom (Dot X mutes below 1 %), about 0.43 in the middle; 31 changes in 60 s, and 16 in 45 s after the restart |
+| Restart | a new session (the previous one's app had exited) found the mapping ticked and on disk, and slider moves still reached the fixture |
+| Reverse state | unticking removed the mapping from the picker and from `selectedApps.json` |
+| Cleanup | every process the probe started was stopped by its pid; the profile was restored from a backup and matched it file for file (SHA-256, 28 + 4002 files); the autostart entry was unchanged |
 
-No Dot X build or designated test machine was available in this session (the registered `windows-dev` host has guardrails requiring approval for package changes), and this repository does not contain Dot X. Dot X's first-flow input and readback feasibility is therefore **unknown**, and any Stage 6 claim that depends on it stays blocked. Task 0.1 should not be treated as fully closed until this is done or explicitly re-scoped.
+### Constraints
 
-## Consequences for later tasks
+1. **Controlled slider input needs hardware.** Dot X reads sliders only from a USB serial device. The on-screen sliders
+   are display-only, MIDI is output-only, and `get_devices` lists only ports whose type is USB, so a software virtual COM
+   pair would not be offered or reconnected to. In this run **a person moved the Decker's slider**; only the readback was
+   automated. An automated suite needs either that, or a USB CDC fixture (a programmable board speaking Decker's
+   MessagePack slider messages) on the same production path. Nothing was mocked, and no scenario is claimed proven
+   beyond what a person's slider input showed.
+2. **No dedicated test machine or account yet.** The run used the maintainer's everyday profile, with their consent,
+   because the Dot X installed there shares the product name and uninstall entry with the candidate and every Dot X
+   build shares the one profile `com.dot-x.dev`. So the installer was **not run**: installation, uninstallation and
+   what they leave behind are not proven for Dot X. The installed app was quit from the tray first and started again
+   afterwards; the profile was backed up and restored. Stage 6 needs the dedicated account, machine or VM the design
+   asks for.
+3. **Signing is not ready.** The Frogbyte AS code-signing certificate configured in `tauri.conf.json` (Certum EV,
+   thumbprint `CA2E93B1…`) **expired on 2026-07-04**. The build was unsigned, and so is the Dot X 2.0.0-1 installed on
+   the laptop. A signed candidate needs a renewed certificate; the updater key was present in the environment but not
+   used.
+4. **Fixture details that matter.** Windows remembers per-application volume by executable path, so the fixture must
+   start from a new path each attempt, or it starts at the volume Dot X last set. Dot X names a session by the
+   executable's file description, so the fixture carries one. Dot X is single-instance and closes to the tray, so a run
+   must first make sure no other Dot X is running and must stop what it started by pid.
 
-- Task 0.3 can adopt WebdriverIO + external `tauri-driver` as the driver for the sample-app milestone (Stage 2).
-- The Stage 2 runner must record installed-file hashes and add doctor checks for driver/runtime version match (Windows) and for a display session (Linux).
-- Screenshots are supporting evidence only; assertions must use DOM/native state.
+What it does not show: a failure rate (one run of each phase), input latency (the readback polls roughly every 150 ms),
+the plugins configured in the profile (not examined), and anything on Linux, where Dot X has no
+release candidate.

@@ -59,7 +59,7 @@ The repeatable smoke check is now the sample's `release-qa run` (see the guide),
 
 ## Not settled
 
-- **Dot X feasibility** is unknown (see [native-automation.md](native-automation.md#not-attempted)). Stage 6 stays blocked on it.
+- **Dot X feasibility** is established with named constraints: slider input needs the device or a USB serial fixture, Stage 6 needs a dedicated test account or machine, and the code-signing certificate has expired (see [native-automation.md](native-automation.md#dot-x)).
 - **Electron + Vue** is untested. If the dashboard shell changes, only `apps/desktop` and Stage 5 move.
 - **Node 24** works locally but is not in the CI matrix. Add it when a consumer needs it.
 - **Windows baseline in CI** is Windows Server on a hosted runner, which is not the interactive Windows 11 desktop used for the Stage 0 GUI runs.
