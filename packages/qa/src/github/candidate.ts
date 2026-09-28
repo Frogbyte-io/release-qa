@@ -39,6 +39,14 @@ export interface PreparationApi extends GitHubApi {
   list(path: string): Promise<ApiResult<unknown[]>>;
 }
 
+export interface CandidateDispatchApi extends PreparationApi {
+  post(path: string, body: unknown): Promise<ApiResult<unknown>>;
+}
+
+export type CandidatePreparation =
+  | { ok: true; runId: number; repositoryId: number; sourceSha: string; baseSha: string; policyDigest: string; workflowHeadSha: string }
+  | { ok: false; error: string };
+
 export type PreparationPreflight =
   | { ok: true; repositoryId: number; sourceSha: string; baseSha: string; policyDigest: string; releaseIntent: string[] }
   | { ok: false; error: string };
@@ -46,6 +54,27 @@ export type PreparationPreflight =
 const gitSha = /^[0-9a-f]{40}$/;
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+/** Dispatches only the workflow from the trusted default branch. The workflow rechecks every input before withdrawing selection. */
+export async function prepareCandidate(repository: string, prNumber: number, expectedHead: string, api: CandidateDispatchApi = new GhTransport()): Promise<CandidatePreparation> {
+  const preflight = await inspectCandidatePreparation(repository, prNumber, expectedHead, api);
+  if (!preflight.ok) return preflight;
+  const info = await api.get(`repos/${repository}`);
+  const branchName = record(info.ok ? info.value : undefined)?.default_branch;
+  if (typeof branchName !== 'string' || !branchName) return { ok: false, error: 'cannot identify the trusted default branch' };
+  const branch = await api.get(`repos/${repository}/branches/${encodeURIComponent(branchName)}`);
+  const workflowHeadSha = record(record(branch.ok ? branch.value : undefined)?.commit)?.sha;
+  if (typeof workflowHeadSha !== 'string' || !gitSha.test(workflowHeadSha)) return { ok: false, error: 'cannot verify the trusted workflow revision' };
+  const path = `repos/${repository}/actions/workflows/qa-prepare.yml/dispatches`;
+  const dispatched = await api.post(path, {
+    ref: branchName,
+    inputs: { pr_number: String(prNumber), expected_head: expectedHead, expected_base: preflight.baseSha, policy_digest: preflight.policyDigest },
+  });
+  if (!dispatched.ok) return { ok: false, error: `candidate preparation dispatch failed: ${dispatched.reason}` };
+  const runId = record(dispatched.value)?.workflow_run_id;
+  if (typeof runId !== 'number' || !Number.isSafeInteger(runId) || runId <= 0) return { ok: false, error: 'candidate preparation dispatch did not return a run ID' };
+  return { ok: true, runId, repositoryId: preflight.repositoryId, sourceSha: expectedHead, baseSha: preflight.baseSha, policyDigest: preflight.policyDigest, workflowHeadSha };
+}
 
 /** Reads release intent and policy from the current trusted base, not the PR's potentially stale base SHA. */
 export async function inspectCandidatePreparation(repository: string, prNumber: number, expectedHead: string, api: PreparationApi = new GhTransport()): Promise<PreparationPreflight> {
@@ -167,7 +196,7 @@ export function verifyCandidateAssets(candidate: Candidate, run: BuildRun, relea
   const issues: string[] = [];
   if (run.id !== candidate.build.runId || run.run_attempt !== candidate.build.attempt ||
       run.path !== candidate.build.workflowPath ||
-      run.head_sha !== candidate.sourceSha || run.repository.id !== candidate.repositoryId || run.conclusion !== 'success') {
+      run.head_sha !== (candidate.build.workflowHeadSha ?? candidate.sourceSha) || run.repository.id !== candidate.repositoryId || run.conclusion !== 'success') {
     issues.push('recorded build run does not match a successful candidate preparation');
   }
   for (const artifact of candidate.artifacts) {
@@ -178,7 +207,7 @@ export function verifyCandidateAssets(candidate: Candidate, run: BuildRun, relea
     const action = actions.find((item) => item.id === artifact.actionsArtifactId);
     // An expired archive is not needed for download once the exact release asset survives, but its recorded origin is.
     if (action === undefined || action.workflow_run.id !== candidate.build.runId ||
-        action.workflow_run.repository_id !== candidate.repositoryId || action.workflow_run.head_sha !== candidate.sourceSha) {
+        action.workflow_run.repository_id !== candidate.repositoryId || action.workflow_run.head_sha !== (candidate.build.workflowHeadSha ?? candidate.sourceSha)) {
       issues.push(`${artifact.profile}/${artifact.name}: Actions artifact is not from the recorded build`);
     }
   }

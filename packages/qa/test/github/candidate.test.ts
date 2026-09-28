@@ -7,7 +7,7 @@ import { discoverProjects, type RepositoryApi } from '../../src/github/discover.
 import { GhTransport, inspectGitHubAccess, type GitHubApi } from '../../src/github/transport.ts';
 import { project } from '../fixtures/records.ts';
 import { candidate, SHA1, SHA256 } from '../fixtures/records.ts';
-import { downloadCandidate, inspectCandidatePreparation, verifyCandidateAssets, type CandidateDownloadApi, type PreparationApi } from '../../src/github/candidate.ts';
+import { downloadCandidate, inspectCandidatePreparation, prepareCandidate, verifyCandidateAssets, type CandidateDownloadApi, type PreparationApi } from '../../src/github/candidate.ts';
 
 function fakeApi(entries: Record<string, unknown>): RepositoryApi {
   return {
@@ -249,6 +249,15 @@ describe('candidate asset identity', () => {
     const wrong = { ...actions[0]!, workflow_run: { ...actions[0]!.workflow_run, id: 9999 } };
     expect(verifyCandidateAssets(candidate(), build, releases, [wrong, actions[1]!]).ok).toBe(false);
   });
+
+  test('distinguishes a trusted workflow revision from the packaged PR source', () => {
+    const selected = candidate({ build: { ...candidate().build, workflowHeadSha: SHA1.base } });
+    const trustedRun = { ...build, head_sha: SHA1.base };
+    const trustedArtifacts = actions.map((entry) => ({ ...entry, workflow_run: { ...entry.workflow_run, head_sha: SHA1.base } }));
+    expect(verifyCandidateAssets(selected, trustedRun, releases, trustedArtifacts).ok).toBe(true);
+    expect(verifyCandidateAssets(selected, build, releases, trustedArtifacts).ok).toBe(false);
+    expect(verifyCandidateAssets(selected, trustedRun, releases, actions).ok).toBe(false);
+  });
 });
 
 describe('downloading a selected candidate artifact', () => {
@@ -350,6 +359,30 @@ describe('candidate preparation preflight', () => {
     const result = await inspectCandidatePreparation('team/sample', 9, SHA1.source, api());
     expect(result).toMatchObject({ ok: true, repositoryId: 7, sourceSha: SHA1.source, baseSha: SHA1.base, releaseIntent: ['release file changed: VERSION'] });
     expect(result.ok && result.policyDigest).toBe(createHash('sha256').update(JSON.stringify(policy)).digest('hex'));
+  });
+
+  test('dispatches the trusted default-branch workflow with exact preflight identities', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const client = api({ 'repos/team/sample': { ...repository, default_branch: 'main' } });
+    const result = await prepareCandidate('team/sample', 9, SHA1.source, {
+      ...client,
+      post: async (path, body) => { calls.push({ path, body }); return { ok: true, value: { workflow_run_id: 123 } }; },
+    });
+    expect(result).toMatchObject({ ok: true, runId: 123, sourceSha: SHA1.source, workflowHeadSha: SHA1.base });
+    expect(calls).toEqual([{ path: 'repos/team/sample/actions/workflows/qa-prepare.yml/dispatches', body: {
+      ref: 'main', inputs: { pr_number: '9', expected_head: SHA1.source, expected_base: SHA1.base,
+        policy_digest: createHash('sha256').update(JSON.stringify(policy)).digest('hex') },
+    } }]);
+  });
+
+  test('does not dispatch a changed head or ambiguous workflow response', async () => {
+    let dispatched = 0;
+    const client = api({ 'repos/team/sample': { ...repository, default_branch: 'main' } });
+    const dispatch = { ...client, post: async () => { dispatched++; return { ok: true as const, value: {} }; } };
+    expect((await prepareCandidate('team/sample', 9, SHA1.base, dispatch)).ok).toBe(false);
+    expect(dispatched).toBe(0);
+    expect((await prepareCandidate('team/sample', 9, SHA1.source, dispatch)).ok).toBe(false);
+    expect(dispatched).toBe(1);
   });
 
   test('refuses a changed PR head before building or selecting a candidate', async () => {

@@ -18,7 +18,7 @@ export interface Candidate {
   sourceTreeSha: string;
   testRevision: string;
   policyDigest: string;
-  build: { workflowPath: string; runId: number; attempt: number };
+  build: { workflowPath: string; workflowHeadSha?: string; runId: number; attempt: number };
   artifacts: Artifact[];
 }
 
@@ -50,6 +50,7 @@ export function parseCandidate(input: unknown): ParseResult<Candidate> {
       policyDigest: c.sha256(rec.policyDigest, 'policyDigest'),
       build: build && {
         workflowPath: c.relativePath(build.workflowPath, 'build.workflowPath'),
+        ...(build.workflowHeadSha === undefined ? {} : { workflowHeadSha: c.gitSha(build.workflowHeadSha, 'build.workflowHeadSha') }),
         runId: c.int(build.runId, 'build.runId'),
         attempt: c.int(build.attempt, 'build.attempt'),
       },
