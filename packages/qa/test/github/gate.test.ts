@@ -189,6 +189,16 @@ describe('live pull request evaluation', () => {
     expect(result.value.summary).toContain('windows/device-feel');
   });
 
+  test('loads a brokered draft release id directly without listing draft releases', async () => {
+    const api = makeGateApi();
+    const list = api.list.bind(api);
+    api.list = async (path) => path === 'repos/owner/repo/releases?per_page=100'
+      ? { ok: false, reason: 'missing-scope' }
+      : list(path);
+    const result = await evaluatePullRequest('owner/repo', 7, api, SHA1.source, 50);
+    expect(result.ok && result.value.candidateId).toBe('cand-0001');
+  });
+
   test('rejects a delayed green result when the PR head changes before revalidation', async () => {
     const api = makeGateApi({ changeHeadOnSecondRead: true });
     await expect(evaluatePullRequest('owner/repo', 7, api)).resolves.toEqual({ ok: false, error: 'pull request or target branch changed during evaluation', markers: { releaseNotes: 'release-notes', qa: 'qa' } });
