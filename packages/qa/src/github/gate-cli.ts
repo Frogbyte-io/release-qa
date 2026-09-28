@@ -17,9 +17,15 @@ if (!Number.isSafeInteger(pullRequest) || (pullRequest as number) <= 0 || typeof
 const pullRequestNumber = pullRequest as number;
 const releaseIdInput = process.env.RELEASE_QA_RELEASE_ID;
 const candidateReleaseId = releaseIdInput === undefined || releaseIdInput === '' ? undefined : Number(releaseIdInput);
+const releaseSnapshotInput = process.env.RELEASE_QA_RELEASE_SNAPSHOT_B64;
+let candidateReleaseSnapshot: unknown;
+if (releaseSnapshotInput !== undefined && releaseSnapshotInput !== '') {
+  try { candidateReleaseSnapshot = JSON.parse(Buffer.from(releaseSnapshotInput, 'base64').toString('utf8')) as unknown; }
+  catch { candidateReleaseSnapshot = null; }
+}
 
 const api = new GhTransport();
-const evaluation = await evaluatePullRequest(repository, pullRequestNumber, api, eventHead, candidateReleaseId);
+const evaluation = await evaluatePullRequest(repository, pullRequestNumber, api, eventHead, candidateReleaseId, candidateReleaseSnapshot);
 const state = evaluation.ok && evaluation.value.evaluation.readiness !== 'blocked' ? 'success' : 'failure';
 const description = evaluation.ok
   ? `${evaluation.value.evaluation.readiness === 'approved-with-exceptions' ? 'Approved with exceptions' : evaluation.value.evaluation.readiness === 'passed' ? 'QA passed' : 'QA blocked'} for PR #${pullRequest}`

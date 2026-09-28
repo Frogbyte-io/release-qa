@@ -34,7 +34,7 @@ const record = (value: unknown): Record<string, unknown> | undefined => value !=
 const fail = (message: string): PullRequestGateResult => ({ ok: false, error: message });
 
 /** Evaluates the live PR against trusted target-branch policy and the exact selected candidate. */
-export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string, candidateReleaseId?: number): Promise<PullRequestGateResult> {
+export async function evaluatePullRequest(repository: string, pullRequest: number, api: GateApi = new GhTransport(), expectedHeadSha?: string, candidateReleaseId?: number, candidateReleaseSnapshot?: unknown): Promise<PullRequestGateResult> {
   let trustedMarkers: { releaseNotes: string; qa: string } | undefined;
   const failure = (message: string): PullRequestGateResult => ({ ok: false, error: message, ...(trustedMarkers === undefined ? {} : { markers: trustedMarkers }) });
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || !Number.isSafeInteger(pullRequest) || pullRequest <= 0) return failure('invalid repository or pull request number');
@@ -78,7 +78,9 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     }
 
     let release: Record<string, unknown> | undefined;
-    if (candidateReleaseId === undefined) {
+    if (candidateReleaseSnapshot !== undefined) {
+      release = record(candidateReleaseSnapshot);
+    } else if (candidateReleaseId === undefined) {
       const releasesResult = await api.list(`${prefix}/releases?per_page=100`);
       if (!releasesResult.ok) return failure(`cannot list candidate releases: ${releasesResult.reason}`);
       release = releasesResult.value.map(record).find((item) => item?.draft === true && item.name === `QA PR #${pullRequest}`);
@@ -102,7 +104,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     const required = policy.value.required.map((key) => project.value.requirements.find((requirement) => requirement.key === key));
     if (required.some((requirement) => requirement === undefined)) return failure('trusted policy requires a check missing from qa/project.json');
 
-    const progress = await loadCandidateProgress(repository, Number(release.id), candidate.id, api);
+    const progress = await loadCandidateProgress(repository, Number(release.id), candidate.id, api, release.assets as unknown[]);
     if (!progress.ok) return failure(`cannot load shared QA reports: ${progress.reason}`);
     const exceptions: AuthorizedException[] = [];
     const authorityActors = new Set<string>();
