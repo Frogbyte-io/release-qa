@@ -214,6 +214,20 @@ describe('live pull request evaluation', () => {
     expect(result.ok && result.value.candidateId).toBe('cand-0001');
   });
 
+  test('reports when the read-only evaluator cannot recheck draft release metadata', async () => {
+    const snapshot = {
+      id: 50,
+      name: 'QA PR #7',
+      draft: true,
+      assets: [{ id: 70, name: 'candidate.json', state: 'uploaded', uploader: { login: 'maintainer' } }],
+    };
+    await expect(evaluatePullRequest('owner/repo', 7, makeGateApi({ failReleaseRecheck: true }), SHA1.source, undefined, snapshot)).resolves.toEqual({
+      ok: false,
+      error: 'cannot verify active candidate release: missing-scope',
+      markers: { releaseNotes: 'release-notes', qa: 'qa' },
+    });
+  });
+
   test('loads candidate bytes from the broker snapshot when draft asset reads are unavailable', async () => {
     const api = makeGateApi();
     api.download = async () => ({ ok: false, reason: 'missing-scope' });
@@ -287,7 +301,7 @@ describe('live pull request evaluation', () => {
   });
 });
 
-function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSecondRead?: boolean; wrongPolicyDigest?: boolean; exceptionAsset?: boolean; exceptionActorMismatch?: boolean; revokeExceptionPermission?: boolean; nonReleaseBranch?: boolean; addReleaseLabelDuringRecheck?: boolean } = {}): GateApi {
+function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSecondRead?: boolean; wrongPolicyDigest?: boolean; exceptionAsset?: boolean; exceptionActorMismatch?: boolean; revokeExceptionPermission?: boolean; nonReleaseBranch?: boolean; addReleaseLabelDuringRecheck?: boolean; failReleaseRecheck?: boolean } = {}): GateApi {
   const headSha = SHA1.source;
   const baseSha = SHA1.base;
   const policy = { releaseBranchPrefix: 'release/', releaseLabel: 'release', releaseFiles: ['VERSION'], required: ['windows/persistence', 'windows/device-feel'] };
@@ -310,7 +324,7 @@ function makeGateApi(options: { changeHeadOnSecondRead?: boolean; changeBaseOnSe
       if (path === 'repos/owner/repo/branches/main') return { ok: true, value: { commit: { sha: baseSha } } };
       if (path === `repos/owner/repo/contents/qa/policy.json?ref=${baseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: policyBytes.toString('base64') } };
       if (path === `repos/owner/repo/contents/qa/project.json?ref=${baseSha}`) return { ok: true, value: { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(project())).toString('base64') } };
-      if (path === 'repos/owner/repo/releases/50') return { ok: true, value: release };
+      if (path === 'repos/owner/repo/releases/50') return options.failReleaseRecheck ? { ok: false, reason: 'missing-scope' } : { ok: true, value: release };
       if (path === 'repos/owner/repo/collaborators/maintainer/permission') {
         return { ok: true, value: { permission: options.revokeExceptionPermission && pullReads > 1 ? 'read' : 'admin' } };
       }
