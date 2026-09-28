@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { preparePublication, publishApprovedCandidate } from './publish.ts';
 import { GhTransport } from './transport.ts';
 
@@ -28,8 +30,9 @@ async function main(): Promise<void> {
     const inputs = record(event.inputs);
     prNumber = Number(inputs?.pr_number);
     expectedHead = typeof inputs?.expected_head === 'string' ? inputs.expected_head : undefined;
-    if (typeof inputs?.reviewed_body_base64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(inputs.reviewed_body_base64)) throw new Error('reviewed PR body snapshot is required');
-    reviewedBody = Buffer.from(inputs.reviewed_body_base64, 'base64').toString('utf8');
+    const notesAssetId = Number(inputs?.notes_asset_id);
+    if (!Number.isSafeInteger(notesAssetId) || notesAssetId <= 0 || !/^[0-9a-f]{40}$/.test(expectedHead ?? '')) throw new Error('saved merge notes identity is required');
+    reviewedBody = await readSavedMergeNotes(repository, prNumber, expectedHead as string, notesAssetId);
   } else throw new Error('unsupported publication event');
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0 || !/^[0-9a-f]{40}$/.test(expectedHead ?? '')) throw new Error('publication PR or source identity is invalid');
   const prepared = await preparePublication(repository, prNumber, reviewedBody, api);
@@ -49,3 +52,29 @@ async function main(): Promise<void> {
 }
 
 await main();
+
+async function readSavedMergeNotes(repository: string, prNumber: number, expectedHead: string, assetId: number): Promise<string> {
+  const prefix = `repos/${repository}`;
+  const pullResult = await api.get(`${prefix}/pulls/${prNumber}`);
+  const pull = record(pullResult.ok ? pullResult.value : undefined);
+  if (pull?.merged !== true || record(pull.head)?.sha !== expectedHead || typeof pull.merged_at !== 'string') throw new Error('saved notes do not belong to the merged PR');
+  const mergedAt = Date.parse(pull.merged_at);
+  if (Number.isNaN(mergedAt)) throw new Error('merge time is unavailable');
+  const releases = await api.list(`${prefix}/releases?per_page=100`);
+  const release = releases.ok ? releases.value.map(record).find((item) => item?.draft === true && item.name === `QA PR #${prNumber}`) : undefined;
+  if (!Number.isSafeInteger(release?.id)) throw new Error('candidate draft release is unavailable');
+  const releaseResult = await api.get(`${prefix}/releases/${release?.id}`);
+  const assets = record(releaseResult.ok ? releaseResult.value : undefined)?.assets;
+  const asset = Array.isArray(assets) ? assets.map(record).find((item) => item?.id === assetId) : undefined;
+  if (asset?.name !== `qa-merge-notes-${expectedHead}.json` || asset.state !== 'uploaded' || typeof asset.created_at !== 'string' ||
+      Number.isNaN(Date.parse(asset.created_at)) || Date.parse(asset.created_at) > mergedAt) throw new Error('reviewed notes snapshot was not saved before merge');
+  const directory = await mkdtemp(join(tmpdir(), 'release-qa-merge-notes-'));
+  try {
+    const destination = join(directory, 'snapshot.json');
+    const downloaded = await api.download(`${prefix}/releases/assets/${assetId}`, destination);
+    if (!downloaded.ok) throw new Error('reviewed notes snapshot could not be downloaded');
+    const snapshot = record(JSON.parse(await readFile(destination, 'utf8')) as unknown);
+    if (snapshot?.schemaVersion !== 1 || snapshot.pullRequest !== prNumber || snapshot.headSha !== expectedHead || typeof snapshot.body !== 'string') throw new Error('reviewed notes snapshot is invalid');
+    return snapshot.body;
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}

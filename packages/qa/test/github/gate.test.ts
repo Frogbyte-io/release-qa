@@ -184,6 +184,7 @@ describe('live pull request evaluation', () => {
     if (!result.ok) return;
     expect(result.value.publication?.mergeSha).toBe('5'.repeat(40));
     expect(result.value.publication?.candidate.sourceSha).toBe(SHA1.source);
+    expect(result.value.publication?.evaluationInput.currentBaseSha).toBe(SHA1.base);
     expect(result.value.evaluation.readiness).toBe('blocked');
     expect(result.value.evaluation.reasons).toContainEqual({ code: 'missing-result', requirement: 'windows/device-feel' });
   });

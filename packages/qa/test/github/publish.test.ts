@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { candidate, requirement, SHA1, SHA256 } from '../fixtures/records.ts';
-import { mergeReleasePr, publishApprovedCandidate, renderPublicationNotes, verifyPublication, type PublicationInput, type PublishApi } from '../../src/github/publish.ts';
+import { mergeReleasePr, publishApprovedCandidate, renderPublicationNotes, resolveTagCommit, verifyPublication, type PublicationInput, type PublishApi } from '../../src/github/publish.ts';
 
 function publication(overrides: Partial<PublicationInput> = {}): PublicationInput {
   const selected = candidate();
@@ -34,16 +34,26 @@ describe('verifyPublication', () => {
     expect(verifyPublication(publication(overrides)).ok).toBe(false);
   });
 
+  test('reserves the final QA record name even for an otherwise valid candidate', () => {
+    const selected = candidate({ artifacts: [{ ...candidate().artifacts[0]!, name: 'release-qa-record.json' }] });
+    const result = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
+    expect(result).toMatchObject({ ok: false, reasons: expect.arrayContaining(['candidate uses a reserved publication asset name']) });
+  });
+
   test('rechecks exception authority through the current evaluation input', () => {
     const selected = candidate();
-    const excused = { code: 'missing-result' as const, requirement: 'windows/device-feel' as const };
     const base = publication();
     const result = verifyPublication(publication({
       evaluation: { ...base.evaluation, required: [requirement({ key: 'windows/device-feel', mode: 'manual' })], exceptions: [{ exception: { schemaVersion: 1, id: 'ex-1', candidateId: selected.id, requirements: ['windows/device-feel'], reason: 'Approved', actor: 'owner', createdAt: '2026-09-20T00:00:00Z' }, authority: { login: 'owner', authorized: false } }] },
     }));
     expect(result.ok).toBe(false);
-    expect(excused).toBeDefined();
+    if (!result.ok) expect(result.reasons).toContain('current QA evidence does not pass');
   });
+});
+
+test('resolves an annotated release tag to its commit', async () => {
+  const target = await resolveTagCommit({ get: async () => ({ ok: true, value: { object: { type: 'commit', sha: '6'.repeat(40) } } }) }, 'repos/owner/app', { object: { type: 'tag', sha: '7'.repeat(40) } });
+  expect(target).toBe('6'.repeat(40));
 });
 
 describe('mergeReleasePr', () => {
@@ -52,6 +62,9 @@ describe('mergeReleasePr', () => {
     const result = await mergeReleasePr('owner/app', 7, SHA1.source, {
       get: async () => ({ ok: true, value: { state: 'open', head: { sha: '9'.repeat(40) } } }),
       put: async () => { writes++; return { ok: true, value: {} }; },
+      list: async () => ({ ok: false, reason: 'not-found' }),
+      upload: async () => ({ ok: false, reason: 'not-found' }),
+      download: async () => ({ ok: false, reason: 'not-found' }),
     });
     expect(result.ok).toBe(false);
     expect(writes).toBe(0);
@@ -60,19 +73,46 @@ describe('mergeReleasePr', () => {
   test('uses the normal head-matched endpoint and verifies an uncertain response', async () => {
     const paths: string[] = [];
     let reads = 0;
+    let notesBytes: Buffer = Buffer.alloc(0);
     const reviewedBody = '<!-- release-notes:start -->\nA tested release\n<!-- release-notes:end -->';
     const result = await mergeReleasePr('owner/app', 7, SHA1.source, {
-      get: async () => ({ ok: true, value: ++reads <= 2
-      ? { state: 'open', head: { sha: SHA1.source }, body: reviewedBody }
-        : { state: 'closed', merged: true, head: { sha: SHA1.source }, merge_commit_sha: '5'.repeat(40) } }),
+      get: async (path) => path.endsWith('/releases/50')
+        ? { ok: true, value: { id: 50, name: 'QA PR #7', draft: true, assets: [{ id: 70, name: 'candidate.json' }] } }
+        : { ok: true, value: ++reads <= 3
+          ? { state: 'open', head: { sha: SHA1.source }, body: reviewedBody }
+          : { state: 'closed', merged: true, head: { sha: SHA1.source }, merge_commit_sha: '5'.repeat(40) } },
       put: async (path, body) => { paths.push(`${path}:${JSON.stringify(body)}`); return { ok: false, reason: 'network-error' }; },
+      list: async () => ({ ok: true, value: [{ id: 50, name: 'QA PR #7', draft: true }] }),
+      upload: async (_repo, _id, _name, bytes) => { notesBytes = bytes; return { ok: true, value: { id: 80, name: `qa-merge-notes-${SHA1.source}.json`, state: 'uploaded' } }; },
+      download: async (_path, destination) => { await writeFile(destination, notesBytes); return { ok: true, value: true }; },
     });
-    expect(result).toEqual({ ok: true, sha: '5'.repeat(40), reviewedBody, alreadyMerged: false });
+    expect(result).toEqual({ ok: true, sha: '5'.repeat(40), reviewedBody, notesAssetId: 80, alreadyMerged: false });
+    expect(JSON.parse(notesBytes.toString('utf8'))).toMatchObject({ pullRequest: 7, headSha: SHA1.source, body: reviewedBody });
     expect(paths[0]).toContain('"sha":"1111111111111111111111111111111111111111"');
   });
 });
 
 describe('publishApprovedCandidate', () => {
+  test.each(['missing-assets', 'conflicting-metadata'] as const)('does not mutate an already published release with %s', async (problem) => {
+    const selected = candidate({ artifacts: [candidate().artifacts[0]!] });
+    const checked = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));
+    if (!checked.ok) throw new Error(checked.reasons.join('; '));
+    let writes = 0;
+    const api: PublishApi = {
+      get: async () => ({ ok: false, reason: 'not-found' }),
+      list: async (path) => ({ ok: true, value: path.endsWith('/releases?per_page=100')
+        ? [{ id: 42, tag_name: 'v1.2.3', name: 'v1.2.3', draft: false, body: problem === 'conflicting-metadata' ? 'changed notes' : renderPublicationNotes(checked.manifest) }]
+        : [] }),
+      post: async () => { writes++; return { ok: false, reason: 'network-error' }; },
+      patch: async () => { writes++; return { ok: false, reason: 'network-error' }; },
+      upload: async () => { writes++; return { ok: false, reason: 'network-error' }; },
+      download: async () => ({ ok: false, reason: 'network-error' }),
+      delete: async () => { writes++; return { ok: false, reason: 'network-error' }; },
+    };
+    expect((await publishApprovedCandidate(checked.manifest, api)).ok).toBe(false);
+    expect(writes).toBe(0);
+  });
+
   test('refuses a candidate asset whose downloaded bytes changed', async () => {
     const selected = candidate({ artifacts: [candidate().artifacts[0]!] });
     const checked = verifyPublication(publication({ candidate: selected, evaluation: { ...publication().evaluation, candidate: selected } }));

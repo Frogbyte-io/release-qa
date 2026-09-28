@@ -65,6 +65,7 @@ export function verifyPublication(input: PublicationInput): PublicationCheck {
   if (!input.expectedTag || input.tagName !== input.expectedTag) reasons.push('release tag does not match expected tag');
   if (!input.changelog.trim() || /<!--\s*(?:release-notes|changelog):start\s*-->/i.test(input.changelog)) reasons.push('reviewed changelog could not be identified');
   if (new Set(input.candidate.artifacts.map((artifact) => artifact.name)).size !== input.candidate.artifacts.length) reasons.push('final artifact names collide');
+  if (input.candidate.artifacts.some((artifact) => artifact.name === 'release-qa-record.json')) reasons.push('candidate uses a reserved publication asset name');
   const evaluation = evaluate(input.evaluation);
   if (evaluation.readiness === 'blocked') reasons.push('current QA evidence does not pass');
   if (input.evaluation.candidate.id !== input.candidate.id || input.evaluation.candidate.policyDigest !== input.candidate.policyDigest ||
@@ -119,7 +120,7 @@ export async function preparePublication(repository: string, pullRequest: number
   if (!/^\d+\.\d+\.\d+$/.test(version)) return { ok: false, reasons: ['release version is invalid'] };
   const tag = `v${version}`;
   const tagResult = await api.get(`${prefix}/git/ref/tags/${encodeURIComponent(tag)}`);
-  if (tagResult.ok && asRecord(asRecord(tagResult.value)?.object)?.sha !== mergeSha) return { ok: false, reasons: ['release tag points to a different commit'] };
+  if (tagResult.ok && await resolveTagCommit(api, prefix, tagResult.value) !== mergeSha) return { ok: false, reasons: ['release tag points to a different commit'] };
   if (!tagResult.ok && tagResult.reason !== 'not-found') return { ok: false, reasons: ['release tag could not be checked'] };
   const freshPr = await api.get(`${prefix}/pulls/${pullRequest}`);
   const freshBranch = await api.get(`${prefix}/branches/${encodeURIComponent(gate.baseRef)}`);
@@ -215,8 +216,8 @@ export async function publishApprovedCandidate(manifest: PublicationManifest, ap
   return { ok: true, releaseId, retried };
 }
 
-export interface MergeApi { get(path: string): Promise<ApiResult<unknown>>; put(path: string, body: unknown): Promise<ApiResult<unknown>>; }
-export type MergeResult = { ok: true; sha: string; reviewedBody: string; alreadyMerged: boolean } | { ok: false; error: string };
+export interface MergeApi extends Pick<PublishApi, 'get' | 'list' | 'upload' | 'download'> { put(path: string, body: unknown): Promise<ApiResult<unknown>>; }
+export type MergeResult = { ok: true; sha: string; reviewedBody: string; notesAssetId: number; alreadyMerged: boolean } | { ok: false; error: string };
 
 /** Requests only GitHub's normal merge endpoint with its expected-head guard, then rereads uncertain outcomes. */
 export async function mergeReleasePr(repository: string, pr: number, expectedHead: string, api: MergeApi = new GhTransport(), releaseNotesMarker = 'release-notes'): Promise<MergeResult> {
@@ -235,15 +236,56 @@ export async function mergeReleasePr(repository: string, pr: number, expectedHea
   const before = await api.get(path);
   const beforePull = asRecord(before.ok ? before.value : undefined);
   if (beforePull?.state !== 'open' || asRecord(beforePull.head)?.sha !== expectedHead || beforePull.body !== reviewedBody) return { ok: false, error: 'PR head or release notes changed before merge' };
+  const releases = await api.list(`repos/${repository}/releases?per_page=100`);
+  const draft = releases.ok ? releases.value.map(asRecord).find((item) => item?.draft === true && item.name === `QA PR #${pr}`) : undefined;
+  if (!Number.isSafeInteger(draft?.id)) return { ok: false, error: 'candidate draft release is unavailable for notes snapshot' };
+  const releaseId = draft?.id as number;
+  const releaseResult = await api.get(`repos/${repository}/releases/${releaseId}`);
+  const release = asRecord(releaseResult.ok ? releaseResult.value : undefined);
+  if (release?.draft !== true || release.name !== `QA PR #${pr}` || !Array.isArray(release.assets) ||
+      !release.assets.some((asset) => asRecord(asset)?.name === 'candidate.json')) return { ok: false, error: 'active candidate release is unavailable for notes snapshot' };
+  const notesName = `qa-merge-notes-${expectedHead}.json`;
+  const notesBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, pullRequest: pr, headSha: expectedHead, body: reviewedBody }));
+  const notesHash = createHash('sha256').update(notesBytes).digest('hex');
+  const prior = release.assets.map(asRecord).find((asset) => asset?.name === notesName);
+  let notesAssetId: number;
+  if (prior) {
+    if (!Number.isSafeInteger(prior.id)) return { ok: false, error: 'saved notes snapshot has invalid identity' };
+    notesAssetId = prior.id as number;
+    const downloaded = await downloadAndHash(api, `repos/${repository}/releases/assets/${notesAssetId}`);
+    if (!downloaded.ok || downloaded.sha256 !== notesHash) return { ok: false, error: 'saved notes snapshot differs from reviewed PR body' };
+  } else {
+    const uploaded = await api.upload(repository, releaseId, notesName, notesBytes);
+    if (!uploaded.ok || uploaded.value.state !== 'uploaded') return { ok: false, error: 'reviewed notes snapshot could not be uploaded' };
+    notesAssetId = uploaded.value.id;
+    const downloaded = await downloadAndHash(api, `repos/${repository}/releases/assets/${notesAssetId}`);
+    if (!downloaded.ok || downloaded.sha256 !== notesHash) return { ok: false, error: 'reviewed notes snapshot failed verification' };
+  }
+  const finalBefore = await api.get(path);
+  const finalPull = asRecord(finalBefore.ok ? finalBefore.value : undefined);
+  if (finalPull?.state !== 'open' || asRecord(finalPull.head)?.sha !== expectedHead || finalPull.body !== reviewedBody) return { ok: false, error: 'PR changed while saving reviewed notes' };
   const merged = await api.put(`${path}/merge`, { sha: expectedHead, merge_method: 'merge' });
   const fresh = await api.get(path);
   const after = fresh.ok ? asRecord(fresh.value) : undefined;
-  if (after?.merged === true && asRecord(after.head)?.sha === expectedHead && typeof after.merge_commit_sha === 'string' && sha.test(after.merge_commit_sha)) return { ok: true, sha: after.merge_commit_sha, reviewedBody, alreadyMerged: false };
+  if (after?.merged === true && asRecord(after.head)?.sha === expectedHead && typeof after.merge_commit_sha === 'string' && sha.test(after.merge_commit_sha)) return { ok: true, sha: after.merge_commit_sha, reviewedBody, notesAssetId, alreadyMerged: false };
   if (!merged.ok) return { ok: false, error: `merge outcome is unconfirmed; reread PR before retry: ${merged.reason}` };
   return { ok: false, error: 'GitHub did not confirm the expected head was merged' };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
+
+/** Follows lightweight and annotated tag objects to the actual commit, with a bounded chain. */
+export async function resolveTagCommit(api: Pick<GateApi, 'get'>, prefix: string, reference: unknown): Promise<string | undefined> {
+  let object = asRecord(asRecord(reference)?.object);
+  for (let depth = 0; depth < 5; depth++) {
+    if (object?.type === 'commit') return typeof object.sha === 'string' && sha.test(object.sha) ? object.sha : undefined;
+    if (object?.type !== 'tag' || typeof object.sha !== 'string' || !sha.test(object.sha)) return undefined;
+    const tag = await api.get(`${prefix}/git/tags/${object.sha}`);
+    if (!tag.ok) return undefined;
+    object = asRecord(asRecord(tag.value)?.object);
+  }
+  return undefined;
+}
 
 async function downloadAndHash(api: Pick<PublishApi, 'download'>, path: string): Promise<{ ok: true; bytes: Buffer; sha256: string } | { ok: false; error: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'release-qa-publish-'));
