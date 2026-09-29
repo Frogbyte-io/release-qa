@@ -2,7 +2,7 @@
 
 A planned desktop QA app and CLI for testing packaged application releases. Maintainers and coding agents share automated results, manual checks, and release approval through GitHub.
 
-The first targets are Tauri applications on Windows and Linux, with Dot X as the first real consumer. The Windows dashboard and CLI will use the same runner. Approved releases will publish the exact binaries tested during QA.
+The first targets are Tauri applications on Windows and Linux, with Dot X as the first real consumer; packaged Electron applications can be driven too. The Windows dashboard and CLI will use the same runner. Approved releases will publish the exact binaries tested during QA.
 
 ## Planning
 
@@ -14,10 +14,12 @@ The first targets are Tauri applications on Windows and Linux, with Dot X as the
 Stage 0 (proving the assumptions) is complete. The runner (environment checks, scenario execution, the durable run
 journal), the CLI's local commands (`doctor`, `designate`, `status`, `reset`, `run`, `resume`), the Tauri driver adapter
 and a runnable sample consumer exist: the sample passes through `release-qa run` on Windows and on Ubuntu 24.04 with
-Xvfb ([guide](docs/guides/run-the-sample.md), [evidence](examples/tauri-smoke/qa/evidence/)). The dashboard and the
-GitHub integration do not exist yet.
+Xvfb ([guide](docs/guides/run-the-sample.md), [evidence](examples/tauri-smoke/qa/evidence/)). A packaged Electron
+sample passes the same way ([guide](docs/guides/run-the-electron-sample.md), [evidence](examples/electron-smoke/qa/evidence/)).
+The dashboard and the GitHub integration do not exist yet.
 
 - [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. Dot X's first flow is feasible with named constraints: slider input needs the device or a USB serial fixture, and signing and a dedicated test machine are not ready yet.
+- [Electron automation](docs/decisions/electron-automation.md): packaged Electron apps are driven with Electron's own ChromeDriver and the pinned WebdriverIO, on Windows and Ubuntu. Not yet tried on Orbit Orchard, a non-root Linux user or macOS.
 - [GitHub merge gate](docs/decisions/github-gate.md): a no-service required check works, with documented design changes and unproven items.
 - [Tool layout and defaults](docs/decisions/tool-layout.md): runtime, package manager, baselines and repository structure.
 - [Local runs](docs/decisions/local-runs.md): the local candidate manifest, run state, resume rules and exit codes.

@@ -74,7 +74,12 @@ export const lifecycle: Lifecycle = { install, reset, launch, cleanup };
 - `launch(ctx)` — start the application. For a Tauri app, use the driver adapter:
   `app.session = await TauriApp.start(ctx, { application, nativeDriver })` — see the sample's
   [`lifecycle.ts`](../examples/tauri-smoke/qa/lifecycle.ts). It starts `tauri-driver` through `ctx.spawn` and owns
-  the native driver and the app process, so the runner can stop them even if a hook never returns.
+  the native driver and the app process, so the runner can stop them even if a hook never returns. For a packaged
+  Electron app, use `ElectronApp.start(ctx, { application, chromedriver, userDataDir })` the same way — see
+  [`examples/electron-smoke/qa/lifecycle.ts`](../examples/electron-smoke/qa/lifecycle.ts) and the
+  [decision](decisions/electron-automation.md) (it pins the app's data directory into the test root and takes
+  `ELECTRON_RUN_AS_NODE` out of the environment; `captureFailureEvidence` keeps the page's screenshot, DOM and console when
+  a scenario fails).
 - `cleanup(ctx)` — undo everything: close the session, uninstall, remove data. Every step should run even if an
   earlier one failed; collect failures and throw one error listing them at the end (the sample does this). A cleanup
   that does not finish marks the test root **dirty**; `reset` clears it once the cause is fixed.

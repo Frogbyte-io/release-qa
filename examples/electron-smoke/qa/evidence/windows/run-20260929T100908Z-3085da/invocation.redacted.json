@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "project": "%REPOSITORY%\\examples\\electron-smoke\\qa\\project.json",
+  "candidate": "%REPOSITORY%\\examples\\electron-smoke\\out\\candidate.json",
+  "profile": "windows",
+  "suite": "release",
+  "root": "%REPOSITORY%\\.release-qa",
+  "artifactSha256": "3f7458894abd55fc9312e5130d1e55c4651f352d5d0e262ecb8143da84af730b"
+}
