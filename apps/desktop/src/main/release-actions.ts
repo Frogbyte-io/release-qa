@@ -22,7 +22,9 @@ export interface ActionDeps {
   mergeRelease?: typeof mergeReleasePr;
 }
 
-const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/** `.` and `..` match the pattern but are path segments, not names; they must not reach an API path or a URL. */
+const repositoryName = { test: (value: string): boolean => repositoryPattern.test(value) && value.split('/').every((part) => part !== '.' && part !== '..') };
 const gitSha = /^[0-9a-f]{40}$/;
 const WRITE_ROLES = ['admin', 'maintain', 'write'];
 
@@ -53,6 +55,7 @@ export function parseMergeRequest(value: unknown): MergeRequest | undefined {
 export const pullRequestUrl = (repository: string, number: number): string => `https://github.com/${repository}/pull/${number}`;
 
 const refusal = (error: string): { ok: false; error: string } => ({ ok: false, error });
+const uncertain = (error: string): { ok: false; error: string; uncertain: true } => ({ ok: false, error, uncertain: true });
 
 const ACCESS_TEXT: Record<string, string> = {
   'logged-out': 'GitHub sign-in has expired. Run "gh auth login", then refresh.',
@@ -134,9 +137,11 @@ export async function mergePullRequest(input: unknown, deps: ActionDeps): Promis
 
   if (value.releaseIntent.length > 0) {
     const merged = await (deps.mergeRelease ?? mergeReleasePr)(request.repository, request.number, request.headSha, deps.api);
-    return merged.ok
-      ? { ok: true, message: `Merged #${request.number} as ${merged.sha.slice(0, 7)}. The release notes you reviewed were saved with the candidate; publication follows from the merge.` }
-      : refusal(merged.error.includes('unconfirmed') ? `Merge outcome unconfirmed: ${merged.error} Refresh to see whether it went through before trying again.` : `Not merged: ${merged.error}`);
+    if (merged.ok) return { ok: true, message: `Merged #${request.number} as ${merged.sha.slice(0, 7)}. The release notes you reviewed were saved with the candidate; publication follows from the merge.` };
+    // The shared merge reports an unknown outcome only in words; these are the two phrases it uses (publish.ts).
+    return /unconfirmed|did not confirm/.test(merged.error)
+      ? uncertain(`Merge outcome unconfirmed: ${merged.error}. Check the pull request before trying again.`)
+      : refusal(`Not merged: ${merged.error}`);
   }
   return mergeOrdinary(request, deps.api);
 }
@@ -153,7 +158,7 @@ async function mergeOrdinary(request: MergeRequest, api: ActionApi): Promise<Act
   const pull = now.ok ? (now.value as { merged?: unknown; head?: { sha?: unknown } } | null) : undefined;
   if (pull?.merged === true && pull.head?.sha === request.headSha) return { ok: true, message: `Merged #${request.number}. GitHub’s reply was lost, but the pull request shows as merged.` };
   if (typeof pull?.head?.sha === 'string' && pull.head.sha !== request.headSha) return refusal('Not merged: the pull request changed just before the merge. Refresh and review the new head.');
-  if (pull === undefined) return refusal(`Merge outcome unknown: ${accessText(merged.reason)} Refresh to see whether it went through before trying again.`);
+  if (pull === undefined) return uncertain(`Merge outcome unknown: ${accessText(merged.reason)} Check the pull request before trying again.`);
   return refusal(merged.reason === 'network-error'
     ? 'Not merged: GitHub did not complete it. It may have been refused (protected branch, a merge method the repository does not allow, or a conflict) or not reached. Refresh, then try again.'
     : `Not merged: ${accessText(merged.reason)}`);

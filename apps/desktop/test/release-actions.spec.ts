@@ -30,6 +30,9 @@ describe('validating what the window sends', () => {
     [{ ...target }, true],
     [{ ...target, repository: 'not a repo' }, false],
     [{ ...target, repository: 'acme/app/../../x' }, false],
+    [{ ...target, repository: '../x' }, false],
+    [{ ...target, repository: 'a/..' }, false],
+    [{ ...target, repository: './app' }, false],
     [{ ...target, number: 0 }, false],
     [{ ...target, number: 1.5 }, false],
     [{ ...target, number: '7' }, false],
@@ -106,10 +109,16 @@ describe('merging a release pull request', () => {
     expect(result).toEqual({ ok: false, error: 'Not merged: PR head or release notes changed before merge' });
   });
 
+  test('the other unknown outcome of the shared merge (a PUT reply without a confirmed merge) is also uncertain', async () => {
+    const result = await mergePullRequest(request, { api: actionTransport(maintainer), evaluate: evaluating(gate()), mergeRelease: merging({ ok: false, error: 'GitHub did not confirm the expected head was merged' }) });
+    expect(result).toMatchObject({ ok: false, uncertain: true });
+  });
+
   test('an outcome the shared merge could not confirm is reported as unconfirmed, not as a plain failure', async () => {
     const result = await mergePullRequest(request, { api: actionTransport(maintainer), evaluate: evaluating(gate()), mergeRelease: merging({ ok: false, error: 'merge outcome is unconfirmed; reread PR before retry: network-error' }) });
     expect(!result.ok && result.error).toContain('unconfirmed');
     expect(!result.ok && result.error).not.toContain('Not merged');
+    expect(result).toMatchObject({ uncertain: true });
   });
 
   test('the head having moved before the check is refused by the gate itself', async () => {
@@ -160,6 +169,7 @@ describe('merging an ordinary pull request', () => {
     const api = actionTransport(maintainer, { put: { ok: false, reason: 'network-error' } });
     const result = await mergePullRequest({ ...target, method: 'merge' }, { api, evaluate: evaluating(ordinary()) });
     expect(!result.ok && result.error).toContain('outcome unknown');
+    expect(result).toMatchObject({ uncertain: true });
   });
 
   test('an unexplained failure does not blame branch protection alone', async () => {

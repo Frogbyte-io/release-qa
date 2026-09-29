@@ -138,6 +138,21 @@ describe('merging', () => {
     expect(calls(qa, 'loadDashboard')).toHaveLength(1);
   });
 
+  test('an unknown merge outcome closes the confirmation, says so, and reads GitHub again instead of inviting a second click', async () => {
+    const { wrapper, qa } = await view(withPull(), {
+      previewMerge: async () => okPreview(),
+      mergePullRequest: async () => ({ ok: false, error: 'Merge outcome unconfirmed: reread PR before retry. Check the pull request before trying again.', uncertain: true }),
+    });
+    await wrapper.get('[data-test="merge"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-test="confirm-merge-go"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="confirm-merge"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="notice"]').text()).toContain('unconfirmed');
+    expect(calls(qa, 'loadDashboard')).toHaveLength(2);
+    expect(calls(qa, 'mergePullRequest')).toHaveLength(1);
+  });
+
   test('a preview that cannot be read (permission lost) shows why and opens no confirmation', async () => {
     const { wrapper } = await view(withPull(), { previewMerge: async () => ({ ok: false, error: 'Your account does not have write access to this repository.' }) });
     await wrapper.get('[data-test="merge"]').trigger('click');

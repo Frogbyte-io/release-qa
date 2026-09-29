@@ -42,6 +42,7 @@ async function run(action: () => Promise<ActionResult>): Promise<void> {
   try {
     const result = await action();
     if (result.ok) { panel.value = undefined; emit('done', result.message); }
+    else if (result.uncertain) { panel.value = undefined; emit('done', result.error); }
     else { problem.value = result.error; }
   } catch {
     problem.value = 'The action could not be completed.';

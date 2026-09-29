@@ -13,13 +13,22 @@ const selected = ref<{ repository: string; number: number } | undefined>();
 /** What the last action did. It stays across the refresh that follows it, until the next action or a manual refresh. */
 const notice = ref('');
 
+/** Only the newest read may change what is shown, so a slow older one cannot put back a pull request that was just merged. */
+let latest = 0;
+const reading = ref(false);
+
 async function refresh(options: { quiet?: boolean } = {}): Promise<void> {
+  const mine = ++latest;
+  reading.value = true;
   // A refresh after an action keeps the current view on screen instead of blanking it to a loading line.
   if (options.quiet !== true) { state.value = { kind: 'loading' }; notice.value = ''; }
   try {
-    state.value = { kind: 'ready', snapshot: await props.qa.loadDashboard() };
+    const next = await props.qa.loadDashboard();
+    if (mine === latest) state.value = { kind: 'ready', snapshot: next };
   } catch {
-    state.value = { kind: 'failed', message: 'The dashboard could not read its data.' };
+    if (mine === latest) state.value = { kind: 'failed', message: 'The dashboard could not read its data.' };
+  } finally {
+    if (mine === latest) reading.value = false;
   }
 }
 onMounted(() => refresh());
@@ -52,7 +61,7 @@ const open = (repository: string, number: number): void => { selected.value = { 
         <button type="button" data-test="nav-release" :disabled="current === undefined" :aria-current="current !== undefined ? 'page' : undefined">Release</button>
       </nav>
       <span v-if="snapshot" class="account" data-test="account">{{ accountText(snapshot.account) }}</span>
-      <button type="button" data-test="refresh" :disabled="state.kind === 'loading'" @click="refresh()">Refresh</button>
+      <button type="button" data-test="refresh" :disabled="reading" @click="refresh()">Refresh</button>
     </header>
 
     <main>

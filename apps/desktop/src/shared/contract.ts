@@ -52,7 +52,8 @@ export type MergePreviewResult =
     }
   | { ok: false; error: string };
 
-export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
+/** `uncertain` marks a failure whose outcome is not known (a merge may or may not have gone through): re-read before acting again. */
+export type ActionResult = { ok: true; message: string } | { ok: false; error: string; uncertain?: true };
 
 /** Repository permissions as the transport reports them. Only `write` and above may run, sync or merge. */
 export type Role = 'admin' | 'maintain' | 'write' | 'triage' | 'read';
