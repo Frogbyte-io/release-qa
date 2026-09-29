@@ -16,7 +16,7 @@ journal), the CLI's local commands (`doctor`, `designate`, `status`, `reset`, `r
 and a runnable sample consumer exist: the sample passes through `release-qa run` on Windows and on Ubuntu 24.04 with
 Xvfb ([guide](docs/guides/run-the-sample.md), [evidence](examples/tauri-smoke/qa/evidence/)). A packaged Electron
 sample passes the same way ([guide](docs/guides/run-the-electron-sample.md), [evidence](examples/electron-smoke/qa/evidence/)).
-The dashboard and the GitHub integration do not exist yet.
+The GitHub integration (candidate preparation, the required check, sync, publication) and a read-only dashboard ([apps/desktop](apps/desktop/README.md)) exist; running, handing off and merging from the dashboard do not yet.
 
 - [Native automation](docs/decisions/native-automation.md): unchanged packaged Tauri apps can be driven on Windows and Ubuntu. Dot X's first flow is feasible with named constraints: slider input needs the device or a USB serial fixture, and signing and a dedicated test machine are not ready yet.
 - [Electron automation](docs/decisions/electron-automation.md): packaged Electron apps are driven with Electron's own ChromeDriver and the pinned WebdriverIO, on Windows and Ubuntu. Not yet tried on Orbit Orchard, a non-root Linux user or macOS.

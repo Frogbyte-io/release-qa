@@ -18,5 +18,9 @@
   },
   "dependencies": {
     "webdriverio": "9.31.9"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./model": "./src/model/evaluate.ts"
   }
 }

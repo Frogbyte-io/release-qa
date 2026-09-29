@@ -1,0 +1,25 @@
+:root { font-family: 'Segoe UI', system-ui, sans-serif; color: #1b1f24; background: #f6f8fa; }
+body { margin: 0; }
+.shell { display: flex; flex-direction: column; min-height: 100vh; }
+.bar { display: flex; align-items: center; gap: 16px; padding: 10px 20px; background: #fff; border-bottom: 1px solid #d0d7de; }
+.bar h1 { font-size: 16px; margin: 0; }
+.bar nav { display: flex; gap: 6px; flex: 1; }
+.bar button[aria-current='page'] { font-weight: 600; text-decoration: underline; }
+main { padding: 20px; max-width: 980px; }
+.card { background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px 18px; margin-bottom: 16px; }
+h2 { font-size: 17px; margin: 4px 0; }
+h3 { font-size: 14px; margin: 14px 0 4px; }
+h4 { font-size: 13px; margin: 8px 0 2px; }
+.meta { color: #57606a; font-size: 12px; }
+.note { color: #6e4a00; background: #fff8e1; padding: 4px 8px; border-radius: 4px; }
+.banner { padding: 8px 12px; border-radius: 4px; margin-bottom: 12px; }
+.warn { background: #fff8e1; color: #6e4a00; }
+.tag { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 10px; font-size: 11px; background: #eaeef2; }
+.tag.passed, .verdict.passed { background: #dafbe1; color: #116329; }
+.tag.blocked, .verdict.blocked { background: #ffebe9; color: #a40e26; }
+.tag.approved-with-exceptions, .verdict.approved-with-exceptions { background: #fff8c5; color: #7d4e00; }
+.tag.warn { background: #fff8e1; color: #6e4a00; }
+.verdict { display: inline-block; padding: 2px 12px; border-radius: 12px; font-weight: 600; }
+button.link { background: none; border: 0; color: #0969da; cursor: pointer; padding: 0; font: inherit; }
+button:disabled { opacity: 0.5; }
+ul { margin: 4px 0; padding-left: 20px; }
