@@ -89,7 +89,8 @@ Release QA has **no command yet to submit a manual pass as a policy-gate report*
 package by hand finds problems and documents them; it does **not** make a requirement pass, and notes like these must not
 be treated as a passing automated gate.
 
-To do it: unpack the package (`tar -xf release-qa-electron-smoke-win32.zip -C <folder>` on Windows, `tar -xzf` on Linux),
+To do it: unpack the package (in PowerShell on Windows `& "$env:SystemRoot\System32\tar.exe" -xf release-qa-electron-smoke-win32.zip -C <folder>`;
+on Linux `tar -xzf release-qa-electron-smoke-linux.tar.gz -C <folder>`),
 start `release-qa-electron-smoke[.exe]`, and follow the scenario: type a value, **Save**, see it under "Saved value", quit
 and start the app again, see it still there, **Clear**, quit, start, see it empty. By hand the app keeps its data in
 Electron's default profile: `%APPDATA%\release-qa-electron-smoke\setting.txt` on Windows (`~/.config/release-qa-electron-smoke`

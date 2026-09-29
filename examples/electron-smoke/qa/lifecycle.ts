@@ -43,11 +43,10 @@ async function launch(ctx: RunContext): Promise<void> {
 async function cleanup(ctx: RunContext): Promise<void> {
   const running = app.session;
   app.session = undefined;
-  try {
-    await running?.close();
-  } finally {
-    await removeData(ctx);
-  }
+  // Only once the app is gone: a profile removed under a running app is being written to. If close fails, the run
+  // owns the directory and removes it when it stops the app.
+  await running?.close();
+  await removeData(ctx);
 }
 
 export const lifecycle: Lifecycle = { install, reset, launch, cleanup };

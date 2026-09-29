@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "project": "/root/rqa-electron/examples/electron-smoke/qa/project.json",
-  "candidate": "/root/rqa-electron/examples/electron-smoke/out/candidate.json",
-  "profile": "linux",
-  "suite": "release",
-  "root": "/root/rqa-electron/.release-qa",
-  "artifactSha256": "45179e688dd676e0a2d312998cb2b07663e26c9d1344ee0cf6198f4cf92bf4fb"
-}

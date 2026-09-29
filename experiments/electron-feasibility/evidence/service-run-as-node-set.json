@@ -11,6 +11,6 @@
   "electronRunAsNodeInEnvironment": "1",
   "runningBefore": 0,
   "error": "WebDriverError: session not created: Chrome failed to start: crashed.",
-  "errorAfterSessionStartMs": 5989,
+  "errorAfterSessionStartMs": 4134,
   "appProcessesLeftBehind": 0
 }

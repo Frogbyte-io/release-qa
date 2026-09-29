@@ -1,6 +1,7 @@
 // What the two probes share: reading which processes run from the packaged app, and writing what was observed.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer, connect } from 'node:net';
 import { homedir, platform, release } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,14 +18,22 @@ export function running(executable) {
   if (process.platform === 'win32') {
     return pidsIn(ps(`Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLowerInvariant() -eq '${target.toLowerCase().replace(/'/g, "''")}' } | ForEach-Object { $_.ProcessId }`));
   }
-  return pidsIn(execFileSync('sh', ['-c', `for p in /proc/[0-9]*; do [ "$(readlink $p/exe 2>/dev/null)" = "${target}" ] && basename $p; done; true`], { encoding: 'utf8' }));
+  // The path is a positional argument, never part of the script, so no character in it is interpreted by the shell.
+  const script = 'for p in /proc/[0-9]*; do [ "$(readlink "$p/exe" 2>/dev/null)" = "$1" ] && basename "$p"; done; true';
+  return pidsIn(execFileSync('sh', ['-c', script, 'sh', target], { encoding: 'utf8' }));
 }
+
+/** "pid parent name", where the name may contain spaces. */
+const splitRecord = (line) => {
+  const [pid, parent, ...name] = line.trim().split(/\s+/);
+  return [pid, parent, name.join(' ')];
+};
 
 /** Pids of every process below `root`, with the executable name of each. */
 export function tree(root) {
   const pairs = process.platform === 'win32'
-    ? ps('Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.Name)" }').split(/\r?\n/).filter(Boolean).map((line) => line.trim().split(/\s+/))
-    : execFileSync('ps', ['-eo', 'pid=,ppid=,comm='], { encoding: 'utf8' }).split('\n').filter(Boolean).map((line) => line.trim().split(/\s+/));
+    ? ps('Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.Name)" }').split(/\r?\n/).filter(Boolean).map(splitRecord)
+    : execFileSync('ps', ['-eo', 'pid=,ppid=,comm='], { encoding: 'utf8' }).split('\n').filter(Boolean).map(splitRecord);
   const found = {};
   const pending = [String(root)];
   while (pending.length > 0) {
@@ -64,4 +73,31 @@ export function writeEvidence(name, observations) {
   mkdirSync(join(here, 'evidence'), { recursive: true });
   writeFileSync(join(here, 'evidence', name), text);
   console.log(text);
+}
+
+/** A local port nothing listens on right now. */
+export function freePort() {
+  return new Promise((resolvePort, rejectPort) => {
+    const server = createServer();
+    server.once('error', rejectPort);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+/** Resolves once something accepts connections on the port; rejects after `timeoutMs`. */
+export async function waitForPort(port, timeoutMs) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    const open = await new Promise((resolveOpen) => {
+      const socket = connect(port, '127.0.0.1');
+      socket.once('connect', () => { socket.destroy(); resolveOpen(true); });
+      socket.once('error', () => resolveOpen(false));
+    });
+    if (open) return;
+    await sleep(100);
+  }
+  throw new Error(`nothing listened on port ${port} within ${timeoutMs} ms`);
 }

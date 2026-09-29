@@ -6,7 +6,7 @@
 // The manifest goes next to the archive (out/candidate.json), because a manifest may only name files in or under its
 // own directory. Its path is printed for `release-qa run --candidate`.
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,9 +22,9 @@ if (platform === undefined) {
 const [profile, extension] = platform;
 const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'out');
 
-const files = readdirSync(out).filter((name) => name.endsWith(extension));
+const files = existsSync(out) ? readdirSync(out).filter((name) => name.endsWith(extension)) : [];
 if (files.length !== 1) {
-  console.error(`expected exactly one ${extension} in ${out}, found ${files.length}: package the sample first (npm run package)`);
+  console.error(`expected exactly one ${extension} in ${out}, found ${files.length}${existsSync(out) ? '' : ' (the directory does not exist)'}: package the sample first (npm run package)`);
   process.exit(1);
 }
 const [name] = files;

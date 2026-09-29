@@ -9,6 +9,7 @@
   "electronRunAsNodeInDriverEnvironment": "1",
   "chromedriver": "ChromeDriver 152.0.7977.130",
   "runningBefore": 0,
-  "error": "Error: WebDriverError: session not created: Chrome failed to start: crashed.\n  (session not created: DevToolsActivePort file doesn't exist)\n  (The process started from chrome location %USERPROFILE%\\.t3\\worktrees\\release-qa\\t3code-c83596fd\\experiments\\electron-feasibility\\output\\app\\release-qa-electron-smoke.exe is no longer running, so ChromeDriver is assuming that Chrome has crashed.) when running \"http://127.0.0.1:9515/session\" with method \"POST\"\n    at startWebDriverSession (file:///%USERPROFILE%/.t3/worktrees/release-qa/t3code-c83596fd/experiments/electron-feasibility/node_modules/webdriver/build/node.js:1380:11)",
-  "appProcessesStoppedByProbe": 0
+  "error": "WebDriverError: session not created: Chrome failed to start: crashed.",
+  "appProcessesFoundAtCleanup": 0,
+  "appProcessesAfterCleanup": 0
 }

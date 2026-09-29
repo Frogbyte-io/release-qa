@@ -9,10 +9,10 @@
   "electronRunAsNodeInDriverEnvironment": "1",
   "chromedriver": "ChromeDriver 152.0.7977.130",
   "runningBefore": 0,
-  "sessionStartMs": 633,
+  "sessionStartMs": 486,
   "processesBelowDriver": {
-    "conhost.exe": 1,
-    "release-qa-electron-smoke.exe": 4
+    "release-qa-electron-smoke.exe": 4,
+    "conhost.exe": 1
   },
   "appProcesses": 4,
   "title": "Release QA Electron Smoke",
@@ -22,9 +22,10 @@
   "pageSourceBytes": 781,
   "screenshotBytes": 25739,
   "settingOnDisk": "hello",
-  "msUntilAppGoneAfterDeleteSession": 1370,
+  "msUntilAppGoneAfterDeleteSession": 966,
   "appProcessesAfterDeleteSession": 0,
   "shownAfterRestart": "hello",
   "appProcessesLeftWhenDriverKilled": 4,
-  "appProcessesStoppedByProbe": 4
+  "appProcessesFoundAtCleanup": 4,
+  "appProcessesAfterCleanup": 0
 }

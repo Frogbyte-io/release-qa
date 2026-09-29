@@ -28,6 +28,8 @@ node prepare.mjs        # copies the package to output/app and output/app-harden
 the driver's environment. The probes were run on the Windows 11 laptop below, in an interactive session, as:
 
 ```sh
+APP=output/app/release-qa-electron-smoke.exe            # no .exe on Linux
+HARDENED=output/app-hardened/release-qa-electron-smoke.exe
 ELECTRON_RUN_AS_NODE=1 node probe-service.mjs $APP service-run-as-node-set.json
 node probe-service.mjs $APP service.json
 node probe-service.mjs $HARDENED service-hardened.json
@@ -47,8 +49,8 @@ on (`@electron/fuses`).
 
 | | default package | hardened package | `ELECTRON_RUN_AS_NODE=1` inherited |
 | --- | --- | --- | --- |
-| **chromedriver + `remote()`** | session in 0.7 s; page, click, screenshot, DOM and console all work; app gone 1.4 s after `deleteSession`; relaunch shows the saved value | session in 0.6 s; same | default package: **session not created**; hardened package: works (the fuse makes Electron ignore the variable) |
-| **`@wdio/electron-service`** | session in 3.9 s; page, click and screenshot work; `browser.electron.execute` works; app gone after cleanup | session in 2.5 s, page works; **`browser.electron.execute` is disabled** ("CDP bridge is not available") and the probe's error left 4 app processes running until it stopped them | **session not created** |
+| **chromedriver + `remote()`** | session in 0.48-0.55 s in 5 sessions (the run recorded in `chromedriver.json` was a cold first start and took 6.5 s); page, click, screenshot, DOM and console all work; app gone about 1 s after `deleteSession`; relaunch shows the saved value | session in 0.5 s; same | default package: **session not created**; hardened package: works (the fuse makes Electron ignore the variable) |
+| **`@wdio/electron-service`** | session in 1.5-3.0 s over 6 sessions; page, click and screenshot work; `browser.electron.execute` works; app gone after cleanup | session in 1.6 s, page works; **`browser.electron.execute` is disabled** ("CDP bridge is not available") | **session not created** |
 
 Also measured ([`chromedriver.json`](evidence/chromedriver.json), [`service.json`](evidence/service.json)):
 

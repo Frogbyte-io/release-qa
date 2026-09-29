@@ -2,7 +2,7 @@
 
 One passing run per platform, kept as the CLI wrote it (the journal `events.jsonl`, `summary.json`, `report.html`, the
 attempt's screenshots), for `windows/persistence` and `linux/persistence`. Each was driven end to end by
-`node packages/qa/src/cli/main.ts run` with this directory's `project.json`, following
+`node packages/qa/src/cli/main.ts run` with the sample's [`qa/project.json`](../project.json), following
 [the setup guide](../../../../docs/guides/run-the-electron-sample.md).
 
 | | Windows | Linux |
@@ -39,8 +39,8 @@ Not the same package on both platforms: each was built on the machine it ran on.
 Every screenshot shows only the app's page (no desktop, window frame or other windows, no paths or account names); the ones
 taken with the value saved show it, and the ones taken after Clear show an empty readout.
 
-The Windows run's `invocation.json` held absolute paths under the account's profile directory. It is kept as
-`invocation.redacted.json`, with the repository's location replaced by `%REPOSITORY%`: a record of what was asked, not a
+Each run's `invocation.json` held absolute paths (under the account's profile directory on Windows, the clone's location on
+Linux). They are kept as `invocation.redacted.json`, with the repository's location replaced by `%REPOSITORY%`: a record of what was asked, not a
 file the CLI can `resume` from. Nothing else in either run was edited.
 
 ## Not shown here

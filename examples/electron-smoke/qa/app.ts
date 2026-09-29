@@ -30,11 +30,11 @@ export const removeData = (ctx: RunContext): Promise<void> => rm(dataDir(ctx), {
 /** Runs a command as a process the run owns, and waits for it; a non-zero exit is an error naming the command. */
 export async function runToEnd(ctx: RunContext, label: string, command: string, args: readonly string[]): Promise<void> {
   const child = await ctx.spawn(label, command, args, { stdio: 'ignore', windowsHide: true });
-  const code = await new Promise<number | null>((resolveExit) => {
-    if (child.exitCode !== null || child.signalCode !== null) resolveExit(child.exitCode);
-    else child.once('exit', (exitCode) => resolveExit(exitCode));
+  const ended = await new Promise<string | number>((resolveExit) => {
+    if (child.exitCode !== null || child.signalCode !== null) resolveExit(child.exitCode ?? `signal ${child.signalCode}`);
+    else child.once('exit', (exitCode, signal) => resolveExit(exitCode ?? `signal ${signal}`));
   });
-  if (code !== 0) throw new Error(`${label} (${command}) exited with ${code}`);
+  if (ended !== 0) throw new Error(`${label} (${command}) exited with ${ended}`);
 }
 
 /**

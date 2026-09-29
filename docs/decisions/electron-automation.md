@@ -13,8 +13,8 @@ Sample: [`examples/electron-smoke`](../../examples/electron-smoke). Probes and r
 
 Drive a packaged Electron app with **Electron's own ChromeDriver and the repository's `remote()`** (WebdriverIO 9.31.9),
 started and owned by an `ElectronApp` adapter that has the same shape as `TauriApp`: `start(ctx, options)`, `browser`,
-`screenshot`, `restart(ctx)`, `close()`. It launches the exact packaged executable, needs no change to the app, and needs
-none of the fuses the WebdriverIO service needs.
+`screenshot`, `restart(ctx)`, `close()`. It launches the exact packaged executable, needs no change to the app, and does not
+depend on the Node inspector (`EnableNodeCliInspectArguments`) that the WebdriverIO service's main-process API needs.
 
 The supported WebdriverIO integration, `@wdio/electron-service`, was tried first and works for the sample. It is not used
 as the adapter's base, for reasons that are all measured (below).
@@ -53,12 +53,12 @@ as the adapter's base, for reasons that are all measured (below).
 
 All measured on the same package ([results](../../experiments/electron-feasibility/README.md#results)):
 
-- It needs the Node inspector: with `EnableNodeCliInspectArguments` off (a common hardening step) its main-process API is
-  disabled, and the probe's failure left the app running. ChromeDriver needs no fuse.
+- Its main-process API needs the Node inspector: with `EnableNodeCliInspectArguments` off (a common hardening step) that
+  API is disabled, though renderer sessions still start (measured). ChromeDriver needs no fuse.
 - It starts its own ChromeDriver inside the calling process through WebdriverIO's utilities, not through `ctx.spawn`, so
   the runner does not know about it. It downloads a matching ChromeDriver at run time unless one is named.
 - It loads a second WebdriverIO (9.30.1 beside the repository's 9.31.9).
-- A session took 2.5-3.9 s against 0.6-0.7 s.
+- A session took 1.5-3.0 s (6 sessions) against 0.48-0.55 s (5 sessions; one cold first start took 6.5 s).
 
 What it offers that the adapter does not: mocking and executing code in the **main process** (`browser.electron.execute`).
 A scenario that needs that has to come from a later, separate decision; the renderer is what the adapter reaches, and the

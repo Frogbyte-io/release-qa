@@ -30,7 +30,7 @@ export interface ElectronAppOptions {
    * removes it; keep it inside the test root.
    */
   userDataDir: string;
-  /** Further command-line arguments for the application, e.g. `--no-sandbox` where the sandbox cannot start. */
+  /** Further command-line arguments for the application, e.g. `--no-sandbox` where the sandbox cannot start. Not `--user-data-dir`. */
   appArgs?: readonly string[];
   /** chromedriver's port. Default 9515. */
   port?: number;
@@ -102,6 +102,8 @@ export class ElectronApp {
     if (!isAbsolute(application)) throw new Error(`the application path ${application} is not absolute`);
     if (!existsSync(application)) throw new Error(`the application ${application} does not exist`);
     if (!isAbsolute(userDataDir)) throw new Error(`the user data directory ${userDataDir} is not absolute`);
+    // The pinned directory is what keeps the run's data inside the test root; a second switch could win over it.
+    if (app.#options.appArgs.some((arg) => arg.startsWith('--user-data-dir'))) throw new Error('appArgs must not set --user-data-dir: the run pins it from userDataDir');
     if (isAbsolute(chromedriver) && !existsSync(chromedriver)) throw new Error(`chromedriver ${chromedriver} does not exist`);
     const running = await processesRunning(application);
     if (running.length > 0) throw new Error(`${application} is already running (pid ${running.join(', ')}); a run can only drive an instance it started`);

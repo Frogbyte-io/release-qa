@@ -15,6 +15,15 @@ afterEach(cleanUpProcessesAndRoots);
 const notRunning = import.meta.filename;
 const userDataDir = join(import.meta.dirname, 'electron-user-data');
 
+/** A port nothing listens on right now, so a test does not depend on ChromeDriver's default being free. */
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
 async function launchWith(options: Partial<Parameters<typeof ElectronApp.start>[1]>) {
   const { context } = await arrange({
     lifecycle: lifecycleOf([], { launch: async (ctx) => { await ElectronApp.start(ctx, { application: notRunning, chromedriver: process.execPath, userDataDir, ...options }); } }),
@@ -39,6 +48,11 @@ describe('starting the driver chain', () => {
     expect((await launchWith({ userDataDir: 'data' })).result.detail).toContain('user data directory data is not absolute');
   });
 
+  test('an argument that would move the pinned data directory is refused', async () => {
+    const { result } = await launchWith({ appArgs: ['--no-sandbox', '--user-data-dir=elsewhere'] });
+    expect(result.detail).toContain('--user-data-dir');
+  });
+
   test('a chromedriver that does not exist is reported by its path', async () => {
     const chromedriver = `${process.execPath}.missing`;
     const { result } = await launchWith({ chromedriver });
@@ -47,7 +61,7 @@ describe('starting the driver chain', () => {
 
   test('a chromedriver that exits before listening is reported with its exit code, not after the full timeout', async () => {
     // Node rejects chromedriver's arguments and exits at once: a driver that cannot start.
-    const { result, ms } = await launchWith({ startTimeoutMs: 20_000 });
+    const { result, ms } = await launchWith({ startTimeoutMs: 20_000, port: await freePort() });
     expect(result).toMatchObject({ outcome: 'interrupted', reason: 'infrastructure-error' });
     expect(result.detail).toContain('chromedriver exited (9)'); // Node's exit code for an unknown option
     expect(ms).toBeLessThan(15_000);
