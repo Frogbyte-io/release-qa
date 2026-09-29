@@ -1,25 +1,33 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import type { DashboardSnapshot, ProjectView, PullRequestView } from '../shared/contract.ts';
+import type { DashboardSnapshot, ProjectView, PullRequestView, QaBridge } from '../shared/contract.ts';
 import { accountText, isEmpty, problemText } from './format.ts';
 import Release from './views/Release.vue';
 import Repositories from './views/Repositories.vue';
 
-const props = defineProps<{ load: () => Promise<DashboardSnapshot> }>();
+const props = defineProps<{ qa: QaBridge }>();
 
 type State = { kind: 'loading' } | { kind: 'failed'; message: string } | { kind: 'ready'; snapshot: DashboardSnapshot };
 const state = ref<State>({ kind: 'loading' });
 const selected = ref<{ repository: string; number: number } | undefined>();
+/** What the last action did. It stays across the refresh that follows it, until the next action or a manual refresh. */
+const notice = ref('');
 
-async function refresh(): Promise<void> {
-  state.value = { kind: 'loading' };
+async function refresh(options: { quiet?: boolean } = {}): Promise<void> {
+  // A refresh after an action keeps the current view on screen instead of blanking it to a loading line.
+  if (options.quiet !== true) { state.value = { kind: 'loading' }; notice.value = ''; }
   try {
-    state.value = { kind: 'ready', snapshot: await props.load() };
+    state.value = { kind: 'ready', snapshot: await props.qa.loadDashboard() };
   } catch {
     state.value = { kind: 'failed', message: 'The dashboard could not read its data.' };
   }
 }
-onMounted(refresh);
+onMounted(() => refresh());
+
+async function done(message: string, refreshNeeded: boolean): Promise<void> {
+  notice.value = message;
+  if (refreshNeeded) await refresh({ quiet: true });
+}
 
 const snapshot = computed(() => (state.value.kind === 'ready' ? state.value.snapshot : undefined));
 
@@ -44,7 +52,7 @@ const open = (repository: string, number: number): void => { selected.value = { 
         <button type="button" data-test="nav-release" :disabled="current === undefined" :aria-current="current !== undefined ? 'page' : undefined">Release</button>
       </nav>
       <span v-if="snapshot" class="account" data-test="account">{{ accountText(snapshot.account) }}</span>
-      <button type="button" data-test="refresh" :disabled="state.kind === 'loading'" @click="refresh">Refresh</button>
+      <button type="button" data-test="refresh" :disabled="state.kind === 'loading'" @click="refresh()">Refresh</button>
     </header>
 
     <main>
@@ -59,7 +67,8 @@ const open = (repository: string, number: number): void => { selected.value = { 
           <strong>Showing older data.</strong> GitHub could not be read, so this is the copy from {{ snapshot.loadedAt }}.
         </section>
 
-        <Release v-if="current" :project="current.project" :pull-request="current.pullRequest" :loaded-at="snapshot.loadedAt" @back="selected = undefined" />
+        <p v-if="notice" class="banner ok" role="status" data-test="notice">{{ notice }}</p>
+        <Release v-if="current" :project="current.project" :pull-request="current.pullRequest" :loaded-at="snapshot.loadedAt" :qa="qa" @back="selected = undefined" @done="done" />
         <p v-else-if="isEmpty(snapshot) && snapshot.account.status === 'signed-in'" data-test="empty">
           No projects are set up for Release QA. A repository appears here once it has a <code>qa/project.json</code> and you can read it.
         </p>

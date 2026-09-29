@@ -1,8 +1,9 @@
-# Release QA dashboard (Task 5.1)
+# Release QA dashboard (Tasks 5.1 and 5.2)
 
 An Electron + Vue window that shows the accounts, projects, pull requests, candidates, per-environment checks, manual
-work, evidence and published history that the shared commands return. This is Task 5.1 (read-only views); running,
-handing off and merging from the window is Task 5.2.
+work, evidence and published history that the shared commands return (Task 5.1), and lets a maintainer prepare a
+candidate, open the pull request and merge it (the first part of Task 5.2). Running a suite, resuming, syncing and manual
+results are the rest of 5.2 and are not here yet.
 
 ```text
 npm run build       # main, preload and renderer into dist/
@@ -35,6 +36,22 @@ malformed record), the pull request shows **Status unavailable** with the evalua
 The test `shows the evaluator result exactly, without computing readiness itself` checks that the object the
 evaluator returned is the object the snapshot carries.
 
+## Actions (Task 5.2, first part)
+
+Three commands are on the allowlist besides reading, all in `src/main/release-actions.ts`. The window sends only a
+repository, a pull request number, the head SHA it was looking at and, for a merge, a method and the candidate id it
+reviewed; every argument is validated again on the privileged side.
+
+| Action | What the window shows first | What the privileged side checks |
+| --- | --- | --- |
+| Prepare candidate | The workflow it starts (`qa-prepare`, from the default branch), the exact head, that the result becomes the active candidate and earlier results stop counting for it, and that nothing is installed or published | Write access, then the shared `prepareCandidate` preflight (release intent, same-repository PR, head unchanged, target unchanged) |
+| Merge | A fresh read: QA state, head, candidate, whether this authorizes publication (a release PR) or publishes nothing (an ordinary one), and a merge method | Write access; the gate evaluated again for the exact head; QA not blocked; the candidate still the one reviewed. GitHub is sent the head SHA, so a later push makes it refuse |
+| Open pull request | Nothing; it is a link | The link is built from a validated repository and number, never a URL from the window |
+
+A blocked or unevaluated gate disables Merge with the reason, and the merge is refused on the privileged side even if the
+button were forced. If the head or candidate moved while the confirmation was open, the window says so and offers no
+Merge button; a refresh that brings a new head closes an old confirmation.
+
 ## States
 
 | State | What the window shows |
@@ -62,6 +79,11 @@ evaluator returned is the object the snapshot carries.
 - **`.vue` files are not type-checked.** `tsc` handles the `.ts` files and the tests exercise the components; `vue-tsc`
   has not been tried against TypeScript 7.
 - **Load time.** Projects load three at a time and each pull request runs the gate's several `gh` calls, so an account with many open pull requests waits on the Loading screen; nothing is shown until the read finishes. A release-intent pre-check or streaming partial results would help; neither is done.
+- **Actions have not run against live GitHub.** `prepareCandidate`, the merge call and the refusal messages are tested
+  with a recording transport. The merge method list is not restricted to what the repository allows; a disallowed one
+  fails with GitHub's refusal, shown as "the branch may be protected, or the merge method is not allowed".
+- **Linux jobs** are not triggered from the window: no generic Linux workflow exists in this repository, and the
+  consumer's own workflows are not known to it. That, running suites, resume, sync and manual results are the rest of 5.2.
 - **Packaging** (an installer for the dashboard itself) is not done; `npm start` runs it from a checkout.
 
 ## Evidence

@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { GhTransport } from '@frogbyte-io/release-qa';
 import { CHANNELS, type DashboardSnapshot } from '../shared/contract.ts';
 import { loadDashboard, type SnapshotCache } from './qa-commands.ts';
+import { mergePullRequest, parsePullRef, prepareReleaseCandidate, previewMerge, pullRequestUrl } from './release-actions.ts';
 
 // The window is untrusted: it renders text that repositories and pull requests wrote. It gets no Node, no GitHub
 // credentials and no subprocesses; it can only ask this process for the commands in CHANNELS.
@@ -57,9 +58,23 @@ const fromDashboard = (event: IpcMainInvokeEvent): boolean => event.senderFrame?
 
 app.whenReady().then(() => {
   const cache = fileCache();
-  ipcMain.handle(CHANNELS.loadDashboard, async (event) => {
-    if (!fromDashboard(event)) throw new Error('untrusted sender');
-    return currentSnapshot(cache);
+  const api = new GhTransport();
+  // Every handler answers only the dashboard page, and every argument is validated again on this side (release-actions.ts).
+  const handle = <T>(channel: string, run: (input: unknown) => Promise<T>): void => {
+    ipcMain.handle(channel, async (event, input: unknown) => {
+      if (!fromDashboard(event)) throw new Error('untrusted sender');
+      return run(input);
+    });
+  };
+  handle(CHANNELS.loadDashboard, () => currentSnapshot(cache));
+  handle(CHANNELS.prepareCandidate, (input) => prepareReleaseCandidate(input, { api }));
+  handle(CHANNELS.previewMerge, (input) => previewMerge(input, { api }));
+  handle(CHANNELS.mergePullRequest, (input) => mergePullRequest(input, { api }));
+  handle(CHANNELS.openPullRequest, async (input) => {
+    const target = parsePullRef(input);
+    if (target === undefined) return { ok: false as const, error: 'That is not a valid pull request.' };
+    await shell.openExternal(pullRequestUrl(target.repository, target.number));
+    return { ok: true as const, message: 'Opened in your browser.' };
   });
   const window = createWindow();
   const capture = process.env.RELEASE_QA_CAPTURE_DIR;

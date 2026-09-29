@@ -2,10 +2,10 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { describe, expect, test } from 'vitest';
 import App from '../src/renderer/App.vue';
 import type { DashboardSnapshot } from '../src/shared/contract.ts';
-import { evaluation, projectView, pull, snapshot } from './fixtures.ts';
+import { evaluation, fakeBridge, projectView, pull, snapshot } from './fixtures.ts';
 
 async function open(load: () => Promise<DashboardSnapshot>) {
-  const wrapper = mount(App, { props: { load } });
+  const wrapper = mount(App, { props: { qa: fakeBridge({ loadDashboard: load }) } });
   await flushPromises();
   return wrapper;
 }
@@ -15,7 +15,7 @@ const text = (wrapper: Awaited<ReturnType<typeof open>>, selector: string) => wr
 describe('loading and failure', () => {
   test('shows a loading state until the data arrives, then the projects', async () => {
     let arrive: (value: DashboardSnapshot) => void = () => {};
-    const wrapper = mount(App, { props: { load: () => new Promise<DashboardSnapshot>((resolve) => { arrive = resolve; }) } });
+    const wrapper = mount(App, { props: { qa: fakeBridge({ loadDashboard: () => new Promise<DashboardSnapshot>((resolve) => { arrive = resolve; }) }) } });
     expect(wrapper.find('[data-test="loading"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="refresh"]').attributes('disabled')).toBeDefined();
     arrive(snapshot());
