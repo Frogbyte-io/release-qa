@@ -13,7 +13,7 @@ These defaults come from the plan's proposals and the Stage 0 results ([native a
 | Package manager | npm workspaces, one root `package-lock.json` | Plan default; nothing in Stage 0 contradicted it |
 | Language and test | TypeScript 7.0.2, Vitest 5.0.1, `@types/node` 22.20.4, all pinned exactly | Verified together in this change: `npm run typecheck` and `npm test` pass, and a deliberate type error fails the typecheck |
 | Native driver (sample apps) | WebdriverIO 9.31.9 `remote()` API + external `tauri-driver` 2.0.6; Edge WebDriver on Windows, `WebKitWebDriver` on Linux | Proven on the sample: 60/60 attempts across three runs per platform |
-| Desktop shell | Electron + Vue 3 + TypeScript, **unvalidated** | Still the plan's proposal. Nothing was built or tested. `apps/desktop` is an empty reserved workspace; its dependencies are added in Stage 5 |
+| Desktop shell | Electron 44.4.5 + Vue 3.5.43 + Vite 8.3.0 + TypeScript, pinned | Task 5.1 builds and runs it: context isolation, sandboxed preload, an IPC allowlist, tests with a fixture transport, and real window captures ([apps/desktop](../../apps/desktop/README.md)). Not yet run against live GitHub; not packaged |
 | Linux baseline | Ubuntu 24.04 x86_64, Xvfb virtual display. CI runs `ubuntu-24.04` | Proven on Ubuntu 24.04.5 in WSL2 (not bare metal) |
 | Windows baseline | Windows 11 x64, interactive session, WebView2 evergreen with a matching Edge WebDriver. CI runs `windows-2025` for tool logic only | Proven on Windows 11 10.0.26200 with WebView2 153.0.4234.48 |
 | Package names | `@frogbyte-io/release-qa` (runner, contracts, GitHub integration) and `@frogbyte-io/release-qa-desktop`; CLI `release-qa` | Proposals. Both packages are `private: true`. **Confirm names before publishing anything** |
@@ -23,7 +23,7 @@ These defaults come from the plan's proposals and the Stage 0 results ([native a
 ```text
 package.json                  npm workspaces: packages/*, apps/*
 packages/qa/                  runner, contracts, reports, GitHub integration (Stage 1 onward)
-apps/desktop/                 reserved for the Stage 5 dashboard
+apps/desktop/                 the Stage 5 dashboard (Electron + Vue)
 examples/tauri-smoke/         independent packaged consumer; NOT a workspace, keeps its own lockfile
 experiments/                  throwaway Stage 0 proofs; NOT workspaces, never imported by shipped code
 docs/decisions/               decision records
@@ -60,7 +60,7 @@ The repeatable smoke check is now the sample's `release-qa run` (see the guide),
 ## Not settled
 
 - **Dot X feasibility** is established with named constraints: slider input needs the device or a USB serial fixture, Stage 6 needs a dedicated test account or machine, and the code-signing certificate has expired (see [native-automation.md](native-automation.md#dot-x)).
-- **Electron + Vue** is untested. If the dashboard shell changes, only `apps/desktop` and Stage 5 move.
+- **Electron + Vue** now runs the read-only dashboard (Task 5.1). If the dashboard shell changes, only `apps/desktop` and Stage 5 move.
 - **Node 24** works locally but is not in the CI matrix. Add it when a consumer needs it.
 - **Windows baseline in CI** is Windows Server on a hosted runner, which is not the interactive Windows 11 desktop used for the Stage 0 GUI runs.
 - **Gate trust boundary and permission matrix** remain open as recorded in [github-gate.md](github-gate.md).

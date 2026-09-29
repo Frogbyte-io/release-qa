@@ -1,0 +1,117 @@
+{
+  "loadedAt": "2026-09-29T09:00:00.000Z",
+  "stale": false,
+  "account": {
+    "status": "signed-in",
+    "login": "maintainer"
+  },
+  "projects": [
+    {
+      "repository": "acme/orbit-orchard",
+      "projectId": "orbit-orchard",
+      "releaseBranch": "main",
+      "role": "maintain",
+      "readOnly": false,
+      "profiles": [
+        "windows",
+        "linux"
+      ],
+      "requirements": [
+        {
+          "key": "windows/persistence",
+          "title": "Mapping persists across a restart",
+          "mode": "automated",
+          "profile": "windows"
+        },
+        {
+          "key": "windows/device-feel",
+          "title": "Sliders feel right",
+          "mode": "manual",
+          "profile": "windows"
+        },
+        {
+          "key": "linux/persistence",
+          "title": "Mapping persists across a restart",
+          "mode": "automated",
+          "profile": "linux"
+        }
+      ],
+      "pullRequests": {
+        "status": "ok",
+        "items": [
+          {
+            "number": 14,
+            "title": "Release 1.5.0",
+            "author": "maintainer",
+            "url": "https://github.com/acme/orbit-orchard/pull/14",
+            "headRef": "release/1.5.0",
+            "headSha": "3f9c2a71d0b84e5a9c6d21f0a7b3e8c45d1e2f60",
+            "draft": false,
+            "releaseIntent": [
+              "release branch",
+              "release label"
+            ],
+            "gate": {
+              "status": "evaluated",
+              "candidateId": "cand-20260929-1",
+              "candidateReleaseId": 812,
+              "evaluation": {
+                "readiness": "blocked",
+                "reasons": [
+                  {
+                    "code": "missing-result",
+                    "requirement": "windows/device-feel"
+                  },
+                  {
+                    "code": "not-passed",
+                    "requirement": "linux/persistence",
+                    "outcomes": [
+                      "failed"
+                    ]
+                  }
+                ],
+                "excused": [],
+                "acceptedReportIds": [
+                  "report-win-01"
+                ],
+                "exceptionIds": [],
+                "ignored": [
+                  {
+                    "kind": "report",
+                    "id": "report-old-07",
+                    "reason": "other-candidate"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "history": {
+        "status": "ok",
+        "releases": [
+          {
+            "tag": "v1.4.0",
+            "name": "v1.4.0",
+            "publishedAt": "2026-09-12T09:30:00Z",
+            "url": "https://github.com/acme/orbit-orchard/releases/tag/v1.4.0",
+            "qa": "recorded"
+          },
+          {
+            "tag": "v1.3.2",
+            "name": "v1.3.2",
+            "publishedAt": "2026-08-20T14:05:00Z",
+            "url": "https://github.com/acme/orbit-orchard/releases/tag/v1.3.2",
+            "qa": "missing"
+          }
+        ]
+      }
+    }
+  ],
+  "problems": [
+    {
+      "repository": "acme/private-tools",
+      "reason": "organization-rejected"
+    }
+  ]
+}

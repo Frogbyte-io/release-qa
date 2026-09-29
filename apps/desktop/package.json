@@ -2,5 +2,28 @@
   "name": "@frogbyte-io/release-qa-desktop",
   "private": true,
   "version": "0.0.0",
-  "description": "Windows QA dashboard (Electron + Vue). Reserved: dependencies are added in Stage 5."
+  "description": "Windows QA dashboard (Electron + Vue)",
+  "dependencies": {
+    "@frogbyte-io/release-qa": "*",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "@vitejs/plugin-vue": "6.0.9",
+    "@vue/test-utils": "2.5.1",
+    "electron": "44.4.5",
+    "jsdom": "30.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  },
+  "main": "dist/main/index.mjs",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run",
+    "capture": "node scripts/capture.mjs"
+  }
 }
