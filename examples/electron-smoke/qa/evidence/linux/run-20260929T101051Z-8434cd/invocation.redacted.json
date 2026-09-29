@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "project": "%REPOSITORY%/examples/electron-smoke/qa/project.json",
+  "candidate": "%REPOSITORY%/examples/electron-smoke/out/candidate.json",
+  "profile": "linux",
+  "suite": "release",
+  "root": "%REPOSITORY%/.release-qa",
+  "artifactSha256": "45179e688dd676e0a2d312998cb2b07663e26c9d1344ee0cf6198f4cf92bf4fb"
+}

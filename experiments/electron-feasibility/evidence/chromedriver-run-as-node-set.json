@@ -1,0 +1,15 @@
+{
+  "probe": "chromedriver",
+  "environment": {
+    "os": "win32 10.0.26200",
+    "node": "v24.13.0",
+    "electron": "44.4.5",
+    "webdriverio": "9.31.9"
+  },
+  "electronRunAsNodeInDriverEnvironment": "1",
+  "chromedriver": "ChromeDriver 152.0.7977.130",
+  "runningBefore": 0,
+  "error": "WebDriverError: session not created: Chrome failed to start: crashed.",
+  "appProcessesFoundAtCleanup": 0,
+  "appProcessesAfterCleanup": 0
+}

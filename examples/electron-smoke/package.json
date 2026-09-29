@@ -1,0 +1,15 @@
+{
+  "name": "release-qa-electron-smoke",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Independent packaged Electron consumer used to prove Release QA automation",
+  "main": "src/main.js",
+  "scripts": {
+    "package": "node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "44.4.5",
+    "electron-chromedriver": "44.4.5"
+  }
+}

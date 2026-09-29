@@ -1,0 +1,16 @@
+{
+  "probe": "@wdio/electron-service",
+  "environment": {
+    "os": "win32 10.0.26200",
+    "node": "v24.13.0",
+    "electron": "44.4.5",
+    "webdriverio": "9.31.9"
+  },
+  "service": "10.3.0",
+  "webdriverioLoadedByTheService": "9.30.1",
+  "electronRunAsNodeInEnvironment": "1",
+  "runningBefore": 0,
+  "error": "WebDriverError: session not created: Chrome failed to start: crashed.",
+  "errorAfterSessionStartMs": 4134,
+  "appProcessesLeftBehind": 0
+}
