@@ -33,6 +33,14 @@ const record = (value: unknown): Record<string, unknown> | undefined => (value !
 /** Only GitHub links are kept, so a repository's own text can never become a link to somewhere else. */
 const githubUrl = (value: unknown): string => (typeof value === 'string' && /^https:\/\/github\.com\/[A-Za-z0-9_./#?=&%-]{1,400}$/.test(value) ? value : '');
 
+/** A cache file from another build, or cut off mid-write, must be discarded rather than trusted. */
+function validSnapshot(value: unknown): DashboardSnapshot | undefined {
+  const snap = record(value);
+  const account = record(snap?.account);
+  if (snap === undefined || typeof snap.loadedAt !== 'string' || !Array.isArray(snap.projects) || !Array.isArray(snap.problems) || (account?.status !== 'signed-in' && account?.status !== 'signed-out')) return undefined;
+  return value as DashboardSnapshot;
+}
+
 /**
  * Reads the accounts, projects, pull requests and release history the window shows. Readiness is never computed here:
  * every pull request's gate is the shared evaluator's result, passed through as data. A repository that cannot be read
@@ -44,7 +52,7 @@ export async function loadDashboard(deps: DashboardDeps): Promise<DashboardSnaps
   const { api } = deps;
 
   const fallback = async (reason: string, signedOut: boolean): Promise<DashboardSnapshot> => {
-    const cached = await deps.cache.read().catch(() => undefined);
+    const cached = validSnapshot(await deps.cache.read().catch(() => undefined));
     return {
       loadedAt: cached?.loadedAt ?? now().toISOString(),
       stale: cached !== undefined,
@@ -59,33 +67,41 @@ export async function loadDashboard(deps: DashboardDeps): Promise<DashboardSnaps
   const user = await api.currentUser();
   if (!user.ok) return fallback(user.reason, user.reason === 'logged-out');
 
+  // The sign-in was just checked; per-repository access checks reuse it instead of spawning gh again for each one.
+  const session: GitHubApi = { auth: async () => auth, get: (path) => api.get(path) };
   const discovery = await discoverProjects(api);
   const listingFailed = discovery.problems.find((problem) => problem.repository === '*');
   if (listingFailed !== undefined) return fallback(listingFailed.reason, listingFailed.reason === 'logged-out');
 
   const problems = discovery.problems.filter((problem) => problem.repository !== '*');
   const projects: ProjectView[] = [];
-  for (const discovered of discovery.projects) {
-    try {
-      const view = await loadProject(discovered, deps.api, evaluate);
-      if (view.ok) projects.push(view.project);
-      else problems.push({ repository: discovered.repository, reason: view.reason });
-    } catch {
-      problems.push({ repository: discovered.repository, reason: 'network-error' });
+  // A few projects at a time; within one, pull requests are read one at a time (see loadProject). Results keep discovery order.
+  const loaded: Array<{ ok: true; project: ProjectView } | { ok: false; reason: string }> = new Array(discovery.projects.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(3, discovery.projects.length) }, async () => {
+    while (next < discovery.projects.length) {
+      const index = next++;
+      loaded[index] = await loadProject(discovery.projects[index]!, deps.api, session, evaluate).catch(() => ({ ok: false as const, reason: 'network-error' }));
     }
-  }
+  }));
+  loaded.forEach((view, index) => {
+    if (view.ok) projects.push(view.project);
+    else problems.push({ repository: discovery.projects[index]!.repository, reason: view.reason });
+  });
 
   const snapshot: DashboardSnapshot = { loadedAt: now().toISOString(), stale: false, account: { status: 'signed-in', login: user.value }, projects, problems };
-  await deps.cache.write(snapshot).catch(() => undefined);
+  // Only a complete read replaces the cache: a partial one would erase the last good copy the stale view depends on.
+  if (problems.length === 0) await deps.cache.write(snapshot).catch(() => undefined);
   return snapshot;
 }
 
 async function loadProject(
   { repository, project }: DiscoveredProject,
   api: DashboardApi,
+  session: GitHubApi,
   evaluate: typeof evaluatePullRequest,
 ): Promise<{ ok: true; project: ProjectView } | { ok: false; reason: string }> {
-  const access = await inspectGitHubAccess(repository, api);
+  const access = await inspectGitHubAccess(repository, session);
   if (!access.ok) return { ok: false, reason: access.reason };
   const role = access.role as ProjectView['role'];
   const requirements: RequirementView[] = project.requirements.map((requirement) => ({ key: requirement.key, title: requirement.title, mode: requirement.mode, profile: profileOf(requirement.key) }));
@@ -125,7 +141,7 @@ async function pullRequestView(repository: string, entry: unknown, api: Dashboar
   if (pull === undefined || typeof number !== 'number' || !Number.isSafeInteger(number) || typeof head?.sha !== 'string') return undefined;
   const result = await evaluate(repository, number, api).catch(() => undefined);
   let gate: GateView;
-  let releaseIntent: string[] = [];
+  let releaseIntent: string[] | undefined;
   if (result === undefined) gate = { status: 'unavailable', error: 'GitHub state could not be read' };
   else if (!result.ok) gate = { status: 'unavailable', error: result.error };
   else {
@@ -145,14 +161,15 @@ async function pullRequestView(repository: string, entry: unknown, api: Dashboar
     headRef: text(head.ref),
     headSha: head.sha,
     draft: pull.draft === true,
-    releaseIntent,
+    ...(releaseIntent === undefined ? {} : { releaseIntent }),
     gate,
   };
 }
 
 async function historyView(repository: string, api: DashboardApi): Promise<HistoryView> {
-  const listed = await api.list(`repos/${repository}/releases?per_page=20`);
+  const listed = await api.get(`repos/${repository}/releases?per_page=20`);
   if (!listed.ok) return { status: 'unavailable', reason: listed.reason };
+  if (!Array.isArray(listed.value)) return { status: 'unavailable', reason: 'network-error' };
   const releases = listed.value.flatMap((entry) => {
     const release = record(entry);
     if (release === undefined || release.draft === true || typeof release.tag_name !== 'string') return [];

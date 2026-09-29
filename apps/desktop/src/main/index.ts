@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { GhTransport } from '@frogbyte-io/release-qa';
@@ -15,7 +15,8 @@ function fileCache(): SnapshotCache {
   const file = join(app.getPath('userData'), 'dashboard-cache.json');
   return {
     read: async () => JSON.parse(await readFile(file, 'utf8')) as DashboardSnapshot,
-    write: (snapshot) => writeFile(file, JSON.stringify(snapshot)),
+    // Written beside and renamed, so a crash mid-write never leaves a cut-off file where the last good copy was.
+    write: async (snapshot) => { await writeFile(`${file}.tmp`, JSON.stringify(snapshot)); await rename(`${file}.tmp`, file); },
   };
 }
 
@@ -64,7 +65,9 @@ app.whenReady().then(() => {
   const capture = process.env.RELEASE_QA_CAPTURE_DIR;
   if (capture !== undefined && !app.isPackaged) {
     window.webContents.once('did-finish-load', () => {
-      void import('./capture.ts').then(({ captureViews }) => captureViews(window, capture, process.env.RELEASE_QA_CAPTURE_PREFIX ?? 'window')).finally(() => app.quit());
+      import('./capture.ts')
+        .then(({ captureViews }) => captureViews(window, capture, process.env.RELEASE_QA_CAPTURE_PREFIX ?? 'window'))
+        .then(() => app.exit(0), (error: unknown) => { console.error('capture failed:', error); app.exit(1); });
     });
   }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

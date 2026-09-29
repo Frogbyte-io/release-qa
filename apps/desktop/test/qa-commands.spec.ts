@@ -50,6 +50,8 @@ describe('loadDashboard', () => {
     const result = await loadDashboard({ api, cache: memoryCache(), now: () => NOW, evaluate: async () => ({ ok: false, error: 'manual check required: no active candidate selected' }) });
     const items = result.projects[0]?.pullRequests;
     expect(items?.status === 'ok' && items.items[0]?.gate).toEqual({ status: 'unavailable', error: 'manual check required: no active candidate selected' });
+    // Whether it is a release is unknown when the gate cannot say, and is left out rather than reported as empty.
+    expect(items?.status === 'ok' && items.items[0] !== undefined && 'releaseIntent' in items.items[0]).toBe(false);
   });
 
   test('reports no projects when none are configured, and keeps the account', async () => {
@@ -87,6 +89,24 @@ describe('loadDashboard', () => {
     await loadDashboard({ api, cache, now: () => NOW, evaluate: notEvaluated });
     expect(cache.last()?.loadedAt).toBe(NOW.toISOString());
   });
+
+  test('a partial read does not replace the last complete copy', async () => {
+    const complete = snapshot({ loadedAt: '2026-09-28T08:00:00.000Z' });
+    const cache = memoryCache(complete);
+    const api = fixtureTransport({ ...listing('acme/app', 'acme/locked'), ...repository('acme/app'), ...repository('acme/locked', { 'repos/acme/locked': failure('network-error') }) });
+    const result = await loadDashboard({ api, cache, now: () => NOW, evaluate: notEvaluated });
+    expect(result.problems).toEqual([{ repository: 'acme/locked', reason: 'network-error' }]);
+    expect(cache.last()).toBe(complete);
+  });
+
+  test.each([[{}], [{ ...snapshot(), projects: 'x' }], [{ ...snapshot(), account: null }], ['text']])(
+    'discards a cache of the wrong shape instead of trusting it (%#)',
+    async (bad) => {
+      const api = fixtureTransport({}, { auth: { ok: false, reason: 'network-error' } });
+      const result = await loadDashboard({ api, cache: memoryCache(bad as never), now: () => NOW, evaluate: notEvaluated });
+      expect(result).toMatchObject({ stale: false, projects: [], problems: [{ repository: '*', reason: 'network-error' }] });
+    },
+  );
 
   test('a read-only user gets every project marked read-only', async () => {
     const api = fixtureTransport({ ...listing('acme/app'), ...repository('acme/app', { 'repos/acme/app': okReply(repo('acme/app', { pull: true })) }) });

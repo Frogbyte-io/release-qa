@@ -150,6 +150,16 @@ describe('release view shows what the evaluator returned', () => {
     expect(wrapper.find('[data-test="readiness"]').exists()).toBe(false);
   });
 
+  test('a pull request whose release status is unknown is shown as unavailable, not as not-a-release', async () => {
+    const { releaseIntent: _unknown, ...unknown } = pull({ gate: { status: 'unavailable', error: 'no draft candidate release' } });
+    const wrapper = await show(snapshot({ projects: [projectView({ pullRequests: { status: 'ok', items: [unknown] } })] }));
+    expect(text(wrapper, 'gate-unavailable')).toBe('Status unavailable');
+    expect(wrapper.text()).not.toContain('Not a release');
+    await wrapper.get('[data-test="open-acme/app-7"]').trigger('click');
+    expect(text(wrapper, 'gate-error')).toContain('no draft candidate release');
+    expect(wrapper.find('[data-test="not-release"]').exists()).toBe(false);
+  });
+
   test('an ordinary pull request is not presented as a release', async () => {
     const wrapper = await show(snapshot({ projects: [projectView({ pullRequests: { status: 'ok', items: [pull({ releaseIntent: [] })] } })] }));
     await wrapper.get('[data-test="open-acme/app-7"]').trigger('click');

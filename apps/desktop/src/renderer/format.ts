@@ -25,7 +25,10 @@ export function reasonText(reason: Reason): string {
 export const reasonRequirement = (reason: Reason): string | undefined => ('requirement' in reason ? reason.requirement : undefined);
 
 /** The environment profile is the part of a requirement key before the slash. */
-export const environmentOf = (requirement: string): string => requirement.slice(0, requirement.indexOf('/'));
+export const environmentOf = (requirement: string): string => {
+  const slash = requirement.indexOf('/');
+  return slash < 0 ? requirement : requirement.slice(0, slash);
+};
 
 export interface EnvironmentGroup { environment: string; reasons: Reason[] }
 

@@ -23,9 +23,9 @@ defineEmits<{ open: [repository: string, number: number] }>();
         <li v-for="pull in project.pullRequests.items" :key="pull.number">
           <button type="button" class="link" :data-test="`open-${project.repository}-${pull.number}`" @click="$emit('open', project.repository, pull.number)">#{{ pull.number }} {{ pull.title }}</button>
           <span class="meta"> by {{ pull.author }}</span>
-          <span v-if="pull.releaseIntent.length === 0" class="tag">Not a release</span>
-          <span v-else-if="pull.gate.status === 'evaluated'" class="tag" :class="pull.gate.evaluation.readiness" data-test="readiness">{{ READINESS_LABEL[pull.gate.evaluation.readiness] }}</span>
-          <span v-else class="tag warn" data-test="gate-unavailable">Status unavailable</span>
+          <span v-if="pull.gate.status === 'unavailable'" class="tag warn" data-test="gate-unavailable">Status unavailable</span>
+          <span v-else-if="pull.releaseIntent?.length === 0" class="tag">Not a release</span>
+          <span v-else class="tag" :class="pull.gate.evaluation.readiness" data-test="readiness">{{ READINESS_LABEL[pull.gate.evaluation.readiness] }}</span>
         </li>
       </ul>
 

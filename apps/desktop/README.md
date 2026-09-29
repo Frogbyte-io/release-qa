@@ -43,7 +43,8 @@ evaluator returned is the object the snapshot carries.
 | Data cannot be read at all | An alert and Refresh to retry |
 | Nothing set up | An explanation naming `qa/project.json` |
 | Expired or missing GitHub sign-in | A banner saying to run `gh auth login`; the last good projects stay visible and are marked stale |
-| GitHub unreachable | The last good snapshot, marked stale with its own read time. The cache file is not overwritten |
+| GitHub unreachable | The last good snapshot, marked stale with its own read time. A cache of an unexpected shape is discarded, and only a read with no problems replaces the cache (written by rename) |
+| Gate cannot be evaluated | Status unavailable with the evaluator's error. Whether it is a release is then unknown, so it is never labelled "Not a release" |
 | Read-only user | A Read-only tag and notice on the project and the release |
 | One repository unreadable (SSO, not found, network) | Listed under "Not available" beside the projects that loaded |
 | Published release without a QA record | Flagged **No QA record**; never shown as passed |
@@ -60,6 +61,7 @@ evaluator returned is the object the snapshot carries.
   the evaluator, which this read view does not use.
 - **`.vue` files are not type-checked.** `tsc` handles the `.ts` files and the tests exercise the components; `vue-tsc`
   has not been tried against TypeScript 7.
+- **Load time.** Projects load three at a time and each pull request runs the gate's several `gh` calls, so an account with many open pull requests waits on the Loading screen; nothing is shown until the read finishes. A release-intent pre-check or streaming partial results would help; neither is done.
 - **Packaging** (an installer for the dashboard itself) is not done; `npm start` runs it from a checkout.
 
 ## Evidence

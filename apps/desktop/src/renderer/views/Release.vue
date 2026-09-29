@@ -23,13 +23,13 @@ const manualWork = computed(() => (evaluation.value?.reasons ?? []).filter((reas
     <p v-if="project.readOnly" class="note">{{ ROLE_NOTE }}</p>
     <p class="meta" data-test="loaded-at">Last read from GitHub {{ loadedAt }}</p>
 
-    <p v-if="pullRequest.releaseIntent.length === 0" data-test="not-release">This pull request is not a release; the normal merge policy applies.</p>
+    <p v-if="pullRequest.gate.status === 'unavailable'" role="alert" data-test="gate-error">QA status is unavailable: {{ pullRequest.gate.error }}</p>
 
-    <p v-else-if="pullRequest.gate.status === 'unavailable'" role="alert" data-test="gate-error">QA status is unavailable: {{ pullRequest.gate.error }}</p>
+    <p v-else-if="pullRequest.releaseIntent?.length === 0" data-test="not-release">This pull request is not a release; the normal merge policy applies.</p>
 
     <template v-else-if="gate && evaluation">
       <p class="verdict" :class="evaluation.readiness" data-test="readiness">{{ READINESS_LABEL[evaluation.readiness] }}</p>
-      <p class="meta">Release because: {{ pullRequest.releaseIntent.join('; ') }}</p>
+      <p class="meta">Release because: {{ (pullRequest.releaseIntent ?? []).join('; ') }}</p>
       <p v-if="gate.candidateId" class="meta" data-test="candidate">Candidate {{ gate.candidateId }}<span v-if="gate.candidateReleaseId"> (draft release {{ gate.candidateReleaseId }})</span></p>
 
       <h3>Checks by environment</h3>

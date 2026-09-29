@@ -42,8 +42,11 @@ export interface PullRequestView {
   headRef: string;
   headSha: string;
   draft: boolean;
-  /** Empty for an ordinary pull request. */
-  releaseIntent: string[];
+  /**
+   * Why this is a release pull request; empty for an ordinary one. Absent when the gate could not be evaluated, because
+   * then it is not known whether this is a release, and it must never be shown as one that is not.
+   */
+  releaseIntent?: string[];
   gate: GateView;
 }
 
