@@ -1,0 +1,21 @@
+{
+  "probe": "@wdio/electron-service",
+  "environment": {
+    "os": "win32 10.0.26200",
+    "node": "v24.13.0",
+    "electron": "44.4.5",
+    "webdriverio": "9.31.9"
+  },
+  "service": "10.3.0",
+  "webdriverioLoadedByTheService": "9.30.1",
+  "electronRunAsNodeInEnvironment": null,
+  "runningBefore": 0,
+  "sessionStartMs": 2477,
+  "title": "Release QA Electron Smoke",
+  "appProcesses": 4,
+  "shown": "hello",
+  "screenshotBytes": 25739,
+  "error": "CDP bridge is not available, API is disabled",
+  "errorAfterSessionStartMs": 4150,
+  "appProcessesLeftBehind": 4
+}

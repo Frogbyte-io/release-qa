@@ -1,0 +1,30 @@
+{
+  "probe": "chromedriver",
+  "environment": {
+    "os": "win32 10.0.26200",
+    "node": "v24.13.0",
+    "electron": "44.4.5",
+    "webdriverio": "9.31.9"
+  },
+  "electronRunAsNodeInDriverEnvironment": null,
+  "chromedriver": "ChromeDriver 152.0.7977.130",
+  "runningBefore": 0,
+  "sessionStartMs": 707,
+  "processesBelowDriver": {
+    "release-qa-electron-smoke.exe": 4,
+    "conhost.exe": 1
+  },
+  "appProcesses": 4,
+  "title": "Release QA Electron Smoke",
+  "consoleEntries": [
+    "SEVERE console-api 12:34 \"renderer error for the probe\""
+  ],
+  "pageSourceBytes": 781,
+  "screenshotBytes": 25739,
+  "settingOnDisk": "hello",
+  "msUntilAppGoneAfterDeleteSession": 1396,
+  "appProcessesAfterDeleteSession": 0,
+  "shownAfterRestart": "hello",
+  "appProcessesLeftWhenDriverKilled": 4,
+  "appProcessesStoppedByProbe": 4
+}

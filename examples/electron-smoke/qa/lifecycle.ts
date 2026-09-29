@@ -34,8 +34,8 @@ async function launch(ctx: RunContext): Promise<void> {
     application: executable(ctx),
     chromedriver: chromedriver(),
     userDataDir: dataDir(ctx),
-    // Chromium's sandbox cannot start for root, or where unprivileged user namespaces are restricted (Ubuntu 24.04's
-    // default). Say so explicitly: the sandbox is only turned off when the machine's owner asks.
+    // Electron refuses to start as root with Chromium's sandbox on (measured on Ubuntu 24.04 in WSL2). The sandbox is
+    // only turned off when the machine's owner asks for it.
     appArgs: !windows && process.env.RELEASE_QA_ELECTRON_NO_SANDBOX === '1' ? ['--no-sandbox'] : [],
   });
 }

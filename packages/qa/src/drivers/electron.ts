@@ -40,8 +40,11 @@ export interface ElectronAppOptions {
   exitTimeoutMs?: number;
   /** How long to wait before each screenshot, so it shows what the page shows. Default 250 ms. */
   screenshotSettleMs?: number;
-  /** Evidence file for chromedriver's own log, or false for none. Default `chromedriver.log`. */
-  driverLog?: string | false;
+  /**
+   * Evidence file name for chromedriver's own log. Default none: the log repeats the launch command line, so it carries
+   * the machine's paths (including the account name) into evidence that may be published.
+   */
+  driverLog?: string;
 }
 
 export type Browser = Awaited<ReturnType<typeof remote>>;
@@ -104,9 +107,7 @@ export class ElectronApp {
     if (running.length > 0) throw new Error(`${application} is already running (pid ${running.join(', ')}); a run can only drive an instance it started`);
     if (await portInUse(port)) throw new Error(`something is already listening on port ${port}`);
 
-    const logName = options.driverLog === undefined ? 'chromedriver.log' : options.driverLog;
-    // The log is best-effort evidence: a run that does not collect evidence, or a name already taken, still gets a driver.
-    const logPath = logName === false ? undefined : await ctx.evidence(logName).catch(() => undefined);
+    const logPath = options.driverLog === undefined ? undefined : await ctx.evidence(options.driverLog);
     const args = [`--port=${port}`, ...(logPath === undefined ? [] : [`--log-path=${logPath}`])];
     const driver = await ctx.spawn('chromedriver', chromedriver, args, { stdio: 'ignore', windowsHide: true, env: cleanElectronEnv(process.env) });
     app.#driverPid = driver.pid as number;
