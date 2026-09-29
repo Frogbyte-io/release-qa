@@ -15,5 +15,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test", "../../examples/tauri-smoke/qa"]
+  "include": ["src", "test", "../../examples/tauri-smoke/qa", "../../examples/electron-smoke/qa"]
 }

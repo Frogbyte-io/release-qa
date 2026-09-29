@@ -1,0 +1,13 @@
+{
+  "name": "release-qa-electron-feasibility",
+  "private": true,
+  "type": "module",
+  "description": "Stage-0-style feasibility probe for driving a packaged Electron app (issue #45)",
+  "dependencies": {
+    "@electron/fuses": "^2.1.3",
+    "@wdio/electron-service": "10.3.0",
+    "electron": "44.4.5",
+    "electron-chromedriver": "^44.4.5",
+    "webdriverio": "9.31.9"
+  }
+}
