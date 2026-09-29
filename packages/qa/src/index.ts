@@ -14,6 +14,7 @@ export { ensureManagedSections, readManagedSection, updateManagedSections, updat
 export { discoverProjects, type Discovery, type DiscoveredProject, type RepositoryApi } from './github/discover.ts';
 export { GhTransport, inspectGitHubAccess, type AccessProblem, type ApiResult, type GitHubApi } from './github/transport.ts';
 export { profileOf } from './model/requirement.ts';
+export { mergeReleasePr, type MergeApi, type MergeResult } from './github/publish.ts';
 export { parseCandidate, type Artifact, type Candidate } from './model/candidate.ts';
 export { parseException, type Exception } from './model/exception.ts';
 export { parseLocalCandidate, type LocalArtifact, type LocalCandidate } from './model/local-candidate.ts';

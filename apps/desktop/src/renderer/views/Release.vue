@@ -5,7 +5,7 @@ import ReleaseActions from './ReleaseActions.vue';
 import { READINESS_LABEL, ROLE_NOTE, groupByEnvironment, reasonRequirement, reasonText } from '../format.ts';
 
 const props = defineProps<{ project: ProjectView; pullRequest: PullRequestView; loadedAt: string; qa: QaBridge }>();
-defineEmits<{ back: []; done: [message: string, refresh: boolean] }>();
+defineEmits<{ back: []; done: [message: string] }>();
 
 const gate = computed(() => (props.pullRequest.gate.status === 'evaluated' ? props.pullRequest.gate : undefined));
 const evaluation = computed(() => gate.value?.evaluation);
@@ -23,7 +23,7 @@ const manualWork = computed(() => (evaluation.value?.reasons ?? []).filter((reas
     <p class="meta">{{ project.repository }} · {{ pullRequest.headRef }} @ {{ pullRequest.headSha.slice(0, 7) }} · by {{ pullRequest.author }}<span v-if="pullRequest.draft"> · draft</span></p>
     <p v-if="project.readOnly" class="note">{{ ROLE_NOTE }}</p>
     <p class="meta" data-test="loaded-at">Last read from GitHub {{ loadedAt }}</p>
-    <ReleaseActions :key="pullRequest.headSha" :project="project" :pull-request="pullRequest" :qa="qa" @done="(message, refresh) => $emit('done', message, refresh)" />
+    <ReleaseActions :key="pullRequest.headSha" :project="project" :pull-request="pullRequest" :qa="qa" @done="(message) => $emit('done', message)" />
 
     <p v-if="pullRequest.gate.status === 'unavailable'" role="alert" data-test="gate-error">QA status is unavailable: {{ pullRequest.gate.error }}</p>
 

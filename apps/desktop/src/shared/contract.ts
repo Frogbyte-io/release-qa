@@ -52,7 +52,7 @@ export type MergePreviewResult =
     }
   | { ok: false; error: string };
 
-export type ActionResult = { ok: true; message: string; url?: string } | { ok: false; error: string };
+export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
 
 /** Repository permissions as the transport reports them. Only `write` and above may run, sync or merge. */
 export type Role = 'admin' | 'maintain' | 'write' | 'triage' | 'read';

@@ -4,15 +4,16 @@ import { MERGE_METHODS, type ActionResult, type MergeMethod, type MergePreviewRe
 import { READINESS_LABEL } from '../format.ts';
 
 const props = defineProps<{ project: ProjectView; pullRequest: PullRequestView; qa: QaBridge }>();
-/** `refresh` is true when GitHub changed and the window's data is now out of date. */
-const emit = defineEmits<{ done: [message: string, refresh: boolean] }>();
+/** Emitted when GitHub changed, so the window's data is out of date. */
+const emit = defineEmits<{ done: [message: string] }>();
 
 type Preview = Extract<MergePreviewResult, { ok: true }>;
 type Panel = { kind: 'prepare' } | { kind: 'merge'; preview: Preview };
 const panel = ref<Panel | undefined>();
 const busy = ref(false);
 const problem = ref('');
-const method = ref<MergeMethod>('squash');
+// Only an ordinary pull request lets the person choose; a release is always merged with a merge commit (see release-actions.ts).
+const method = ref<MergeMethod>('merge');
 
 const target = computed(() => ({ repository: props.project.repository, number: props.pullRequest.number, headSha: props.pullRequest.headSha }));
 const seenCandidate = computed(() => (props.pullRequest.gate.status === 'evaluated' ? props.pullRequest.gate.candidateId : undefined));
@@ -35,17 +36,27 @@ const drift = computed(() => {
   return '';
 });
 
-async function run(action: () => Promise<ActionResult>, refresh = true): Promise<void> {
+async function run(action: () => Promise<ActionResult>): Promise<void> {
   busy.value = true;
   problem.value = '';
   try {
     const result = await action();
-    if (result.ok) { panel.value = undefined; emit('done', result.message, refresh); }
+    if (result.ok) { panel.value = undefined; emit('done', result.message); }
     else { problem.value = result.error; }
   } catch {
     problem.value = 'The action could not be completed.';
   } finally {
     busy.value = false;
+  }
+}
+
+/** Opening the page changes nothing here, so it leaves an open confirmation and the notice alone. */
+async function openPull(): Promise<void> {
+  try {
+    const result = await props.qa.openPullRequest(target.value);
+    if (!result.ok) problem.value = result.error;
+  } catch {
+    problem.value = 'The pull request could not be opened.';
   }
 }
 
@@ -64,7 +75,7 @@ async function chooseMerge(): Promise<void> {
 }
 
 const confirmPrepare = (): Promise<void> => run(() => props.qa.prepareCandidate(target.value));
-const confirmMerge = (): Promise<void> => run(() => props.qa.mergePullRequest({ ...target.value, method: method.value, ...(seenCandidate.value === undefined ? {} : { candidateId: seenCandidate.value }) }));
+const confirmMerge = (): Promise<void> => run(() => props.qa.mergePullRequest({ ...target.value, method: panel.value?.kind === 'merge' && panel.value.preview.publishes ? 'merge' : method.value, ...(seenCandidate.value === undefined ? {} : { candidateId: seenCandidate.value }) }));
 const cancel = (): void => { panel.value = undefined; problem.value = ''; };
 </script>
 
@@ -74,7 +85,7 @@ const cancel = (): void => { panel.value = undefined; problem.value = ''; };
     <div class="row">
       <button type="button" data-test="prepare" :disabled="busy || prepareBlock !== ''" :title="prepareBlock" @click="panel = { kind: 'prepare' }">Prepare candidate</button>
       <button type="button" data-test="merge" :disabled="busy || mergeBlock !== ''" :title="mergeBlock" @click="chooseMerge">Merge…</button>
-      <button type="button" data-test="open-pr" :disabled="busy" @click="run(() => qa.openPullRequest(target), false)">Open pull request on GitHub</button>
+      <button type="button" data-test="open-pr" :disabled="busy" @click="openPull">Open pull request on GitHub</button>
     </div>
     <p v-if="prepareBlock" class="meta" data-test="prepare-block">{{ prepareBlock }}</p>
     <p v-if="mergeBlock" class="meta" data-test="merge-block">{{ mergeBlock }}</p>
@@ -95,12 +106,12 @@ const cancel = (): void => { panel.value = undefined; problem.value = ''; };
       <h4>Merge #{{ pullRequest.number }} into {{ panel.preview.baseRef }}?</h4>
       <ul>
         <li data-test="merge-state">QA: {{ READINESS_LABEL[panel.preview.readiness] }} at head {{ panel.preview.headSha.slice(0, 7) }}<span v-if="panel.preview.candidateId">, candidate {{ panel.preview.candidateId }}</span>.</li>
-        <li v-if="panel.preview.publishes" data-test="merge-publishes"><strong>This authorizes publication.</strong> The exact binaries tested in this candidate are published as the release; they are not rebuilt.</li>
+        <li v-if="panel.preview.publishes" data-test="merge-publishes"><strong>This authorizes publication.</strong> The exact binaries tested in this candidate are published as the release; they are not rebuilt. The release notes as they are now are saved with the candidate first, and the merge uses a merge commit so the merged code is the tested code.</li>
         <li v-else data-test="merge-plain">This is not a release, so merging follows the normal merge policy and publishes nothing.</li>
         <li>GitHub is told the head you reviewed, and refuses the merge if anyone has pushed since.</li>
       </ul>
       <p v-if="drift" role="alert" class="banner warn" data-test="drift">{{ drift }} Nothing was merged; refresh and review it again.</p>
-      <label>Method
+      <label v-if="!panel.preview.publishes">Method
         <select v-model="method" data-test="method"><option v-for="option in MERGE_METHODS" :key="option" :value="option">{{ option }}</option></select>
       </label>
       <button type="button" data-test="confirm-merge-go" :disabled="busy || drift !== '' || panel.preview.readiness === 'blocked'" @click="confirmMerge">Merge</button>

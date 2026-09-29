@@ -45,7 +45,7 @@ reviewed; every argument is validated again on the privileged side.
 | Action | What the window shows first | What the privileged side checks |
 | --- | --- | --- |
 | Prepare candidate | The workflow it starts (`qa-prepare`, from the default branch), the exact head, that the result becomes the active candidate and earlier results stop counting for it, and that nothing is installed or published | Write access, then the shared `prepareCandidate` preflight (release intent, same-repository PR, head unchanged, target unchanged) |
-| Merge | A fresh read: QA state, head, candidate, whether this authorizes publication (a release PR) or publishes nothing (an ordinary one), and a merge method | Write access; the gate evaluated again for the exact head; QA not blocked; the candidate still the one reviewed. GitHub is sent the head SHA, so a later push makes it refuse |
+| Merge | A fresh read: QA state, head, candidate, and whether this authorizes publication (a release PR) or publishes nothing (an ordinary one). Only an ordinary PR offers a merge method | Write access; the gate evaluated again for the exact head; QA not blocked; the candidate still the one reviewed. A **release** PR is then merged by the shared `mergeReleasePr` (saves the reviewed release notes with the candidate, merge commit, outcome re-read), the same function publication relies on; an ordinary PR gets a PUT pinned to the head, and a lost reply is resolved by re-reading the PR |
 | Open pull request | Nothing; it is a link | The link is built from a validated repository and number, never a URL from the window |
 
 A blocked or unevaluated gate disables Merge with the reason, and the merge is refused on the privileged side even if the
@@ -79,9 +79,9 @@ Merge button; a refresh that brings a new head closes an old confirmation.
 - **`.vue` files are not type-checked.** `tsc` handles the `.ts` files and the tests exercise the components; `vue-tsc`
   has not been tried against TypeScript 7.
 - **Load time.** Projects load three at a time and each pull request runs the gate's several `gh` calls, so an account with many open pull requests waits on the Loading screen; nothing is shown until the read finishes. A release-intent pre-check or streaming partial results would help; neither is done.
-- **Actions have not run against live GitHub.** `prepareCandidate`, the merge call and the refusal messages are tested
-  with a recording transport. The merge method list is not restricted to what the repository allows; a disallowed one
-  fails with GitHub's refusal, shown as "the branch may be protected, or the merge method is not allowed".
+- **Actions have not run against live GitHub.** `prepareCandidate`, `mergeReleasePr`, the ordinary merge and the refusal
+  messages are tested with fakes. For an ordinary pull request the merge method list is not restricted to what the
+  repository allows; a disallowed one fails with GitHub's refusal, which the transport does not detail.
 - **Linux jobs** are not triggered from the window: no generic Linux workflow exists in this repository, and the
   consumer's own workflows are not known to it. That, running suites, resume, sync and manual results are the rest of 5.2.
 - **Packaging** (an installer for the dashboard itself) is not done; `npm start` runs it from a checkout.

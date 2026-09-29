@@ -70,10 +70,12 @@ describe('merging', () => {
     // Looking at the consequences changed nothing.
     expect(calls(qa, 'mergePullRequest')).toHaveLength(0);
 
-    await wrapper.get('[data-test="method"]').setValue('rebase');
+    // A release is always merged with a merge commit, so there is no method to choose.
+    expect(wrapper.find('[data-test="method"]').exists()).toBe(false);
+    expect(panel).toContain('saved with the candidate');
     await wrapper.get('[data-test="confirm-merge-go"]').trigger('click');
     await flushPromises();
-    expect(calls(qa, 'mergePullRequest')[0]?.args).toEqual([{ repository: 'acme/app', number: 7, headSha: HEAD, method: 'rebase', candidateId: 'cand-1' }]);
+    expect(calls(qa, 'mergePullRequest')[0]?.args).toEqual([{ repository: 'acme/app', number: 7, headSha: HEAD, method: 'merge', candidateId: 'cand-1' }]);
     expect(wrapper.get('[data-test="notice"]').text()).toBe('Merged #7 as ccccccc.');
     expect(wrapper.find('[data-test="confirm-merge"]').exists()).toBe(false);
     // GitHub changed, so the window read it again, and stayed on the release.
@@ -90,12 +92,17 @@ describe('merging', () => {
     expect(calls(qa, 'mergePullRequest')).toHaveLength(0);
   });
 
-  test('an ordinary pull request says it publishes nothing', async () => {
-    const { wrapper } = await view(withPull(passed({ releaseIntent: [] })), { previewMerge: async () => okPreview({ publishes: false, releaseIntent: [] }) });
+  test('an ordinary pull request says it publishes nothing and lets the person choose the method', async () => {
+    const ordinary = passed({ releaseIntent: [], gate: { status: 'evaluated', evaluation: evaluation() } });
+    const { wrapper, qa } = await view(withPull(ordinary), { previewMerge: async () => okPreview({ publishes: false, releaseIntent: [], candidateId: undefined as never }), mergePullRequest: async () => done() });
     await wrapper.get('[data-test="merge"]').trigger('click');
     await flushPromises();
     expect(wrapper.get('[data-test="merge-plain"]').text()).toContain('publishes nothing');
     expect(wrapper.find('[data-test="merge-publishes"]').exists()).toBe(false);
+    await wrapper.get('[data-test="method"]').setValue('rebase');
+    await wrapper.get('[data-test="confirm-merge-go"]').trigger('click');
+    await flushPromises();
+    expect(calls(qa, 'mergePullRequest')[0]?.args).toMatchObject([{ method: 'rebase' }]);
   });
 
   test('a push while the confirmation is open blocks the merge and explains it', async () => {
@@ -165,7 +172,7 @@ describe('merging', () => {
 
 describe('preparing a candidate', () => {
   test('states what it does before it starts, then starts it for the head seen', async () => {
-    const { wrapper, qa } = await view(withPull(), { prepareCandidate: async () => ({ ok: true, message: 'Candidate preparation started for aaaaaaa (workflow run 99).', url: 'https://github.com/acme/app/actions/runs/99' }) });
+    const { wrapper, qa } = await view(withPull(), { prepareCandidate: async () => ({ ok: true, message: 'Candidate preparation started for aaaaaaa (workflow run 99).' }) });
     await wrapper.get('[data-test="prepare"]').trigger('click');
     const panel = wrapper.get('[data-test="confirm-prepare"]').text();
     expect(panel).toContain('qa-prepare');
@@ -190,6 +197,23 @@ describe('preparing a candidate', () => {
 });
 
 describe('opening the pull request', () => {
+  test('leaves an open confirmation and the notice alone', async () => {
+    const { wrapper } = await view(withPull(), { previewMerge: async () => okPreview(), openPullRequest: async () => done('Opened in your browser.') });
+    await wrapper.get('[data-test="merge"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-test="open-pr"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="confirm-merge"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="notice"]').exists()).toBe(false);
+  });
+
+  test('a failure to open is shown', async () => {
+    const { wrapper } = await view(withPull(), { openPullRequest: async () => ({ ok: false, error: 'That is not a valid pull request.' }) });
+    await wrapper.get('[data-test="open-pr"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[data-test="action-error"]').text()).toContain('not a valid');
+  });
+
   test('asks the privileged side to open it and does not refresh', async () => {
     const { wrapper, qa } = await view(withPull(), { openPullRequest: async () => done('Opened in your browser.') });
     await wrapper.get('[data-test="open-pr"]').trigger('click');

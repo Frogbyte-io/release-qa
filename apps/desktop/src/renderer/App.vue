@@ -24,9 +24,9 @@ async function refresh(options: { quiet?: boolean } = {}): Promise<void> {
 }
 onMounted(() => refresh());
 
-async function done(message: string, refreshNeeded: boolean): Promise<void> {
+async function done(message: string): Promise<void> {
   notice.value = message;
-  if (refreshNeeded) await refresh({ quiet: true });
+  await refresh({ quiet: true });
 }
 
 const snapshot = computed(() => (state.value.kind === 'ready' ? state.value.snapshot : undefined));
