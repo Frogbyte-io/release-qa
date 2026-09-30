@@ -6,6 +6,10 @@ export {
   type CandidatePreparation, type PreparationPreflight, type DownloadCandidateResult,
   type CandidateDispatchApi, type PreparationApi, type CandidateDownloadApi,
 } from './github/candidate.ts';
+export {
+  dispatchSuiteRun, remoteRunStatus, listSuiteRuns, remoteRunTitle, parseRemoteRunTitle, validSuiteRunRequest, RUNNER_WAIT_MS,
+  type SuiteRunRequest, type SuiteRunDispatch, type SuiteRunDispatchApi, type RemoteRun, type RemoteRunList, type RemoteRunState, type RemoteRunStatus,
+} from './github/remote-run.ts';
 export { syncRun, loadCandidateProgress, reconcileRelease, recordScenarioClaim, claimStatus, handoffPlan, type SyncApi, type SyncRunInput, type SyncRunResult, type CandidateProgress, type ScenarioClaim, type HandoffPlan } from './github/sync.ts';
 export { parseSyncedReportManifest, parseSyncedEventRecord, parseSyncedEvidenceRecord, objectSha256, type SyncedReportManifest } from './github/reports.ts';
 export { renderQaSection, hasReleaseIntent, evaluatePullRequest, type PullRequestSignals, type ReleaseIntentPolicy, type GateApi, type PullRequestGateEvaluation, type PullRequestGateResult } from './github/gate.ts';

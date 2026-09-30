@@ -1,0 +1,122 @@
+name: qa-run
+# EXAMPLE, NOT RUN. This file is a template for a consumer's `workflows.run` (qa/project.json). GitHub only reads
+# workflows under the repository root's `.github/workflows/`, so it does nothing where it sits; a consumer copies it
+# there. It has never executed on a GitHub runner. Two steps are marked NOT IMPLEMENTED because the tool has no command
+# for them yet, and they fail on purpose rather than pretend.
+#
+# The dashboard dispatches it from the default branch with these inputs and finds the run again by its title, so
+# `run-name` must stay exactly this shape (see `remoteRunTitle` in packages/qa/src/github/remote-run.ts):
+#   qa-run PR #<pr_number> <candidate_id> <profile>/<suite> <expected_head>
+run-name: qa-run PR #${{ inputs.pr_number }} ${{ inputs.candidate_id }} ${{ inputs.profile }}/${{ inputs.suite }} ${{ inputs.expected_head }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request whose candidate is under test
+        required: true
+        type: string
+      candidate_id:
+        description: The active candidate the dashboard showed
+        required: true
+        type: string
+      profile:
+        description: Environment profile to run (a Linux profile of qa/project.json)
+        required: true
+        type: string
+      suite:
+        description: Suite of qa/project.json to run
+        required: true
+        type: string
+      expected_head:
+        description: Pull request head SHA the person reviewed
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One run per pull request, profile and suite; a second dispatch waits instead of racing the first for the same journal.
+concurrency:
+  group: qa-run-${{ github.repository }}-${{ inputs.pr_number }}-${{ inputs.profile }}-${{ inputs.suite }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Inputs go through the environment, never interpolated into script text.
+      PR: ${{ inputs.pr_number }}
+      CANDIDATE: ${{ inputs.candidate_id }}
+      PROFILE: ${{ inputs.profile }}
+      SUITE: ${{ inputs.suite }}
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+    steps:
+      - name: Validate inputs and re-check what the dashboard saw
+        run: |
+          [[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "pr_number must be a positive integer"; exit 1; }
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "expected_head must be a full SHA"; exit 1; }
+          for value in "$CANDIDATE" "$PROFILE" "$SUITE"; do
+            [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { echo "unsafe input: $value"; exit 1; }
+          done
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
+          [ "$head" = "$EXPECTED_HEAD" ] || { echo "PR head is now $head, not $EXPECTED_HEAD"; exit 1; }
+
+      # The tool itself, pinned to a commit of your choosing. Replace the ref with a reviewed SHA.
+      - uses: actions/checkout@v4
+        with:
+          repository: Frogbyte-io/release-qa
+          ref: main
+          path: release-qa
+      # The tests and app under test, at exactly the head that was reviewed.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_head }}
+          path: subject
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: release-qa/.node-version
+      - run: npm ci
+        working-directory: release-qa
+
+      - name: Install the desktop libraries Tauri's WebKitGTK needs, and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1
+
+      - name: Download and verify the candidate (NOT IMPLEMENTED)
+        run: |
+          # Needs: fetch the candidate's Linux artifact from the draft release by asset id, check its SHA-256 against the
+          # candidate record (downloadCandidate in packages/qa/src/github/candidate.ts does this) and write a local
+          # candidate manifest for `release-qa run --candidate`. There is no command line for it yet.
+          echo "candidate download is not implemented" >&2
+          exit 1
+
+      - name: Run the suite under a virtual display
+        run: |
+          node release-qa/packages/qa/src/cli/main.ts designate --root "$RUNNER_TEMP/qa-root"
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" \
+            node release-qa/packages/qa/src/cli/main.ts run \
+              --project subject/examples/tauri-smoke/qa/project.json \
+              --candidate candidate/candidate.json \
+              --profile "$PROFILE" --suite "$SUITE" \
+              --root "$RUNNER_TEMP/qa-root" --state "$RUNNER_TEMP/qa-runs" --json
+
+      - name: Sync the report to the candidate (NOT IMPLEMENTED)
+        if: ${{ !cancelled() }}
+        run: |
+          # Needs: upload the run's report, events and evidence to the candidate's draft release (syncRun in
+          # packages/qa/src/github/sync.ts), as the identity the gate accepts. GITHUB_TOKEN would also need
+          # `contents: write`. There is no command line for it yet. Until it exists, a finished run here is not a QA result.
+          echo "report sync is not implemented" >&2
+          exit 1
+
+      - name: Keep the raw run journal
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-run-${{ inputs.profile }}-${{ inputs.suite }}
+          path: ${{ runner.temp }}/qa-runs
+          if-no-files-found: warn

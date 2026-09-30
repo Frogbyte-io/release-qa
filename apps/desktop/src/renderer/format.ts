@@ -1,5 +1,5 @@
 import type { Evaluation, Reason } from '@frogbyte-io/release-qa/model';
-import type { AccountView, DashboardSnapshot } from '../shared/contract.ts';
+import type { AccountView, DashboardSnapshot, RemoteRunState } from '../shared/contract.ts';
 
 /** Words for what the shared evaluator returned. Nothing here decides readiness; it only phrases the evaluator's result. */
 export const READINESS_LABEL: Record<Evaluation['readiness'], string> = {
@@ -63,3 +63,12 @@ export function problemText(reason: string): string {
 }
 
 export const isEmpty = (snapshot: DashboardSnapshot): boolean => snapshot.projects.length === 0 && snapshot.problems.length === 0;
+
+/** Words for the five remote-run states. Completed is a finished run, not a passing suite; the gate decides that from synced reports. */
+export const REMOTE_STATE_LABEL: Record<RemoteRunState, string> = {
+  queued: 'Queued',
+  'runner-unavailable': 'Runner unavailable',
+  running: 'Running',
+  blocked: 'Blocked',
+  completed: 'Completed',
+};

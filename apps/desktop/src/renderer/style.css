@@ -28,3 +28,8 @@ ul { margin: 4px 0; padding-left: 20px; }
 .confirm { border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 14px; margin-top: 10px; background: #f6f8fa; }
 .confirm button { margin-right: 8px; }
 select { margin: 0 12px 0 6px; }
+.state { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #eaeef2; }
+.state.running { background: #ddf4ff; color: #0550ae; }
+.state.runner-unavailable, .state.blocked { background: #ffebe9; color: #a40e26; }
+.state.completed { background: #dafbe1; color: #116329; }
+.state.completed.bad { background: #ffebe9; color: #a40e26; }

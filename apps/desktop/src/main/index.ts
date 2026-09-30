@@ -7,6 +7,7 @@ import { CHANNELS, type DashboardSnapshot } from '../shared/contract.ts';
 import { claimManual, EvidenceRegistry, loadManualCheck, pickEvidence, recordManual, syncManualResult, type ManualDeps } from './manual-checks.ts';
 import { loadDashboard, type SnapshotCache } from './qa-commands.ts';
 import { mergePullRequest, parsePullRef, prepareReleaseCandidate, previewMerge, pullRequestUrl } from './release-actions.ts';
+import { listRemoteRuns, runOnLinux } from './remote-runs.ts';
 
 // The window is untrusted: it renders text that repositories and pull requests wrote. It gets no Node, no GitHub
 // credentials and no subprocesses; it can only ask this process for the commands in CHANNELS.
@@ -83,6 +84,8 @@ app.whenReady().then(() => {
   handle(CHANNELS.prepareCandidate, async (input) => (recorded ? notWhileRecorded : prepareReleaseCandidate(input, { api })));
   handle(CHANNELS.previewMerge, async (input) => (recorded ? notWhileRecorded : previewMerge(input, { api })));
   handle(CHANNELS.mergePullRequest, async (input) => (recorded ? notWhileRecorded : mergePullRequest(input, { api })));
+  handle(CHANNELS.runOnLinux, async (input) => (recorded ? notWhileRecorded : runOnLinux(input, { api })));
+  handle(CHANNELS.listRemoteRuns, async (input) => (recorded ? notWhileRecorded : listRemoteRuns(input, { api })));
   handle(CHANNELS.openPullRequest, async (input) => {
     if (recorded) return notWhileRecorded;
     const target = parsePullRef(input);

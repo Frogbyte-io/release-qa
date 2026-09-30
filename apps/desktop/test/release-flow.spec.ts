@@ -47,7 +47,7 @@ describe('what can be started', () => {
     expect(wrapper.get('[data-test="open-pr"]').attributes('disabled')).toBeUndefined();
     await wrapper.get('[data-test="merge"]').trigger('click');
     await wrapper.get('[data-test="prepare"]').trigger('click');
-    expect(qa.calls.filter((call) => call.name !== 'loadDashboard')).toEqual([]);
+    expect(qa.calls.filter((call) => !['loadDashboard', 'listRemoteRuns'].includes(call.name))).toEqual([]);
   });
 
   test('an ordinary pull request cannot have a candidate prepared', async () => {

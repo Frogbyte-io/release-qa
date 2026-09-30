@@ -4,10 +4,13 @@ import type { Reason } from '@frogbyte-io/release-qa/model';
 import type { ProjectView, PullRequestView, QaBridge } from '../../shared/contract.ts';
 import ManualCheck from './ManualCheck.vue';
 import ReleaseActions from './ReleaseActions.vue';
+import RemoteRuns from './RemoteRuns.vue';
 import { READINESS_LABEL, ROLE_NOTE, groupByEnvironment, reasonRequirement, reasonText } from '../format.ts';
 
 const props = defineProps<{ project: ProjectView; pullRequest: PullRequestView; loadedAt: string; qa: QaBridge }>();
 defineEmits<{ back: []; done: [message: string] }>();
+/** Bumped when a run starts, so the list of remote runs reads GitHub again straight away. */
+const runsStarted = ref(0);
 
 const gate = computed(() => (props.pullRequest.gate.status === 'evaluated' ? props.pullRequest.gate : undefined));
 const evaluation = computed(() => gate.value?.evaluation);
@@ -29,7 +32,8 @@ const checkFor = (reason: Reason): boolean => reason.code !== 'no-artifact-for-p
     <p class="meta">{{ project.repository }} · {{ pullRequest.headRef }} @ {{ pullRequest.headSha.slice(0, 7) }} · by {{ pullRequest.author }}<span v-if="pullRequest.draft"> · draft</span></p>
     <p v-if="project.readOnly" class="note">{{ ROLE_NOTE }}</p>
     <p class="meta" data-test="loaded-at">Last read from GitHub {{ loadedAt }}</p>
-    <ReleaseActions :key="pullRequest.headSha" :project="project" :pull-request="pullRequest" :qa="qa" @done="(message) => $emit('done', message)" />
+    <ReleaseActions :key="pullRequest.headSha" :project="project" :pull-request="pullRequest" :qa="qa" @started="runsStarted++" @done="(message) => $emit('done', message)" />
+    <RemoteRuns :key="pullRequest.number" :project="project" :pull-request="pullRequest" :qa="qa" :refresh-token="runsStarted" />
 
     <p v-if="pullRequest.gate.status === 'unavailable'" role="alert" data-test="gate-error">QA status is unavailable: {{ pullRequest.gate.error }}</p>
 
