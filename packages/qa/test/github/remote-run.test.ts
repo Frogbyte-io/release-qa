@@ -126,6 +126,24 @@ describe('dispatchSuiteRun', () => {
     expect(api.posts).toEqual([]);
   });
 
+  test.each(['../..', './app', 'acme/..'])('refuses the repository %s, which would climb out of the API path', async (repository) => {
+    const api = dispatchApi();
+    expect((await dispatchSuiteRun(repository, 'qa-run.yml', request, api)).ok).toBe(false);
+    expect(await listSuiteRuns(repository, 'qa-run.yml', 7, api)).toMatchObject({ ok: false });
+    expect(api.gets).toEqual([]);
+    expect(api.posts).toEqual([]);
+  });
+
+  test.each([
+    ['another title', { display_title: remoteRunTitle({ ...request, candidateId: 'cand-2' }) }],
+    ['another event', { event: 'push' }],
+    ['another workflow', { path: '.github/workflows/other.yml' }],
+    ['another repository', { repository: { id: 2 } }],
+  ])('a returned run with %s is not accepted, and its id is still reported', async (_name, changes) => {
+    const api = dispatchApi({ 'repos/acme/app/actions/runs/99': { id: 99, path: '.github/workflows/qa-run.yml', event: 'workflow_dispatch', display_title: remoteRunTitle(request), head_sha: TRUNK, repository: { id: 1 }, ...changes } });
+    expect(await dispatch(api)).toMatchObject({ ok: false, runId: 99 });
+  });
+
   test('refuses read-only access, and dispatches nothing', async () => {
     const api = dispatchApi({ 'repos/acme/app': { id: 1, default_branch: 'main', permissions: { pull: true } } });
     expect(await dispatch(api)).toMatchObject({ ok: false, error: expect.stringContaining('write access') });
@@ -191,6 +209,7 @@ describe('listSuiteRuns', () => {
         entry(6, { path: '.github/workflows/other.yml' }),
         entry(7, { repository: { id: 2 } }),
         entry(8, { display_title: 'something else' }),
+        entry(9, { event: 'push' }),
       ],
       { 'repos/acme/app/actions/runs/2/jobs?per_page=100': { jobs: [{ status: 'in_progress', runner_id: 4 }] } },
     ));

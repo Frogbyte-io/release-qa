@@ -92,7 +92,7 @@ const confirmRun = (): Promise<void> => {
   if (choice === undefined || seenCandidate.value === undefined) return Promise.resolve();
   return run(() => props.qa.runOnLinux({ ...target.value, candidateId: seenCandidate.value!, profile: choice.profile, suite: choice.suite }), true);
 };
-const confirmMerge =(): Promise<void> => run(() => props.qa.mergePullRequest({ ...target.value, method: panel.value?.kind === 'merge' && panel.value.preview.publishes ? 'merge' : method.value, ...(seenCandidate.value === undefined ? {} : { candidateId: seenCandidate.value }) }));
+const confirmMerge = (): Promise<void> => run(() => props.qa.mergePullRequest({ ...target.value, method: panel.value?.kind === 'merge' && panel.value.preview.publishes ? 'merge' : method.value, ...(seenCandidate.value === undefined ? {} : { candidateId: seenCandidate.value }) }));
 const cancel = (): void => { panel.value = undefined; problem.value = ''; };
 </script>
 

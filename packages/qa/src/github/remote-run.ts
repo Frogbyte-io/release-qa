@@ -26,7 +26,9 @@ export type SuiteRunDispatch =
 
 const gitSha = /^[0-9a-f]{40}$/;
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/** `.` and `..` match the pattern but are path segments, and this name goes into API paths as is. */
+const repositoryName = { test: (value: string): boolean => repositoryPattern.test(value) && value.split('/').every((part) => part !== '.' && part !== '..') };
 const workflowFile = /^[A-Za-z0-9_.-]+\.ya?ml$/;
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;

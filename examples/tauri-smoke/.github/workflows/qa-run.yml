@@ -36,7 +36,8 @@ on:
 permissions:
   contents: read
 
-# One run per pull request, profile and suite; a second dispatch waits instead of racing the first for the same journal.
+# One run per pull request, profile and suite, so two never race for the same journal. GitHub keeps only one pending run
+# per group: a third dispatch cancels the pending second, which the dashboard then lists as cancelled.
 concurrency:
   group: qa-run-${{ github.repository }}-${{ inputs.pr_number }}-${{ inputs.profile }}-${{ inputs.suite }}
   cancel-in-progress: false
@@ -46,8 +47,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      GH_TOKEN: ${{ github.token }}
-      # Inputs go through the environment, never interpolated into script text.
+      # Inputs go through the environment, never interpolated into script text. The token is not here: the job runs the
+      # reviewed pull request's own test code, which must not find it in its environment.
       PR: ${{ inputs.pr_number }}
       CANDIDATE: ${{ inputs.candidate_id }}
       PROFILE: ${{ inputs.profile }}
@@ -55,6 +56,8 @@ jobs:
       EXPECTED_HEAD: ${{ inputs.expected_head }}
     steps:
       - name: Validate inputs and re-check what the dashboard saw
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           [[ "$PR" =~ ^[1-9][0-9]*$ ]] || { echo "pr_number must be a positive integer"; exit 1; }
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "expected_head must be a full SHA"; exit 1; }
@@ -70,11 +73,13 @@ jobs:
           repository: Frogbyte-io/release-qa
           ref: main
           path: release-qa
+          persist-credentials: false
       # The tests and app under test, at exactly the head that was reviewed.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.expected_head }}
           path: subject
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version-file: release-qa/.node-version
