@@ -4,6 +4,7 @@ import type { DashboardSnapshot, ProjectView, PullRequestView, QaBridge } from '
 import { accountText, isEmpty, problemText } from './format.ts';
 import Release from './views/Release.vue';
 import Repositories from './views/Repositories.vue';
+import Run from './views/Run.vue';
 
 const props = defineProps<{ qa: QaBridge }>();
 
@@ -12,6 +13,8 @@ const state = ref<State>({ kind: 'loading' });
 const selected = ref<{ repository: string; number: number } | undefined>();
 /** What the last action did. It stays across the refresh that follows it, until the next action or a manual refresh. */
 const notice = ref('');
+/** Which page of the chosen pull request is shown. The run itself is not here: it lives in the main process. */
+const page = ref<'release' | 'run'>('release');
 
 /** Only the newest read may change what is shown, so a slow older one cannot put back a pull request that was just merged. */
 let latest = 0;
@@ -49,7 +52,7 @@ const current = computed<{ project: ProjectView; pullRequest: PullRequestView } 
   return project !== undefined && pullRequest !== undefined ? { project, pullRequest } : undefined;
 });
 
-const open = (repository: string, number: number): void => { selected.value = { repository, number }; };
+const open = (repository: string, number: number): void => { selected.value = { repository, number }; page.value = 'release'; };
 </script>
 
 <template>
@@ -58,7 +61,8 @@ const open = (repository: string, number: number): void => { selected.value = { 
       <h1>Release QA</h1>
       <nav aria-label="Views">
         <button type="button" data-test="nav-repositories" :aria-current="current === undefined ? 'page' : undefined" @click="selected = undefined">Repositories</button>
-        <button type="button" data-test="nav-release" :disabled="current === undefined" :aria-current="current !== undefined ? 'page' : undefined">Release</button>
+        <button type="button" data-test="nav-release" :disabled="current === undefined" :aria-current="current !== undefined && page === 'release' ? 'page' : undefined" @click="page = 'release'">Release</button>
+        <button type="button" data-test="nav-run" :disabled="current === undefined" :aria-current="current !== undefined && page === 'run' ? 'page' : undefined" @click="page = 'run'">Run</button>
       </nav>
       <span v-if="snapshot" class="account" data-test="account">{{ accountText(snapshot.account) }}</span>
       <button type="button" data-test="refresh" :disabled="reading" @click="refresh()">Refresh</button>
@@ -77,7 +81,8 @@ const open = (repository: string, number: number): void => { selected.value = { 
         </section>
 
         <p v-if="notice" class="banner ok" role="status" data-test="notice">{{ notice }}</p>
-        <Release v-if="current" :project="current.project" :pull-request="current.pullRequest" :loaded-at="snapshot.loadedAt" :qa="qa" @back="selected = undefined" @done="done" />
+        <Run v-if="current && page === 'run'" :key="`${current.project.repository}#${current.pullRequest.number}@${current.pullRequest.headSha}`" :project="current.project" :pull-request="current.pullRequest" :qa="qa" @back="page = 'release'" @done="done" />
+        <Release v-else-if="current" :project="current.project" :pull-request="current.pullRequest" :loaded-at="snapshot.loadedAt" :qa="qa" @back="selected = undefined" @run="page = 'run'" @done="done" />
         <p v-else-if="isEmpty(snapshot) && snapshot.account.status === 'signed-in'" data-test="empty">
           No projects are set up for Release QA. A repository appears here once it has a <code>qa/project.json</code> and you can read it.
         </p>

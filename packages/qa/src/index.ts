@@ -15,6 +15,9 @@ export { parseSyncedReportManifest, parseSyncedEventRecord, parseSyncedEvidenceR
 export { renderQaSection, hasReleaseIntent, evaluatePullRequest, type PullRequestSignals, type ReleaseIntentPolicy, type GateApi, type PullRequestGateEvaluation, type PullRequestGateResult } from './github/gate.ts';
 export { ensureManagedSections, readManagedSection, updateManagedSections, updatePullRequestBody, proposeReleaseNotes, type ManagedSection, type UpdatedBody, type PullRequestBodyApi, type ReleaseNotesApi, type ReleaseNotesProposal } from './github/pull-request.ts';
 
+export { startRun, resumeRun, listRuns, reportForSync, buildReport, isRunId, type RunInvocation, type RunOptions, type RunResult, type RunSummary, type RunListing, type ReportMeta, type RequirementResult, type ResultOutcome } from './cli/run.ts';
+export { loadProject, type LoadedProject } from './cli/project.ts';
+export { selectPlan, type Plan } from './cli/plan.ts';
 export { discoverProjects, type Discovery, type DiscoveredProject, type RepositoryApi } from './github/discover.ts';
 export { GhTransport, inspectGitHubAccess, type AccessProblem, type ApiResult, type GitHubApi } from './github/transport.ts';
 export { profileOf } from './model/requirement.ts';

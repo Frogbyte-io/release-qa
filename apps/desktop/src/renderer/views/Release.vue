@@ -8,7 +8,7 @@ import RemoteRuns from './RemoteRuns.vue';
 import { READINESS_LABEL, ROLE_NOTE, groupByEnvironment, reasonRequirement, reasonText } from '../format.ts';
 
 const props = defineProps<{ project: ProjectView; pullRequest: PullRequestView; loadedAt: string; qa: QaBridge }>();
-defineEmits<{ back: []; done: [message: string] }>();
+defineEmits<{ back: []; run: []; done: [message: string] }>();
 /** Bumped when a run starts, so the list of remote runs reads GitHub again straight away. */
 const runsStarted = ref(0);
 
@@ -32,6 +32,7 @@ const checkFor = (reason: Reason): boolean => reason.code !== 'no-artifact-for-p
     <p class="meta">{{ project.repository }} · {{ pullRequest.headRef }} @ {{ pullRequest.headSha.slice(0, 7) }} · by {{ pullRequest.author }}<span v-if="pullRequest.draft"> · draft</span></p>
     <p v-if="project.readOnly" class="note">{{ ROLE_NOTE }}</p>
     <p class="meta" data-test="loaded-at">Last read from GitHub {{ loadedAt }}</p>
+    <p><button type="button" class="link" data-test="open-run" @click="$emit('run')">Run a suite on this machine, resume or sync a run →</button></p>
     <ReleaseActions :key="pullRequest.headSha" :project="project" :pull-request="pullRequest" :qa="qa" @started="runsStarted++" @done="(message) => $emit('done', message)" />
     <RemoteRuns :key="pullRequest.number" :project="project" :pull-request="pullRequest" :qa="qa" :refresh-token="runsStarted" />
 

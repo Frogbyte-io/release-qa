@@ -29,7 +29,10 @@ export class ConsumerProcess {
   private readonly project: Project;
   private readonly requirements: readonly Requirement[];
 
-  constructor(projectPath: string, project: Project, requirements: readonly Requirement[]) {
+  private readonly workerPath: string;
+
+  constructor(projectPath: string, project: Project, requirements: readonly Requirement[], workerPath = fileURLToPath(new URL('./consumer-worker.ts', import.meta.url))) {
+    this.workerPath = workerPath;
     this.projectPath = projectPath;
     this.project = project;
     this.requirements = requirements;
@@ -65,7 +68,7 @@ export class ConsumerProcess {
   private ensure(): Promise<{ setupIds: string[] }> {
     if (this.worker !== undefined && this.ready !== undefined) return Promise.resolve(this.ready);
     if (this.starting !== undefined) return this.starting;
-    const worker = fork(fileURLToPath(new URL('./consumer-worker.ts', import.meta.url)), [], {
+    const worker = fork(this.workerPath, [], {
       execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
     });
     this.worker = worker;

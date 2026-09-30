@@ -14,6 +14,10 @@ type Invoke = {
 type RpcResult = { type: 'rpc-result'; requestId: number; ok: boolean; value?: unknown; error?: string };
 type ChildExit = { type: 'child-exit'; childId: number; code: number | null; signal: NodeJS.Signals | null };
 
+// Inside Electron, `fork` runs the worker as plain Node by setting this. It is not the consumer's to inherit: a hook that
+// launches the Electron app under test would otherwise get a Node prompt instead of the app.
+delete process.env.ELECTRON_RUN_AS_NODE;
+
 let consumer: Extract<InProcessConsumer, { ok: true }> | undefined;
 let nextRpc = 0;
 const rpcReplies = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();

@@ -1,5 +1,5 @@
 import type { Evaluation, Reason } from '@frogbyte-io/release-qa/model';
-import type { AccountView, DashboardSnapshot, RemoteRunState } from '../shared/contract.ts';
+import type { AccountView, DashboardSnapshot, RemoteRunState, RunProgressLine } from '../shared/contract.ts';
 
 /** Words for what the shared evaluator returned. Nothing here decides readiness; it only phrases the evaluator's result. */
 export const READINESS_LABEL: Record<Evaluation['readiness'], string> = {
@@ -61,6 +61,15 @@ export function problemText(reason: string): string {
     default: return reason;
   }
 }
+
+const OUTCOME_LABEL: Record<string, string> = {
+  passed: 'Passed', failed: 'Failed', blocked: 'Blocked', cancelled: 'Cancelled', interrupted: 'Interrupted',
+  manual: 'Manual, not run here', 'not-run': 'Not run yet',
+};
+/** The runner's outcome as words. An outcome this build does not know is shown as it came, not hidden. */
+export const outcomeLabel = (outcome: string): string => OUTCOME_LABEL[outcome] ?? outcome;
+
+export const progressText = (line: RunProgressLine): string => `${line.scenario}: ${line.phase} ${line.status}${line.detail === undefined ? '' : ` (${line.detail})`}`;
 
 export const isEmpty = (snapshot: DashboardSnapshot): boolean => snapshot.projects.length === 0 && snapshot.problems.length === 0;
 

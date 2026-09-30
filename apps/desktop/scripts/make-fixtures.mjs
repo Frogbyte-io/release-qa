@@ -21,7 +21,8 @@ const pull = (gate) => ({
   releaseIntent: ['release branch', 'release label'], gate,
 });
 const project = (gate) => ({
-  repository: 'acme/orbit-orchard', projectId: 'orbit-orchard', releaseBranch: 'main', role: 'maintain', readOnly: false, profiles: ['windows', 'linux'], requirements,
+  repository: 'acme/orbit-orchard', projectId: 'orbit-orchard', releaseBranch: 'main', role: 'maintain', readOnly: false, profiles: ['windows', 'linux'],
+  suites: [{ id: 'release', requirements: requirements.map((requirement) => requirement.key) }], requirements,
   pullRequests: { status: 'ok', items: [pull(gate)] }, history,
 });
 const snapshot = (gate, loadedAt) => ({

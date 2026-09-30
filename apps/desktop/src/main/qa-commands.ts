@@ -41,7 +41,7 @@ function validSnapshot(value: unknown): DashboardSnapshot | undefined {
   // The parts the window reads without checking, so a cache of another shape is dropped instead of breaking the window.
   const usable = snap.projects.every((item) => {
     const project = record(item);
-    return typeof project?.repository === 'string' && Array.isArray(project.profiles) && Array.isArray(project.requirements) && record(project.pullRequests) !== undefined && record(project.history) !== undefined;
+    return typeof project?.repository === 'string' && Array.isArray(project.profiles) && Array.isArray(project.suites) && Array.isArray(project.requirements) && record(project.pullRequests) !== undefined && record(project.history) !== undefined;
   });
   return usable ? (value as DashboardSnapshot) : undefined;
 }
@@ -132,6 +132,7 @@ async function loadProject(
       role,
       readOnly: !['admin', 'maintain', 'write'].includes(role),
       profiles: project.profiles.map((profile) => profile.id),
+      suites: project.suites.map((suite) => ({ id: suite.id, requirements: [...suite.requirements] })),
       requirements,
       ...remoteRunView(project),
       pullRequests,

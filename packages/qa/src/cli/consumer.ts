@@ -22,8 +22,8 @@ const message = (error: unknown): string => (error instanceof Error ? error.mess
  * whose id is the part of its key after the profile. This executes the project's code: the caller runs it only for
  * a project the user pointed the CLI at. Every problem is found before anything is installed. Never throws.
  */
-export async function loadConsumer(projectPath: string, project: Project, requirements: readonly Requirement[]): Promise<LoadedConsumer> {
-  const worker = new ConsumerProcess(projectPath, project, requirements);
+export async function loadConsumer(projectPath: string, project: Project, requirements: readonly Requirement[], workerPath?: string): Promise<LoadedConsumer> {
+  const worker = new ConsumerProcess(projectPath, project, requirements, workerPath);
   const inspected = await worker.inspect();
   if (!inspected.ok) {
     await worker.close();

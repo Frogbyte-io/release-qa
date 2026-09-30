@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHANNELS, type QaBridge } from '../shared/contract.ts';
+import { CHANNELS, EVENTS, type QaBridge, type RunStatus } from '../shared/contract.ts';
 
 // The whole surface the window gets. It is built from the allowlist, so there is no generic "send" to misuse.
 const qa: QaBridge = {
@@ -15,6 +15,20 @@ const qa: QaBridge = {
   claimManualCheck: (request) => ipcRenderer.invoke(CHANNELS.claimManualCheck, request),
   runOnLinux: (request) => ipcRenderer.invoke(CHANNELS.runOnLinux, request),
   listRemoteRuns: (target) => ipcRenderer.invoke(CHANNELS.listRemoteRuns, target),
+  getCheckout: (repository) => ipcRenderer.invoke(CHANNELS.getCheckout, repository),
+  chooseCheckout: (repository) => ipcRenderer.invoke(CHANNELS.chooseCheckout, repository),
+  previewRun: (request) => ipcRenderer.invoke(CHANNELS.previewRun, request),
+  startRun: (request) => ipcRenderer.invoke(CHANNELS.startRun, request),
+  cancelRun: () => ipcRenderer.invoke(CHANNELS.cancelRun),
+  getRunStatus: () => ipcRenderer.invoke(CHANNELS.getRunStatus),
+  listRuns: (target) => ipcRenderer.invoke(CHANNELS.listRuns, target),
+  syncRun: (request) => ipcRenderer.invoke(CHANNELS.syncRun, request),
+  // The listener gets the status only, never the IPC event object; and only the one named event can reach it.
+  onRunStatus: (listener) => {
+    const handler = (_event: unknown, status: RunStatus): void => listener(status);
+    ipcRenderer.on(EVENTS.runStatus, handler);
+    return () => { ipcRenderer.removeListener(EVENTS.runStatus, handler); };
+  },
 };
 
 contextBridge.exposeInMainWorld('qa', qa);
