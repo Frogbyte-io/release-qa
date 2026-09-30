@@ -16,6 +16,16 @@
         "windows",
         "linux"
       ],
+      "suites": [
+        {
+          "id": "release",
+          "requirements": [
+            "windows/persistence",
+            "windows/device-feel",
+            "linux/persistence"
+          ]
+        }
+      ],
       "requirements": [
         {
           "key": "windows/persistence",

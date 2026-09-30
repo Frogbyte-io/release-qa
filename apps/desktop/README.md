@@ -181,7 +181,10 @@ The Run page (from the release view) runs one suite for one environment against 
 
 ## Evidence
 
-`evidence/{before,after}-{repositories,release}.png` are real Electron window captures (`npm run capture`) of the built
+`evidence/{before,after}-{repositories,release,run}.png` and `evidence/before-manual.png` are real Electron window captures (`npm run capture`) of the built
 app reading `fixtures/before.json` (a release blocked by a manual Windows check and a failed Linux check) and
 `fixtures/after.json` (the same candidate after those results, passed). `scripts/make-fixtures.mjs` writes the fixtures.
-The fixtures are recorded snapshots, not a live repository.
+The fixtures are recorded snapshots, not a live repository. Actions are disabled while one is shown, so the Run page is
+captured before any action (no checkout, Review and run disabled) and the Manual check page as it loads from a snapshot:
+its read is refused, so the form is not shown. The `after` snapshot has no manual check waiting, so there is no
+`after-manual.png`. The Manual check form and a run in progress cannot be reached from a recorded snapshot.
