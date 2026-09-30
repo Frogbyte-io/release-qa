@@ -44,7 +44,8 @@ class MemoryApi implements SyncApi {
     return { ok: true as const, value: asset };
   }
   async currentUser() { return { ok: true as const, value: this.actor }; }
-  async dispatchReconciliation() { return { ok: true as const, value: true as const }; }
+  failDispatch = false;
+  async dispatchReconciliation() { return this.failDispatch ? { ok: false as const, reason: 'HTTP 403' } : { ok: true as const, value: true as const }; }
 }
 
 async function setup(overrides: Partial<ManualCheckInput> = {}, api = new MemoryApi()) {
@@ -190,6 +191,42 @@ runnable('syncing a recorded manual check', () => {
     expect((await readRun(recorded.runDirectory)).missingEvidence).toEqual([]);
     expect((await syncManualRun(stateDir, recorded.runId, api)).ok).toBe(true);
     expect((await readManualRun(stateDir, recorded.runId))?.synced).toBe(true);
+  });
+
+  test('a failed reconciliation dispatch is not synced, and a retry that gets through is', async () => {
+    const { input, stateDir, api } = await setup();
+    const recorded = await recordManualCheck(input);
+    if (!recorded.ok) throw new Error(recorded.error);
+    api.failDispatch = true;
+    const failed = await syncManualRun(stateDir, recorded.runId, api);
+    expect(failed).toEqual({ ok: false, error: expect.stringContaining('reconciliation dispatch failed') });
+    // The uploads were acknowledged locally, but the result must not claim a sync that did not finish.
+    expect((await readRun(recorded.runDirectory)).pending).toEqual([]);
+    expect((await readManualRun(stateDir, recorded.runId))?.synced).toBe(false);
+    api.failDispatch = false;
+    expect((await syncManualRun(stateDir, recorded.runId, api)).ok).toBe(true);
+    expect((await readManualRun(stateDir, recorded.runId))?.synced).toBe(true);
+  });
+
+  test('two uploads of one result at once are not both run', async () => {
+    const { input, stateDir, api } = await setup();
+    const recorded = await recordManualCheck(input);
+    if (!recorded.ok) throw new Error(recorded.error);
+    const [first, second] = await Promise.all([syncManualRun(stateDir, recorded.runId, api), syncManualRun(stateDir, recorded.runId, api)]);
+    expect([first.ok, second.ok].sort()).toEqual([false, true]);
+    expect((await readManualRun(stateDir, recorded.runId))?.synced).toBe(true);
+  });
+
+  test('a result whose meta names another requirement or a bad release is not read back', async () => {
+    const { input, stateDir } = await setup();
+    const recorded = await recordManualCheck(input);
+    if (!recorded.ok) throw new Error(recorded.error);
+    const path = join(recorded.runDirectory, 'manual.json');
+    const meta = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    await writeFile(path, JSON.stringify({ ...meta, requirement: `${OS}/other` }));
+    expect(await readManualRun(stateDir, recorded.runId)).toBeUndefined();
+    await writeFile(path, JSON.stringify({ ...meta, releaseId: '50' }));
+    expect(await readManualRun(stateDir, recorded.runId)).toBeUndefined();
   });
 
   test('a different signed-in user cannot upload someone else\'s recorded result', async () => {

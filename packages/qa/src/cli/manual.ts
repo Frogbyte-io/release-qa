@@ -23,6 +23,8 @@ export const MAX_EVIDENCE_BYTES = 25 * 1024 * 1024;
 const REPORT_FILE = 'report.json';
 const META_FILE = 'manual.json';
 const NOTES_FILE = 'notes.md';
+/** Written only after the whole sync, reconciliation included, succeeded. Acknowledged uploads alone do not make a result synced. */
+const SYNCED_FILE = 'synced.json';
 const RUN_PREFIX = 'manual-';
 const RUN_ID = /^manual-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}$/;
 
@@ -58,6 +60,7 @@ export interface ManualCheckInput {
 
 export type ManualCheckResult = { ok: true; runId: string; runDirectory: string; report: Report; meta: ManualRunMeta } | { ok: false; error: string };
 
+const syncing = new Set<string>();
 const refuse = (error: string): { ok: false; error: string } => ({ ok: false, error });
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const stamp = (date: Date): string => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -166,6 +169,11 @@ export interface ManualRunSummary {
   problem?: string;
 }
 
+/** The meta sits beside the report and is read back from disk, so its shape is checked and it must agree with the report. */
+const validMeta = (meta: ManualRunMeta, requirement: string): boolean =>
+  meta !== null && typeof meta === 'object' && meta.schemaVersion === 1 && typeof meta.repository === 'string' && Number.isSafeInteger(meta.releaseId) && meta.releaseId > 0 &&
+  Number.isSafeInteger(meta.pullRequest) && meta.requirement === requirement && typeof meta.recordedAt === 'string';
+
 /** Reads one recorded manual result back from disk. `undefined` when there is no complete result under that id. */
 export async function readManualRun(stateDir: string, runId: string): Promise<ManualRunSummary | undefined> {
   if (!RUN_ID.test(runId)) return undefined;
@@ -174,7 +182,7 @@ export async function readManualRun(stateDir: string, runId: string): Promise<Ma
     const report = parseReport(JSON.parse(await readFile(join(directory, REPORT_FILE), 'utf8')) as unknown);
     const meta = JSON.parse(await readFile(join(directory, META_FILE), 'utf8')) as ManualRunMeta;
     const attempt = report.ok ? report.value.attempts[0] : undefined;
-    if (!report.ok || report.value.id !== runId || attempt === undefined || meta.schemaVersion !== 1) return undefined;
+    if (!report.ok || report.value.id !== runId || attempt === undefined || !validMeta(meta, attempt.requirement)) return undefined;
     if (!MANUAL_OUTCOMES.includes(attempt.outcome as ManualOutcome)) return undefined;
     const state = await readRun(directory);
     const damaged = !state.exists || state.truncated !== null || state.corrupt.length > 0 || state.conflicts.length > 0 || state.missingPredecessors.length > 0 || state.cyclic.length > 0 || state.missingEvidence.length > 0;
@@ -184,7 +192,7 @@ export async function readManualRun(stateDir: string, runId: string): Promise<Ma
       report: report.value,
       outcome: attempt.outcome as ManualOutcome,
       evidence: attempt.evidence,
-      synced: state.exists && state.pending.length === 0,
+      synced: !damaged && state.pending.length === 0 && (await stat(join(directory, SYNCED_FILE)).then((info) => info.isFile(), () => false)),
       ...(damaged ? { problem: 'The saved result is incomplete or has been changed on disk.' } : {}),
     };
   } catch {
@@ -208,5 +216,17 @@ export async function syncManualRun(stateDir: string, runId: string, api: SyncAp
   const run = await readManualRun(stateDir, runId);
   if (run === undefined) return { ok: false, error: 'There is no saved manual result with that id.' };
   if (run.problem !== undefined) return { ok: false, error: run.problem };
-  return syncRun({ repository: run.meta.repository, releaseId: run.meta.releaseId, runId, runDirectory: join(stateDir, runId), report: run.report, api });
+  // Two uploads of one result at once would race on the acknowledgements.
+  if (syncing.has(runId)) return { ok: false, error: 'This result is already being uploaded' };
+  syncing.add(runId);
+  try {
+    const synced = await syncRun({ repository: run.meta.repository, releaseId: run.meta.releaseId, runId, runDirectory: join(stateDir, runId), report: run.report, api });
+    // A failed reconciliation dispatch leaves acknowledged uploads behind; the result is not synced until a retry gets all the way through.
+    if (synced.ok) await writeFileAtomic(join(stateDir, runId, SYNCED_FILE), `${JSON.stringify({ schemaVersion: 1, syncedAt: timestamp(new Date()) })}\n`);
+    return synced;
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  } finally {
+    syncing.delete(runId);
+  }
 }

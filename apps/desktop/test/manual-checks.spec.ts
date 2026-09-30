@@ -40,7 +40,7 @@ const gate: PullRequestGateResult = {
 };
 
 /** What one GitHub release holds, shared by every signed-in user who talks to it. */
-interface Store { assets: Array<{ id: number; name: string; uploader: { login: string }; state: string; created_at: string; bytes: Buffer }>; roles: Record<string, string> }
+interface Store { assets: Array<{ id: number; name: string; uploader: { login: string }; state: string; created_at: string; bytes: Buffer }>; roles: Record<string, string>; failDispatch?: boolean }
 
 /** GitHub as one signed-in user sees it: the repository, the project file, permissions and the release's assets. */
 class GitHubFake {
@@ -79,7 +79,7 @@ class GitHubFake {
     return { ok: true as const, value: { id, name, state: 'uploaded', uploader: { login: this.login } } };
   }
   async currentUser() { return this.signedIn ? { ok: true as const, value: this.login } : { ok: false as const, reason: 'logged-out' as const }; }
-  async dispatchReconciliation() { return { ok: true as const, value: true as const }; }
+  async dispatchReconciliation() { return this.store.failDispatch ? { ok: false as const, reason: 'HTTP 403' } : { ok: true as const, value: true as const }; }
 }
 
 const newStore = (): Store => ({ assets: [], roles: {} });
@@ -180,6 +180,22 @@ runnable('recording and uploading a manual result', () => {
     expect(state.ok && state.state.results).toMatchObject([{ runId: recorded.result.runId, synced: false, outcome: 'passed' }]);
     api.failUploads = false;
     expect((await syncManualResult({ runId: recorded.result.runId }, deps)).ok).toBe(true);
+  });
+
+  test('a failed reconciliation dispatch says so, stays not synced, and uploading again works', async () => {
+    const store = newStore();
+    const { deps } = await app(store, 'alice');
+    const recorded = await recordManual({ ...target, outcome: 'passed', notes: 'seen', evidence: await picked(deps, 'a.png') }, deps);
+    if (!recorded.ok) throw new Error(recorded.error);
+    store.failDispatch = true;
+    const failed = await syncManualResult({ runId: recorded.result.runId }, deps);
+    expect(failed).toEqual({ ok: false, error: expect.stringContaining('reconciliation dispatch failed') });
+    const state = await loadManualCheck(target, deps);
+    expect(state.ok && state.state.results).toMatchObject([{ runId: recorded.result.runId, synced: false }]);
+    store.failDispatch = false;
+    expect((await syncManualResult({ runId: recorded.result.runId }, deps)).ok).toBe(true);
+    const after = await loadManualCheck(target, deps);
+    expect(after.ok && after.state.results[0]?.synced).toBe(true);
   });
 
   test('losing write access stops recording, claiming and uploading, and the result stays saved', async () => {
