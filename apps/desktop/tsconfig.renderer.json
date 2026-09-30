@@ -3,5 +3,5 @@
   "compilerOptions": {
     "lib": ["ES2023", "DOM"]
   },
-  "include": ["src/renderer", "src/shared", "test/navigation.spec.ts", "test/release-flow.spec.ts", "test/fixtures.ts"]
+  "include": ["src/renderer", "src/shared", "test/navigation.spec.ts", "test/release-flow.spec.ts", "test/manual-check.spec.ts", "test/fixtures.ts"]
 }

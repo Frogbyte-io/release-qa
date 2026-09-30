@@ -21,6 +21,8 @@ export interface PullRequestGateEvaluation {
   baseRef: string;
   baseSha: string;
   candidateId?: string;
+  /** The verified active candidate record; what a manual result must be recorded against. */
+  candidate?: Candidate;
   candidateReleaseId?: number;
   candidateAssetId?: number;
   releaseIntent: string[];
@@ -182,7 +184,7 @@ export async function evaluatePullRequest(repository: string, pullRequest: numbe
     };
     const evaluation = evaluate(evaluationInput);
     const summary = renderQaSection(evaluation);
-    return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseRef: initialBase.ref, baseSha, candidateId: candidate.id, candidateReleaseId: release.id as number, candidateAssetId: candidateAsset.id as number, releaseIntent, evaluation, summary, markers: project.value.markers,
+    return { ok: true, value: { pullRequest, headSha: initialHead.sha, baseRef: initialBase.ref, baseSha, candidateId: candidate.id, candidate, candidateReleaseId: release.id as number, candidateAssetId: candidateAsset.id as number, releaseIntent, evaluation, summary, markers: project.value.markers,
       ...(options.publication ? { publication: { candidate, evaluationInput, policyDigest: policyResult.sha256, mergeSha: initial.merge_commit_sha as string } } : {}) } };
   } catch {
     return failure('GitHub state could not be safely evaluated');

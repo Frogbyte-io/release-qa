@@ -62,3 +62,5 @@ export {
   type ScenarioResult,
 } from './runner/execute.ts';
 export { checkTestRoot, designateTestRoot, resetDirtyEnvironment, type CleanupFailure, type OwnedResource, type TestRootCheck } from './runner/resources.ts';
+export { recordManualCheck, readManualRun, listManualRuns, syncManualRun, MANUAL_OUTCOMES, MAX_NOTES_LENGTH, MAX_EVIDENCE_FILES, MAX_EVIDENCE_BYTES, type ManualCheckInput, type ManualCheckResult, type ManualOutcome, type ManualRunMeta, type ManualRunSummary } from './cli/manual.ts';
+export { machineId } from './cli/run.ts';

@@ -388,7 +388,7 @@ async function readInvocation(runDir: string): Promise<{ ok: true; value: RunInv
  * Identifies this machine in run records without saying anything about it: a random token kept in the state
  * directory, never the host name, which uploads must not carry.
  */
-async function machineId(stateDir: string): Promise<string> {
+export async function machineId(stateDir: string): Promise<string> {
   const path = join(stateDir, MACHINE_FILE);
   const existing = (await readFile(path, 'utf8').catch(() => '')).trim();
   if (existing !== '') return existing;

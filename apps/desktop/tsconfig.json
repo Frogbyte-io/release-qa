@@ -14,5 +14,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src/main", "src/preload", "src/shared", "test/qa-commands.spec.ts", "test/release-actions.spec.ts", "scripts", "vitest.config.ts"]
+  "include": ["src/main", "src/preload", "src/shared", "test/qa-commands.spec.ts", "test/release-actions.spec.ts", "test/manual-checks.spec.ts", "test/fixtures.ts", "scripts", "vitest.config.ts"]
 }
