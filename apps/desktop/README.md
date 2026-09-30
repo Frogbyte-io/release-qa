@@ -2,8 +2,9 @@
 
 An Electron + Vue window that shows the accounts, projects, pull requests, candidates, per-environment checks, manual
 work, evidence and published history that the shared commands return (Task 5.1), and lets a maintainer prepare a
-candidate, open the pull request and merge it, record manual check results with notes and evidence, and start a suite on
-a Linux runner through GitHub and watch it (Task 5.2, parts 1, 3 and 4). Resuming is the rest of 5.2 and is not here yet.
+candidate, open the pull request and merge it, record manual check results with notes and evidence, start a suite on
+a Linux runner through GitHub and watch it, and run a suite locally, resume an interrupted run and sync its results
+(Task 5.2, parts 1 to 4; see "Running a suite" below for the local part).
 
 ```text
 npm run build       # main, preload and renderer into dist/
@@ -110,8 +111,34 @@ The consumer's workflow contract (inputs, and the `run-name` the dashboard searc
 | Published release without a QA record | Flagged **No QA record**; never shown as passed |
 | Repository text with markup | Rendered as text. There is no `v-html`; the privileged side keeps only `https://github.com/` links and cuts text at 300 characters |
 
+## Running a suite (Task 5.2, part 2)
+
+The Run page (from the release view) runs one suite for one environment against the active candidate, on this machine.
+
+- The person chooses the local checkout in a folder dialog the main process owns; the window never names a path. The folder
+  must hold a `qa/project.json` of the same project as the repository, be a git working copy at exactly the candidate's
+  test revision with no changed tracked files, and contain a `.release-qa` test root the person designated once with
+  `release-qa designate`. The consumer's scenario and lifecycle code in that folder runs, so it must be one the person trusts.
+- Before anything is installed the window shows the candidate, file and SHA-256, the scenarios, the test root and the
+  consequence. Confirming sends back what was shown; main refuses if the candidate or root changed. The candidate file is
+  downloaded by asset id and verified by the shared code, into the app's data folder.
+- One run at a time. The run belongs to the main process: closing the window does not stop it, the app stays open until it
+  ends, and a new window reads the current state. Stop aborts and cleanup still runs.
+- Local runs of the candidate are listed from their own journals with what exists only on this machine (**Not synced**).
+  Resume repeats the environment and suite of the run and refuses if the active candidate changed. Sync uploads through the
+  shared sync using the signed-in identity; a failure is reported as uncertain, keeps the local results and can be repeated.
+- Everything is off while a recorded snapshot is shown (`RELEASE_QA_DASHBOARD_FIXTURE`).
+
 ## What is not proven
 
+- **Running a suite was proven only with a fake consumer on the development machine.** The tests run the real shared
+  runner against a scratch checkout whose scenarios do nothing. No real packaged Electron app has been installed, launched
+  and driven from the Run page, and the folder dialog, the single-instance lock, keeping the app open during a run, and
+  the bundled consumer worker (`consumer-worker.mjs`) in a built app have not been exercised.
+- **Sync and resume have not run against live GitHub.** The upload goes through the shared `syncRun` with a fake transport in
+  tests; a real draft release, permissions and network failure mid-upload are unproven.
+- **Nobody has used it.** Whether the workflow is usable without manual GitHub edits or a hosted service (the issue's
+  exit criterion) needs a person doing a real release.
 - **Not run against live GitHub.** Every test and the captured window use recorded data or a fixture transport. The
   privileged side is the same code the CLI gate runs, but a live sign-in, a real repository listing and a large account
   have not been exercised.
