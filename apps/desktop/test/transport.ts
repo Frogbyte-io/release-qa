@@ -1,5 +1,6 @@
 import type { DashboardSnapshot } from '../src/shared/contract.ts';
 import type { DashboardApi, SnapshotCache } from '../src/main/qa-commands.ts';
+import type { ActionApi } from '../src/main/release-actions.ts';
 
 type Reply = { ok: true; value: unknown } | { ok: false; reason: 'logged-out' | 'missing-scope' | 'insufficient-role' | 'organization-rejected' | 'not-found' | 'network-error' };
 
@@ -32,4 +33,16 @@ export function memoryCache(initial?: DashboardSnapshot): SnapshotCache & { last
     write: async (snapshot) => { kept = snapshot; },
     last: () => kept,
   };
+}
+
+/** The read transport plus the two writes the dashboard makes, both recorded. A write answers from `writes`, or succeeds. */
+export function actionTransport(replies: Record<string, Reply>, writes: { put?: Reply; post?: Reply } = {}): ActionApi & { puts: Array<{ path: string; body: unknown }>; posts: Array<{ path: string; body: unknown }> } {
+  const puts: Array<{ path: string; body: unknown }> = [];
+  const posts: Array<{ path: string; body: unknown }> = [];
+  return Object.assign(fixtureTransport(replies), {
+    puts,
+    posts,
+    put: async (path: string, body: unknown) => { puts.push({ path, body }); return writes.put ?? { ok: true as const, value: { sha: 'c'.repeat(40), merged: true } }; },
+    post: async (path: string, body: unknown) => { posts.push({ path, body }); return writes.post ?? { ok: true as const, value: null }; },
+  }) as never;
 }

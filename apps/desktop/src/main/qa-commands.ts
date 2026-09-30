@@ -38,7 +38,12 @@ function validSnapshot(value: unknown): DashboardSnapshot | undefined {
   const snap = record(value);
   const account = record(snap?.account);
   if (snap === undefined || typeof snap.loadedAt !== 'string' || !Array.isArray(snap.projects) || !Array.isArray(snap.problems) || (account?.status !== 'signed-in' && account?.status !== 'signed-out')) return undefined;
-  return value as DashboardSnapshot;
+  // The parts the window reads without checking, so a cache of another shape is dropped instead of breaking the window.
+  const usable = snap.projects.every((item) => {
+    const project = record(item);
+    return typeof project?.repository === 'string' && Array.isArray(project.profiles) && Array.isArray(project.requirements) && record(project.pullRequests) !== undefined && record(project.history) !== undefined;
+  });
+  return usable ? (value as DashboardSnapshot) : undefined;
 }
 
 /**

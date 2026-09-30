@@ -7,11 +7,53 @@ import type { Evaluation } from '@frogbyte-io/release-qa/model';
  */
 export const CHANNELS = {
   loadDashboard: 'qa:load-dashboard',
+  prepareCandidate: 'qa:prepare-candidate',
+  previewMerge: 'qa:preview-merge',
+  mergePullRequest: 'qa:merge-pull-request',
+  openPullRequest: 'qa:open-pull-request',
 } as const;
 
 export interface QaBridge {
   loadDashboard(): Promise<DashboardSnapshot>;
+  prepareCandidate(target: PullTarget): Promise<ActionResult>;
+  previewMerge(target: PullTarget): Promise<MergePreviewResult>;
+  mergePullRequest(request: MergeRequest): Promise<ActionResult>;
+  openPullRequest(target: Pick<PullTarget, 'repository' | 'number'>): Promise<ActionResult>;
 }
+
+/** A pull request as the person saw it. The head is what they looked at; the privileged side refuses if it has moved. */
+export interface PullTarget {
+  repository: string;
+  number: number;
+  headSha: string;
+}
+
+export type MergeMethod = 'merge' | 'squash' | 'rebase';
+export const MERGE_METHODS: readonly MergeMethod[] = ['merge', 'squash', 'rebase'];
+
+export interface MergeRequest extends PullTarget {
+  method: MergeMethod;
+  /** The candidate the person reviewed; a merge is refused if a different one is active by now. Absent for an ordinary PR. */
+  candidateId?: string;
+}
+
+/** What a merge would do, read fresh from GitHub, for the confirmation the person sees before anything happens. */
+export type MergePreviewResult =
+  | {
+      ok: true;
+      headSha: string;
+      baseRef: string;
+      readiness: Evaluation['readiness'];
+      candidateId?: string;
+      candidateReleaseId?: number;
+      /** True when this is a release pull request: merging is what authorizes publication of the tested binaries. */
+      publishes: boolean;
+      releaseIntent: string[];
+    }
+  | { ok: false; error: string };
+
+/** `uncertain` marks a failure whose outcome is not known (a merge may or may not have gone through): re-read before acting again. */
+export type ActionResult = { ok: true; message: string } | { ok: false; error: string; uncertain?: true };
 
 /** Repository permissions as the transport reports them. Only `write` and above may run, sync or merge. */
 export type Role = 'admin' | 'maintain' | 'write' | 'triage' | 'read';

@@ -2,10 +2,10 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { describe, expect, test } from 'vitest';
 import App from '../src/renderer/App.vue';
 import type { DashboardSnapshot } from '../src/shared/contract.ts';
-import { evaluation, projectView, pull, snapshot } from './fixtures.ts';
+import { evaluation, fakeBridge, projectView, pull, snapshot } from './fixtures.ts';
 
 async function open(load: () => Promise<DashboardSnapshot>) {
-  const wrapper = mount(App, { props: { load } });
+  const wrapper = mount(App, { props: { qa: fakeBridge({ loadDashboard: load }) } });
   await flushPromises();
   return wrapper;
 }
@@ -15,7 +15,8 @@ const text = (wrapper: Awaited<ReturnType<typeof open>>, selector: string) => wr
 describe('loading and failure', () => {
   test('shows a loading state until the data arrives, then the projects', async () => {
     let arrive: (value: DashboardSnapshot) => void = () => {};
-    const wrapper = mount(App, { props: { load: () => new Promise<DashboardSnapshot>((resolve) => { arrive = resolve; }) } });
+    const wrapper = mount(App, { props: { qa: fakeBridge({ loadDashboard: () => new Promise<DashboardSnapshot>((resolve) => { arrive = resolve; }) }) } });
+    await wrapper.vm.$nextTick();
     expect(wrapper.find('[data-test="loading"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="refresh"]').attributes('disabled')).toBeDefined();
     arrive(snapshot());
@@ -32,6 +33,24 @@ describe('loading and failure', () => {
     await flushPromises();
     expect(wrapper.find('[data-test="failed"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="project-acme/app"]').exists()).toBe(true);
+  });
+});
+
+describe('overlapping refreshes', () => {
+  test('a slow older read cannot replace a newer one', async () => {
+    const answers: Array<(value: DashboardSnapshot) => void> = [];
+    const wrapper = mount(App, { props: { qa: fakeBridge({ loadDashboard: () => new Promise<DashboardSnapshot>((resolve) => { answers.push(resolve); }) }) } });
+    await wrapper.vm.$nextTick();
+    // The first read is still out when a second is started (a refresh after an action does not block the button).
+    (wrapper.vm as unknown as { $: { setupState: { refresh(options: { quiet: boolean }): Promise<void> } } }).$.setupState.refresh({ quiet: true });
+    await wrapper.vm.$nextTick();
+    answers[1]?.(snapshot({ projects: [projectView({ pullRequests: { status: 'ok', items: [] } })] }));
+    await flushPromises();
+    answers[0]?.(snapshot());
+    await flushPromises();
+    // The older answer arrived last and was ignored: the newer snapshot (no pull requests) is what is drawn.
+    expect(wrapper.text()).toContain('No open pull requests.');
+    expect(wrapper.find('[data-test="refresh"]').attributes('disabled')).toBeUndefined();
   });
 });
 

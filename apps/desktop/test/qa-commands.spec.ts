@@ -99,7 +99,8 @@ describe('loadDashboard', () => {
     expect(cache.last()).toBe(complete);
   });
 
-  test.each([[{}], [{ ...snapshot(), projects: 'x' }], [{ ...snapshot(), account: null }], ['text']])(
+  const nested = (change: Record<string, unknown>) => ({ ...snapshot(), projects: [{ ...snapshot().projects[0], ...change }] });
+  test.each([[{}], [{ ...snapshot(), projects: 'x' }], [{ ...snapshot(), account: null }], ['text'], [nested({ history: undefined })], [nested({ profiles: 'windows' })], [nested({ pullRequests: null })], [nested({ requirements: undefined })]])(
     'discards a cache of the wrong shape instead of trusting it (%#)',
     async (bad) => {
       const api = fixtureTransport({}, { auth: { ok: false, reason: 'network-error' } });
