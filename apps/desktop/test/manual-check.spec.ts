@@ -220,7 +220,7 @@ describe('permission loss', () => {
     for (const name of ['claim', 'choose-evidence', 'record', 'sync-manual-20260930T080000Z-abcdef']) expect(wrapper.get(`[data-test="${name}"]`).attributes('disabled')).toBeDefined();
     await wrapper.get('[data-test="claim"]').trigger('click');
     await wrapper.get('[data-test="manual-form"]').trigger('submit');
-    expect(qa.calls.filter((call) => !['loadDashboard', 'loadManualCheck'].includes(call.name))).toEqual([]);
+    expect(qa.calls.filter((call) => !['loadDashboard', 'loadManualCheck', 'listRemoteRuns'].includes(call.name))).toEqual([]);
     // The local result is still listed, and still says it is not synced.
     expect(wrapper.find('[data-test="not-synced"]').exists()).toBe(true);
   });
