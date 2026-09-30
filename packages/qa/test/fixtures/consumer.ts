@@ -91,7 +91,7 @@ export async function writeConsumer(options: ConsumerOptions): Promise<Consumer>
     [
       "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
       'export const lifecycle = {',
-      `  install: async (ctx) => { ${log('install')}; writeFileSync(${JSON.stringify(installedBytesPath)}, readFileSync(ctx.artifact.path)); },`,
+      `  install: async (ctx) => { ${log('install')}; writeFileSync(${JSON.stringify(installedBytesPath)}, readFileSync(ctx.artifact.path)); writeFileSync(${JSON.stringify(installedBytesPath + '.env')}, process.env.ELECTRON_RUN_AS_NODE ?? 'unset'); },`,
       ...['reset', 'launch'].map((phase) => `  ${phase}: async (ctx) => { ${log(phase)}; },`),
       `  cleanup: async (ctx) => { ${log('cleanup')}; if (existsSync(${JSON.stringify(failCleanupPath)})) throw new Error('the uninstaller crashed'); },`,
       '};',

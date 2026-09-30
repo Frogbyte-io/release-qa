@@ -36,6 +36,8 @@ export function parsePullRef(value: unknown): Pick<PullTarget, 'repository' | 'n
   return { repository: ref.repository, number: ref.number };
 }
 
+export const parseRepository = (value: unknown): string | undefined => (typeof value === 'string' && repositoryName.test(value) ? value : undefined);
+
 export function parseTarget(value: unknown): PullTarget | undefined {
   const ref = parsePullRef(value);
   const headSha = (value as Record<string, unknown> | undefined)?.headSha;
@@ -67,10 +69,10 @@ const ACCESS_TEXT: Record<string, string> = {
 };
 export const accessText = (reason: string): string => ACCESS_TEXT[reason] ?? reason;
 
-export async function requireWrite(repository: string, api: ActionApi): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function requireWrite(repository: string, api: ActionApi, action = 'merge'): Promise<{ ok: true } | { ok: false; error: string }> {
   const access = await inspectGitHubAccess(repository, api);
   if (!access.ok) return refusal(accessText(access.reason));
-  return WRITE_ROLES.includes(access.role) ? { ok: true } : refusal('Your account has read-only access to this repository; it cannot merge.');
+  return WRITE_ROLES.includes(access.role) ? { ok: true } : refusal('Your account has read-only access to this repository; it cannot ' + action + '.');
 }
 
 /**

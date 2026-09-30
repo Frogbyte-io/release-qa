@@ -61,6 +61,11 @@ export interface RunOptions {
   onEvent?: (event: ScenarioEvent) => void;
   /** Called once the run is recorded and before anything runs, so its id is known even if the process then dies. */
   onStart?: (runId: string) => void;
+  /**
+   * The file that hosts the consumer's code in a child process. Only a host that bundles this package (the dashboard)
+   * needs to say; from source it is found beside `consumer-process.ts`.
+   */
+  consumerWorker?: string;
   /** Test seams. */
   probes?: EnvironmentProbes;
   timeouts?: ExecutionContext['timeouts'];
@@ -68,6 +73,7 @@ export interface RunOptions {
 
 const INVOCATION_FILE = 'invocation.json';
 const REPORT_FILE = 'report.html';
+const ENVIRONMENT_FILE = 'environment.json';
 const MACHINE_FILE = 'machine-id';
 const STARTED = 'scenario-started';
 /** Recorded after an attempt whose cleanup failed, so a resumed run still reports it for the carried result. */
@@ -101,7 +107,7 @@ export async function stageArtifact(artifact: ArtifactRef, runDir: string): Prom
  */
 export async function startRun(input: RunInvocation, options: RunOptions): Promise<RunResult> {
   const invocation: RunInvocation = { ...input, project: resolve(input.project), candidate: resolve(input.candidate), root: resolve(input.root) };
-  const prepared = await prepare(invocation);
+  const prepared = await prepare(invocation, options.consumerWorker);
   if (!prepared.ok) return prepared;
 
   const runId = newRunId();
@@ -146,7 +152,7 @@ export async function resumeRun(runId: string, options: RunOptions): Promise<Run
       return { ok: false, error: `run ${runId}'s journal is inconsistent (conflicting or cyclic events); it cannot be continued safely` };
     }
 
-    const prepared = await prepare(invocation.value);
+    const prepared = await prepare(invocation.value, options.consumerWorker);
     if (!prepared.ok) return prepared;
     consumer = prepared.consumer;
     if (prepared.candidate.id !== start.data.candidateId) {
@@ -174,14 +180,14 @@ export async function resumeRun(runId: string, options: RunOptions): Promise<Run
 
 type Prepared = Extract<Awaited<ReturnType<typeof prepare>>, { ok: true }>;
 
-async function prepare(invocation: RunInvocation) {
+async function prepare(invocation: RunInvocation, consumerWorker: string | undefined) {
   const loaded = await loadProject(invocation.project);
   if (!loaded.ok) return { ok: false as const, error: loaded.error };
   const plan = selectPlan(loaded.project, invocation.profile, invocation.suite);
   if (!plan.ok) return plan;
   const candidate = await loadCandidate(invocation.candidate, invocation.profile);
   if (!candidate.ok) return candidate;
-  const consumer = await loadConsumer(invocation.project, loaded.project, plan.automated);
+  const consumer = await loadConsumer(invocation.project, loaded.project, plan.automated, consumerWorker);
   if (!consumer.ok) return consumer;
   return { ok: true as const, plan, candidate: candidate.candidate, artifact: candidate.artifact, consumer };
 }
@@ -256,6 +262,8 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
   }
 
   for (const requirement of prepared.plan.manual) results.push({ requirement: requirement.key, outcome: 'manual' });
+  // Kept so a later sync can say what machine the results came from; a session that measured nothing leaves the earlier one.
+  if (environment !== undefined) await writeFileAtomic(join(journal.runDir, ENVIRONMENT_FILE), `${JSON.stringify(environment, null, 2)}\n`);
   const final = await readRun(journal.runDir);
   await writeSummary(journal.runDir, final);
   await writeFileAtomic(join(journal.runDir, REPORT_FILE), renderReport(localReport(final, prepared.candidate.id, invocation.profile, environment)).html);
@@ -263,6 +271,8 @@ async function execute(prepared: Prepared, invocation: RunInvocation, runId: str
 }
 
 const NOT_MEASURED: MeasuredEnvironment = { os: 'not measured in this session', osVersion: '', arch: '', capabilities: [], toolVersion: '' };
+/** An upload's report must validate, and a field cannot be empty; a run blocked before anything was measured says so in words. */
+const NOT_MEASURED_FOR_UPLOAD: MeasuredEnvironment = { os: 'not measured', osVersion: 'not measured', arch: 'not measured', capabilities: [], toolVersion: 'not measured' };
 
 /**
  * The run as a report, for `report.html` next to the journal so every attempt's evidence is a link away. It is a view of
@@ -270,19 +280,115 @@ const NOT_MEASURED: MeasuredEnvironment = { os: 'not measured in this session', 
  * uploaded, so it is not a report the merge gate could accept.
  */
 function localReport(state: RunState, candidateId: string, profile: string, environment: MeasuredEnvironment | undefined): Report {
+  return buildReport(state, { candidateId, profile, policyDigest: 'none (local candidate)', testRevision: 'none (local candidate)', actor: 'local run, not uploaded', environment });
+}
+
+/** What a report says beyond the journal: which candidate and policy it answers to, and who is claiming it. */
+export interface ReportMeta {
+  candidateId: string;
+  profile: string;
+  policyDigest: string;
+  testRevision: string;
+  actor: string;
+  environment: MeasuredEnvironment | undefined;
+}
+
+/** The single place a run's journal becomes a `Report`, for the local view and for upload alike. */
+export function buildReport(state: RunState, meta: ReportMeta): Report {
   const start = state.events.find((e) => e.type === 'run-started');
   return {
     schemaVersion: 1,
     id: start?.type === 'run-started' ? start.data.runId : 'unknown run',
-    candidateId,
-    policyDigest: 'none (local candidate)',
-    testRevision: 'none (local candidate)',
-    profile,
-    actor: 'local run, not uploaded',
+    candidateId: meta.candidateId,
+    policyDigest: meta.policyDigest,
+    testRevision: meta.testRevision,
+    profile: meta.profile,
+    actor: meta.actor,
     machineId: start?.type === 'run-started' ? start.data.machineId : 'unknown',
-    environment: environment ?? NOT_MEASURED,
+    environment: meta.environment ?? NOT_MEASURED,
     attempts: state.attempts,
   };
+}
+
+const RUN_ID = /^run-[0-9TZ]+-[0-9a-f]{6}$/;
+
+/** A run's id is a directory name under the state directory; anything else is never joined onto a path. */
+export const isRunId = (value: unknown): value is string => typeof value === 'string' && RUN_ID.test(value);
+
+/**
+ * The report to upload for a run, from its journal, its recorded environment and the candidate's own policy digest and
+ * test revision. A run whose journal is damaged, or that recorded no attempt, has nothing an upload could stand on.
+ * Never throws.
+ */
+export async function reportForSync(stateDir: string, runId: string, provenance: Pick<ReportMeta, 'policyDigest' | 'testRevision' | 'actor'>): Promise<{ ok: true; report: Report; runDirectory: string } | { ok: false; error: string }> {
+  if (!isRunId(runId)) return { ok: false, error: 'not a run id' };
+  const runDirectory = join(stateDir, runId);
+  try {
+    const invocation = await readInvocation(runDirectory);
+    if (!invocation.ok) return invocation;
+    const state = await readRun(runDirectory);
+    const start = state.events.find((e) => e.type === 'run-started');
+    if (start === undefined || start.type !== 'run-started') return { ok: false, error: `run ${runId} has no recorded start` };
+    if (state.attempts.length === 0) return { ok: false, error: `run ${runId} recorded no attempt yet, so there is nothing to upload` };
+    const environment = await readFile(join(runDirectory, ENVIRONMENT_FILE), 'utf8').then((text) => JSON.parse(text) as MeasuredEnvironment, () => undefined);
+    return { ok: true, runDirectory, report: buildReport(state, { candidateId: start.data.candidateId, profile: invocation.value.profile, environment: environment ?? NOT_MEASURED_FOR_UPLOAD, ...provenance }) };
+  } catch (error) {
+    return { ok: false, error: `could not read run ${runId}: ${message(error)}` };
+  }
+}
+
+/** One run found in a state directory, for a person choosing what to resume or upload. */
+export interface RunListing {
+  runId: string;
+  candidateId: string;
+  profile: string;
+  suite: string;
+  startedAt: string;
+  /** The suite's requirements for the profile with each one's latest outcome; `not-run` for one never recorded. Empty when the project could not be read. */
+  results: Array<{ requirement: RequirementKey; outcome: ResultOutcome }>;
+  /** True when an automated requirement has no passed or failed result, so `resume` has something to run. */
+  resumable: boolean;
+  /** Attempts recorded so far. A run with none cannot be uploaded. */
+  attempts: number;
+  /** Journal events the server has not acknowledged. Above zero, this run's results exist only on this machine. */
+  pending: number;
+  /** Why the results could not be worked out, or why the journal cannot be trusted. */
+  problem?: string;
+}
+
+/** Runs recorded in `stateDir`, oldest first. A directory that is not a readable run is left out; nothing throws. */
+export async function listRuns(stateDir: string): Promise<RunListing[]> {
+  const names = await readdir(stateDir).catch(() => [] as string[]);
+  const listings: RunListing[] = [];
+  for (const runId of names.filter(isRunId).sort()) {
+    const runDir = join(stateDir, runId);
+    const invocation = await readInvocation(runDir);
+    const state = await readRun(runDir).catch(() => undefined);
+    const start = state?.events.find((e) => e.type === 'run-started');
+    if (!invocation.ok || state === undefined || start === undefined || start.type !== 'run-started') continue;
+    const latest = new Map<string, Attempt>();
+    for (const attempt of state.attempts) latest.set(attempt.requirement, attempt);
+    const loaded = await loadProject(invocation.value.project);
+    const plan = loaded.ok ? selectPlan(loaded.project, invocation.value.profile, invocation.value.suite) : undefined;
+    const damaged = state.truncated !== null || state.corrupt.length > 0 || state.conflicts.length > 0 || state.cyclic.length > 0 || state.missingPredecessors.length > 0 || state.missingEvidence.length > 0;
+    const results: RunListing['results'] = plan?.ok
+      ? [...plan.automated.map((r) => ({ requirement: r.key, outcome: (latest.get(r.key)?.outcome ?? 'not-run') as ResultOutcome })), ...plan.manual.map((r) => ({ requirement: r.key, outcome: 'manual' as const }))]
+      : [...latest.values()].map((a) => ({ requirement: a.requirement, outcome: a.outcome }));
+    const problem = damaged ? 'the journal is damaged or inconsistent; it cannot be resumed or uploaded safely' : plan === undefined ? 'the project file could not be read' : plan.ok ? undefined : plan.error;
+    listings.push({
+      runId,
+      candidateId: start.data.candidateId,
+      profile: invocation.value.profile,
+      suite: invocation.value.suite,
+      startedAt: start.recordedAt,
+      results,
+      resumable: !damaged && plan?.ok === true && results.some((r) => r.outcome !== 'passed' && r.outcome !== 'failed' && r.outcome !== 'manual'),
+      attempts: state.attempts.length,
+      pending: state.pending.length,
+      ...(problem === undefined ? {} : { problem }),
+    });
+  }
+  return listings;
 }
 
 /** Where an attempt's evidence files go, relative to the run's directory: the journal records these relative paths. */

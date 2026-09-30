@@ -22,6 +22,22 @@ await build({
   },
 });
 
+// The consumer's scenario and lifecycle code runs in a child process the shared runner forks. From a bundle that file is
+// not next to the runner, so it is built here on its own and the main process names it (see `consumerWorker`).
+await build({
+  root,
+  configFile: false,
+  logLevel: 'warn',
+  ssr: { noExternal: ['@frogbyte-io/release-qa'], external: ['electron'] },
+  build: {
+    ssr: resolve(root, '../../packages/qa/src/cli/consumer-worker.ts'),
+    outDir: 'dist/main',
+    emptyOutDir: false,
+    target: 'node24',
+    rollupOptions: { output: { format: 'es', entryFileNames: 'consumer-worker.mjs' } },
+  },
+});
+
 // A sandboxed preload is a CommonJS script that may load only Electron.
 await build({
   root,
