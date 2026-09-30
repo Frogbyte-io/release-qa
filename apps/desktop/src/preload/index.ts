@@ -8,6 +8,11 @@ const qa: QaBridge = {
   previewMerge: (target) => ipcRenderer.invoke(CHANNELS.previewMerge, target),
   mergePullRequest: (request) => ipcRenderer.invoke(CHANNELS.mergePullRequest, request),
   openPullRequest: (target) => ipcRenderer.invoke(CHANNELS.openPullRequest, target),
+  loadManualCheck: (target) => ipcRenderer.invoke(CHANNELS.loadManualCheck, target),
+  pickEvidence: () => ipcRenderer.invoke(CHANNELS.pickEvidence),
+  recordManualCheck: (request) => ipcRenderer.invoke(CHANNELS.recordManualCheck, request),
+  syncManualResult: (request) => ipcRenderer.invoke(CHANNELS.syncManualResult, request),
+  claimManualCheck: (request) => ipcRenderer.invoke(CHANNELS.claimManualCheck, request),
 };
 
 contextBridge.exposeInMainWorld('qa', qa);

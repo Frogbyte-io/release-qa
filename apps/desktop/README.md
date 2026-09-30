@@ -2,8 +2,8 @@
 
 An Electron + Vue window that shows the accounts, projects, pull requests, candidates, per-environment checks, manual
 work, evidence and published history that the shared commands return (Task 5.1), and lets a maintainer prepare a
-candidate, open the pull request and merge it (the first part of Task 5.2). Running a suite, resuming, syncing and manual
-results are the rest of 5.2 and are not here yet.
+candidate, open the pull request and merge it, and record manual check results with notes and evidence (Task 5.2, parts 1
+and 3). Running a suite and resuming are the rest of 5.2 and are not here yet.
 
 ```text
 npm run build       # main, preload and renderer into dist/
@@ -52,6 +52,22 @@ A blocked or unevaluated gate disables Merge with the reason, and the merge is r
 button were forced. If the head or candidate moved while the confirmation was open, the window says so and offers no
 Merge button; a refresh that brings a new head closes an old confirmation.
 
+## Manual checks (Task 5.2, part 3)
+
+In the Release view, each manual requirement the evaluator lists as blocking has a **Record or claim…** button (only when
+the pull request has an active candidate). It opens `views/ManualCheck.vue`. Design: [docs/decisions/manual-checks.md](../../docs/decisions/manual-checks.md).
+
+| Part | What it does |
+| --- | --- |
+| Reporter | "Recorded as `<login>`", read from GitHub (`currentUser()`) by the privileged side. Neither the window nor the shared recording accepts a name |
+| Result | An outcome (passed, failed, blocked), required notes and at least one evidence file. The privileged side saves it as a real run (journal, `report.json`) under the app data folder, `manual-runs/` |
+| Evidence files | Chosen in a file dialog opened by the main process. The window gets a random handle and a name, never a path; the files are copied into the saved result |
+| Not synced | A saved result is listed as **Not synced** until an upload is acknowledged and verified. **Upload to GitHub** calls the shared `syncRun` (channel `syncManualResult`, scoped to manual results; the repository and release come from the saved result, not the window). A failed upload keeps the result and shows the error |
+| Claim / Release | Advisory ownership through the shared `recordScenarioClaim` and `claimStatus`: the current owner, whether the claim is stale (after four hours) and a Claim, Take over or Release button. Claims never block a result |
+
+Recording, claiming and uploading each need write access at the moment they happen; an account that lost it can still see
+the saved results, marked **Not synced**, with the reason.
+
 ## States
 
 | State | What the window shows |
@@ -83,7 +99,22 @@ Merge button; a refresh that brings a new head closes an old confirmation.
   messages are tested with fakes. For an ordinary pull request the merge method list is not restricted to what the
   repository allows; a disallowed one fails with GitHub's refusal, which the transport does not detail.
 - **Linux jobs** are not triggered from the window: no generic Linux workflow exists in this repository, and the
-  consumer's own workflows are not known to it. That, running suites, resume, sync and manual results are the rest of 5.2.
+  consumer's own workflows are not known to it. That, running suites and resume are the rest of 5.2.
+- **Manual checks have not run against live GitHub or in the real window.** Tests use a fake release (assets, permissions,
+  two signed-in users) with the real shared recording, sync and claim code, and the component tests use a fake bridge. The
+  file dialog, the app data folder and a live draft release have not been exercised, and nobody has confirmed that a
+  manually recorded report is counted by the required check on a real pull request (the evaluator accepts it in tests).
+- **Manual reports carry attested capabilities.** Things like `hardware` cannot be probed, so the requirement's capabilities
+  are added to the measured environment: the person at the device vouches for them.
+- **Recording needs a machine of the profile's kind** (a Windows check cannot be recorded from a Linux machine).
+- **Not synced is shown in the manual check view only**, not in the release's Manual work list, so a saved result for a
+  check you have not reopened is not flagged there.
+- **A failed manual result cannot be retried or resolved from the window**: the evaluator wants a retry recorded against the
+  failure and an acknowledgement, and neither has a screen. Nor can a saved result be deleted or edited.
+- **Claims are read from GitHub with a full progress load** (every report and claim asset), which is slow on a candidate with
+  many reports, and each open of the view repeats it.
+- **If reconciliation dispatch fails after a successful upload**, the result is marked synced (its acknowledgements are saved)
+  while the upload reports an error to retry; the window then no longer offers Upload for it.
 - **Packaging** (an installer for the dashboard itself) is not done; `npm start` runs it from a checkout.
 
 ## Evidence

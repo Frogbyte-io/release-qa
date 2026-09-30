@@ -54,6 +54,11 @@ export function fakeBridge(overrides: Partial<QaBridge> = {}): QaBridge & { call
     previewMerge: record('previewMerge', overrides.previewMerge),
     mergePullRequest: record('mergePullRequest', overrides.mergePullRequest),
     openPullRequest: record('openPullRequest', overrides.openPullRequest),
+    loadManualCheck: record('loadManualCheck', overrides.loadManualCheck),
+    pickEvidence: record('pickEvidence', overrides.pickEvidence),
+    recordManualCheck: record('recordManualCheck', overrides.recordManualCheck),
+    syncManualResult: record('syncManualResult', overrides.syncManualResult),
+    claimManualCheck: record('claimManualCheck', overrides.claimManualCheck),
   };
 }
 

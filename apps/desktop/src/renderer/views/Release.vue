@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
+import type { Reason } from '@frogbyte-io/release-qa/model';
 import type { ProjectView, PullRequestView, QaBridge } from '../../shared/contract.ts';
+import ManualCheck from './ManualCheck.vue';
 import ReleaseActions from './ReleaseActions.vue';
 import { READINESS_LABEL, ROLE_NOTE, groupByEnvironment, reasonRequirement, reasonText } from '../format.ts';
 
@@ -14,6 +16,10 @@ const excused = computed(() => (evaluation.value === undefined ? [] : groupByEnv
 const manualKeys = computed(() => new Set(props.project.requirements.filter((requirement) => requirement.mode === 'manual').map((requirement) => requirement.key)));
 // Manual work is the manual requirements the evaluator still lists as blocking; nothing is inferred beyond that.
 const manualWork = computed(() => (evaluation.value?.reasons ?? []).filter((reason) => manualKeys.value.has(reasonRequirement(reason) ?? '')));
+// The manual check being recorded or claimed. A capability-less or artifact-less reason has no candidate to record against here.
+const checking = ref<string | undefined>();
+const checkingRequirement = computed(() => props.project.requirements.find((requirement) => requirement.key === checking.value && requirement.mode === 'manual'));
+const checkFor = (reason: Reason): boolean => reason.code !== 'no-artifact-for-profile' && gate.value?.candidateId !== undefined;
 </script>
 
 <template>
@@ -51,7 +57,13 @@ const manualWork = computed(() => (evaluation.value?.reasons ?? []).filter((reas
 
       <h3>Manual work</h3>
       <p v-if="manualWork.length === 0" data-test="no-manual">No manual check is waiting.</p>
-      <ul v-else><li v-for="(reason, index) in manualWork" :key="index" data-test="manual">{{ reasonText(reason) }}</li></ul>
+      <ul v-else>
+        <li v-for="(reason, index) in manualWork" :key="index">
+          <span data-test="manual">{{ reasonText(reason) }}</span>
+          <button v-if="checkFor(reason)" type="button" class="link" :data-test="`open-manual-${reasonRequirement(reason)}`" @click="checking = reasonRequirement(reason)">Record or claim…</button>
+        </li>
+      </ul>
+      <ManualCheck v-if="checkingRequirement" :key="`${checkingRequirement.key}-${pullRequest.headSha}`" :project="project" :pull-request="pullRequest" :requirement="checkingRequirement" :qa="qa" @close="checking = undefined" @done="(message) => $emit('done', message)" />
 
       <h3>Evidence</h3>
       <p v-if="evaluation.acceptedReportIds.length === 0" data-test="no-reports">No accepted reports yet.</p>

@@ -11,10 +11,22 @@ export const CHANNELS = {
   previewMerge: 'qa:preview-merge',
   mergePullRequest: 'qa:merge-pull-request',
   openPullRequest: 'qa:open-pull-request',
+  loadManualCheck: 'qa:load-manual-check',
+  pickEvidence: 'qa:pick-evidence',
+  recordManualCheck: 'qa:record-manual-check',
+  syncManualResult: 'qa:sync-manual-result',
+  claimManualCheck: 'qa:claim-manual-check',
 } as const;
 
 export interface QaBridge {
   loadDashboard(): Promise<DashboardSnapshot>;
+  loadManualCheck(target: ManualTarget): Promise<ManualCheckStateResult>;
+  /** Opens the file dialog in the privileged process. What comes back are handles and names, never paths. */
+  pickEvidence(): Promise<PickEvidenceResult>;
+  recordManualCheck(request: ManualRecordRequest): Promise<ManualRecordResult>;
+  /** Uploads one manual result recorded on this computer. Scoped to manual results; it is not a general sync. */
+  syncManualResult(request: { runId: string }): Promise<ActionResult>;
+  claimManualCheck(request: ManualClaimRequest): Promise<ActionResult>;
   prepareCandidate(target: PullTarget): Promise<ActionResult>;
   previewMerge(target: PullTarget): Promise<MergePreviewResult>;
   mergePullRequest(request: MergeRequest): Promise<ActionResult>;
@@ -54,6 +66,72 @@ export type MergePreviewResult =
 
 /** `uncertain` marks a failure whose outcome is not known (a merge may or may not have gone through): re-read before acting again. */
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string; uncertain?: true };
+
+/** One manual requirement of one pull request, as the person saw it. The privileged side finds the candidate itself. */
+export interface ManualTarget extends PullTarget {
+  requirement: string;
+}
+
+export type ManualOutcomeChoice = 'passed' | 'failed' | 'blocked';
+export const MANUAL_OUTCOME_CHOICES: readonly ManualOutcomeChoice[] = ['passed', 'failed', 'blocked'];
+/** The limits are enforced again by the shared recording; these only let the window say so before asking. */
+export const MANUAL_NOTES_MAX = 5000;
+export const MANUAL_EVIDENCE_MAX = 10;
+
+/** A file the person chose. `token` is a handle held by the privileged process; the window never learns the path. */
+export interface EvidenceChoice {
+  token: string;
+  name: string;
+  bytes: number;
+}
+/** An empty list means the dialog was cancelled. */
+export type PickEvidenceResult = { ok: true; files: EvidenceChoice[] } | { ok: false; error: string };
+
+export interface ManualRecordRequest extends ManualTarget {
+  outcome: ManualOutcomeChoice;
+  notes: string;
+  /** Handles from `pickEvidence`. */
+  evidence: string[];
+}
+
+export interface ManualClaimRequest extends ManualTarget {
+  intent: 'claim' | 'release';
+}
+
+/** A manual result recorded on this computer. `synced` is false until GitHub has it and the acknowledgement was verified. */
+export interface ManualResultView {
+  runId: string;
+  outcome: ManualOutcomeChoice;
+  /** The GitHub login the result was recorded under. */
+  reporter: string;
+  recordedAt: string;
+  evidenceCount: number;
+  synced: boolean;
+  /** Set when the saved result is damaged and cannot be uploaded. */
+  problem?: string;
+}
+
+export interface ClaimView {
+  actor: string;
+  action: 'claim' | 'takeover' | 'release';
+  recordedAt: string;
+  /** Older than the claim's own limit. A stale claim is still shown, and anyone may take over or ignore it. */
+  stale: boolean;
+  mine: boolean;
+}
+
+export interface ManualCheckState {
+  /** Who GitHub says is signed in. Results are recorded as this login and cannot be recorded as anyone else. */
+  login: string;
+  requirement: RequirementView;
+  candidateId: string;
+  /** Advisory only: nothing here prevents anyone from recording a result. */
+  owner?: ClaimView;
+  results: ManualResultView[];
+  readOnly: boolean;
+}
+export type ManualCheckStateResult = { ok: true; state: ManualCheckState } | { ok: false; error: string };
+export type ManualRecordResult = { ok: true; message: string; result: ManualResultView } | { ok: false; error: string };
 
 /** Repository permissions as the transport reports them. Only `write` and above may run, sync or merge. */
 export type Role = 'admin' | 'maintain' | 'write' | 'triage' | 'read';

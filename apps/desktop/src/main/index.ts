@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { GhTransport } from '@frogbyte-io/release-qa';
 import { CHANNELS, type DashboardSnapshot } from '../shared/contract.ts';
+import { claimManual, EvidenceRegistry, loadManualCheck, pickEvidence, recordManual, syncManualResult, type ManualDeps } from './manual-checks.ts';
 import { loadDashboard, type SnapshotCache } from './qa-commands.ts';
 import { mergePullRequest, parsePullRef, prepareReleaseCandidate, previewMerge, pullRequestUrl } from './release-actions.ts';
 
@@ -89,6 +90,24 @@ app.whenReady().then(() => {
     await shell.openExternal(pullRequestUrl(target.repository, target.number));
     return { ok: true as const, message: 'Opened in your browser.' };
   });
+  // Manual results live in the app's own data folder, one directory per result.
+  const manual: ManualDeps = {
+    api,
+    stateDir: join(app.getPath('userData'), 'manual-runs'),
+    evidence: new EvidenceRegistry(),
+    // The dialog runs here, so the window only ever receives handles and names, never a path it could have made up.
+    choose: async () => {
+      const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      const options = { title: 'Attach evidence', properties: ['openFile' as const, 'multiSelections' as const], filters: [{ name: 'Screenshots, photos, logs and recordings', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4', 'webm', 'txt', 'log', 'json', 'md'] }, { name: 'All files', extensions: ['*'] }] };
+      const picked = parent === undefined ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(parent, options);
+      return picked.canceled ? [] : picked.filePaths;
+    },
+  };
+  handle(CHANNELS.loadManualCheck, async (input) => (recorded ? notWhileRecorded : loadManualCheck(input, manual)));
+  handle(CHANNELS.pickEvidence, async () => (recorded ? notWhileRecorded : pickEvidence(manual)));
+  handle(CHANNELS.recordManualCheck, async (input) => (recorded ? notWhileRecorded : recordManual(input, manual)));
+  handle(CHANNELS.syncManualResult, async (input) => (recorded ? notWhileRecorded : syncManualResult(input, manual)));
+  handle(CHANNELS.claimManualCheck, async (input) => (recorded ? notWhileRecorded : claimManual(input, manual)));
   const window = createWindow();
   const capture = process.env.RELEASE_QA_CAPTURE_DIR;
   if (capture !== undefined && !app.isPackaged) {
