@@ -46,6 +46,10 @@ describe('validating what the window sends', () => {
     expect(parseRunConfirmation({ ...target, profile: 'windows', suite: 'release' })).toBeUndefined();
   });
 
+  test.each([null, undefined, 5, 'x', []])('a confirmation of %j is refused, not thrown on', (value) => {
+    expect(parseRunConfirmation(value)).toBeUndefined();
+  });
+
   test('a sync request needs a real run id', () => {
     expect(parseSyncRequest({ ...target, runId: RUN_ID })).toEqual({ ...target, runId: RUN_ID });
     expect(parseSyncRequest({ ...target, runId: '../../etc' })).toBeUndefined();
@@ -276,6 +280,29 @@ describe('starting a run', () => {
     expect(await cancelRunAction(held)).toMatchObject({ ok: false });
   });
 
+  test('a stop during the download ends the run before anything is installed', async () => {
+    const { deps, confirmation, consumer } = await setUp();
+    let stopped = false;
+    const slow = { ...deps, download: (async (...args: unknown[]) => {
+      deps.session.stop();
+      stopped = true;
+      return (deps.download as (...a: unknown[]) => Promise<unknown>)(...args);
+    }) as never, start: (async () => { throw new Error('must not start'); }) as never };
+    await startRunAction(confirmation, slow);
+    await finish(slow);
+    expect(stopped).toBe(true);
+    expect(deps.session.current).toMatchObject({ state: 'failed', message: expect.stringContaining('Nothing was installed') });
+    expect(await readFile(consumer.logPath, 'utf8').catch(() => '')).toBe('');
+  });
+
+  test('a run that did not finish (exit 3) is a failed state, not a finished one', async () => {
+    const { deps, confirmation } = await setUp();
+    const interrupted = { ...deps, start: (async () => ({ ok: true, summary: { runId: RUN_ID, candidateId: 'cand-0001', profile: 'windows', suite: 'release', results: [], exitCode: 3 } })) as never };
+    await startRunAction(confirmation, interrupted);
+    await finish(interrupted);
+    expect(deps.session.current).toMatchObject({ state: 'failed', exitCode: 3 });
+  });
+
   test('a download that fails is a failed state and leaves nothing to install', async () => {
     const { deps, confirmation, consumer } = await setUp();
     const failing = { ...deps, download: (async () => ({ ok: false, error: 'digest mismatch' })) as never };
@@ -346,6 +373,28 @@ describe('syncing a run', () => {
     expect(!result.ok && result.error).toContain('could not be reached');
     const after = await listRunsAction({ repository: 'acme/app', candidateId: 'cand-0001' }, deps);
     expect(after.ok && after.runs[0]?.pending).toBeGreaterThan(0);
+  });
+
+  test('an upload and a run exclude each other, and the claim is released afterwards', async () => {
+    const { deps, runId, confirmation } = await finished();
+    let release: (() => void) | undefined;
+    const held = { ...deps, sync: (() => new Promise((resolve) => { release = () => resolve({ ok: true, reportId: runId, uploaded: 1 }); })) as never };
+    const first = syncRunAction({ ...target, runId }, held);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    expect(deps.session.syncing).toBe(true);
+    expect(await syncRunAction({ ...target, runId }, held)).toMatchObject({ ok: false });
+    expect(await startRunAction({ ...confirmation, runId }, deps)).toMatchObject({ ok: false });
+    release?.();
+    expect(await first).toMatchObject({ ok: true });
+    expect(deps.session.syncing).toBe(false);
+    expect(deps.session.begin({ kind: 'start', repository: 'acme/app', number: 7, candidateId: 'c', profile: 'windows', suite: 'release' }, async () => undefined)).toBe(true);
+  });
+
+  test('a sync is refused while a run is under way', async () => {
+    const { deps, runId } = await finished();
+    deps.session.begin({ kind: 'start', repository: 'acme/app', number: 7, candidateId: 'c', profile: 'windows', suite: 'release' }, () => new Promise<void>(() => undefined));
+    expect(await syncRunAction({ ...target, runId }, deps)).toMatchObject({ ok: false });
+    expect(deps.session.syncing).toBe(false);
   });
 
   test('results for a replaced candidate are not uploaded', async () => {

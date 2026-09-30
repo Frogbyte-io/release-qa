@@ -134,6 +134,16 @@ describe('following a run', () => {
     const { wrapper } = await open({ getRunStatus: async () => ({ ...runningStatus(), state: 'failed', message: 'The run stopped: disk full' }) });
     expect(wrapper.get('[data-test="run-message"]').attributes('role')).toBe('alert');
   });
+
+  test('a finished run with a failed scenario is an alert, and a clean one is not', async () => {
+    const { wrapper, qa } = await open();
+    qa.emitStatus({ ...runningStatus(), state: 'finished', message: 'Finished: a scenario failed.', exitCode: 1 });
+    await flushPromises();
+    expect(wrapper.get('[data-test="run-message"]').attributes('role')).toBe('alert');
+    qa.emitStatus({ ...runningStatus(), state: 'finished', message: 'Finished: every automated scenario passed.', exitCode: 0 });
+    await flushPromises();
+    expect(wrapper.get('[data-test="run-message"]').attributes('role')).toBe('status');
+  });
 });
 
 describe('local runs, resume and sync', () => {

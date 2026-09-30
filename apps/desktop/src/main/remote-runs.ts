@@ -41,7 +41,7 @@ async function runWorkflowOf(repository: string, deps: RemoteRunDeps): Promise<{
 export async function runOnLinux(input: unknown, deps: RemoteRunDeps): Promise<ActionResult> {
   const request = parseRemoteRunRequest(input);
   if (request === undefined) return refusal('That is not a valid run request.');
-  const allowed = await requireWrite(request.repository, deps.api);
+  const allowed = await requireWrite(request.repository, deps.api, 'run suites on Linux');
   if (!allowed.ok) return allowed;
   const project = await runWorkflowOf(request.repository, deps);
   if (!project.ok) return project;

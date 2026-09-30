@@ -88,10 +88,10 @@ export function parseRunRequest(value: unknown): RunRequest | undefined {
 
 export function parseRunConfirmation(value: unknown): RunConfirmation | undefined {
   const request = parseRunRequest(value);
-  const rec = value as Record<string, unknown>;
-  const candidateId = rec.candidateId;
-  const root = rec.root;
-  if (request === undefined || typeof candidateId !== 'string' || candidateId.length === 0 || candidateId.length > 200) return undefined;
+  // A request that parsed is an object; reading fields first would throw on a null from the window instead of refusing it.
+  if (request === undefined) return undefined;
+  const { candidateId, root } = value as Record<string, unknown>;
+  if (typeof candidateId !== 'string' || candidateId.length === 0 || candidateId.length > 200) return undefined;
   if (typeof root !== 'string' || root.length === 0 || root.length > 4096) return undefined;
   return { ...request, candidateId, root };
 }
@@ -114,6 +114,7 @@ export class RunSession {
   private controller: AbortController | undefined;
   private job: Promise<void> = Promise.resolve();
   private readonly notify: (status: RunStatus) => void;
+  private uploading = false;
 
   constructor(notify: (status: RunStatus) => void = () => undefined) {
     this.notify = notify;
@@ -121,12 +122,24 @@ export class RunSession {
 
   get current(): RunStatus { return this.status; }
   get busy(): boolean { return this.status.state === 'preparing' || this.status.state === 'running'; }
+  /** True while an upload reads a run's journal; no run may start or resume under it, nor a second upload begin. */
+  get syncing(): boolean { return this.uploading; }
+
+  /** Claims the session for an upload; refused while a run or another upload is under way. Pair with `endSync`. */
+  beginSync(): boolean {
+    if (this.busy || this.uploading) return false;
+    this.uploading = true;
+    return true;
+  }
+
+  endSync(): void { this.uploading = false; }
+
   /** Resolves when the work started by the last `begin` has ended. */
   settled(): Promise<void> { return this.job; }
 
   /** Claims the session for a new run; refuses while another is under way, since one machine has one test root. */
   begin(info: Pick<Active, 'kind' | 'repository' | 'number' | 'candidateId' | 'profile' | 'suite'> & { runId?: string }, work: (controller: AbortController) => Promise<void>): boolean {
-    if (this.busy) return false;
+    if (this.busy || this.uploading) return false;
     const controller = new AbortController();
     this.controller = controller;
     this.set({ state: 'preparing', ...info, message: info.kind === 'resume' ? 'Preparing to resume the run.' : 'Downloading and verifying the candidate.', stopping: false, progress: [] });
@@ -348,7 +361,8 @@ function outcomeOf(session: RunSession, result: RunResult): void {
   }
   const { summary } = result;
   session.patch({
-    state: 'finished',
+    // Exit 3 is a run that did not finish, not a finished run with a bad result; it is not drawn as one.
+    state: summary.exitCode === 3 ? 'failed' : 'finished',
     runId: summary.runId,
     message: exitText(summary.exitCode),
     exitCode: summary.exitCode,
@@ -364,7 +378,7 @@ function outcomeOf(session: RunSession, result: RunResult): void {
 export async function startRunAction(input: unknown, deps: RunDeps): Promise<ActionResult> {
   const confirmation = parseRunConfirmation(input);
   if (confirmation === undefined) return refusal('That is not a valid run request.');
-  if (deps.session.busy) return refusal('A run is already under way in this app. Wait for it to finish or stop it.');
+  if (deps.session.busy || deps.session.syncing) return refusal('A run or an upload is already under way in this app. Wait for it to finish.');
   const assessed = await assess(confirmation, deps);
   if (!assessed.ok) return assessed;
   const { candidate, checkout, projectPath, root } = assessed.value;
@@ -390,6 +404,11 @@ export async function startRunAction(input: unknown, deps: RunDeps): Promise<Act
       const staged = await stageCandidate(candidate, confirmation.repository, confirmation.profile, deps);
       if (!staged.ok) {
         deps.session.patch({ state: 'failed', message: staged.error });
+        return;
+      }
+      // A stop during the download must not become a run: nothing is installed yet, so end here and say so.
+      if (controller.signal.aborted) {
+        deps.session.patch({ state: 'failed', message: 'Stopped before the run began. Nothing was installed.' });
         return;
       }
       deps.session.patch({ state: 'running', message: 'Installing the candidate in the test root and running the suite.' });
@@ -435,7 +454,15 @@ const HINTS: Array<[RegExp, string]> = [
 export async function syncRunAction(input: unknown, deps: RunDeps): Promise<ActionResult> {
   const request = parseSyncRequest(input);
   if (request === undefined) return refusal('That is not a valid sync request.');
-  if (deps.session.busy) return refusal('A run is under way; sync after it finishes.');
+  if (!deps.session.beginSync()) return refusal('A run or an upload is under way; sync after it finishes.');
+  try {
+    return await syncChecked(request, deps);
+  } finally {
+    deps.session.endSync();
+  }
+}
+
+async function syncChecked(request: SyncRequest, deps: RunDeps): Promise<ActionResult> {
   const allowed = await requireWrite(request.repository, deps.api, 'upload results');
   if (!allowed.ok) return refusal(`${allowed.error} Your local results are kept and still marked not synced.`);
   const checkout = await deps.checkouts.get(request.repository);

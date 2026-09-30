@@ -26,6 +26,8 @@ const suite = ref(props.project.suites[0]?.id ?? '');
 
 const candidateId = computed(() => (props.pullRequest.gate.status === 'evaluated' ? props.pullRequest.gate.candidateId : undefined));
 const running = computed(() => status.value.state === 'preparing' || status.value.state === 'running');
+/** A run that did not finish, or finished with something not passing, is never drawn like a success. */
+const unsuccessful = computed(() => status.value.state === 'failed' || (status.value.state === 'finished' && status.value.exitCode !== 0));
 const otherRun = computed(() => running.value && status.value.state !== 'idle' && (status.value.repository !== props.project.repository || status.value.number !== props.pullRequest.number));
 
 const runBlock = computed(() => {
@@ -100,7 +102,7 @@ async function confirm(): Promise<void> {
   try {
     // What the person was shown goes back with the request; the privileged side refuses if any of it has changed.
     const result = await props.qa.startRun({ ...target.value, profile: shown.profile, suite: shown.suite, candidateId: shown.candidateId, root: shown.root, ...(shown.resumes === undefined ? {} : { runId: shown.resumes }) });
-    if (result.ok) { preview.value = undefined; notice.value = result.message; status.value = await props.qa.getRunStatus(); }
+    if (result.ok) { preview.value = undefined; notice.value = result.message; status.value = await props.qa.getRunStatus().catch(() => status.value); }
     else problem.value = result.error;
   } catch {
     problem.value = 'The run could not be started.';
@@ -205,7 +207,7 @@ const resumeBlock = (run: RunEntry): string => (runBlock.value !== '' ? runBlock
       <h3>{{ running ? 'Run in progress' : status.state === 'finished' ? 'Last run' : 'Last run did not complete' }}</h3>
       <p class="meta" data-test="run-status-of">{{ status.repository }} #{{ status.number }} · candidate {{ status.candidateId }} · {{ status.profile }}/{{ status.suite }}<span v-if="status.runId"> · {{ status.runId }}</span></p>
       <p v-if="otherRun" class="note" data-test="other-run">This run belongs to a different pull request.</p>
-      <p :role="status.state === 'failed' ? 'alert' : 'status'" :class="{ 'banner warn': status.state === 'failed' }" data-test="run-message">{{ status.message }}<span v-if="status.stopping"> Stopping…</span></p>
+      <p :role="unsuccessful ? 'alert' : 'status'" :class="{ 'banner warn': unsuccessful }" data-test="run-message">{{ status.message }}<span v-if="status.stopping"> Stopping…</span></p>
       <ul v-if="status.progress.length > 0" class="progress" data-test="progress">
         <li v-for="(line, index) in status.progress.slice(-12)" :key="index" data-test="progress-line">{{ progressText(line) }}</li>
       </ul>

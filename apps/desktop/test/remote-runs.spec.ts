@@ -70,6 +70,9 @@ describe('runOnLinux', () => {
     const seen: unknown[][] = [];
     const result = await runOnLinux(request, { api: actionTransport(repoReply({ pull: true })), discover: discovered(), evaluate: evaluating(gate()), dispatchRun: dispatching({ ok: true, runId: 1 }, seen) });
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('read-only') });
+    // The refusal names this action, not a merge.
+    expect(!result.ok && result.error).toContain('cannot run suites on Linux');
+    expect(!result.ok && result.error).not.toContain('merge');
     expect(seen).toEqual([]);
   });
 
