@@ -50,7 +50,7 @@ Fields:
   empty pass.
 - `scenarioFiles` — modules exporting `scenarios`, relative to `qa/`.
 - `lifecycleModule` — the module exporting `lifecycle`, relative to `qa/`.
-- `workflows` and `markers` — GitHub-stage wiring; required by the schema, unused by local runs.
+- `workflows` and `markers` — GitHub-stage wiring; required by the schema, unused by local runs. `workflows.run` is optional: a workflow that runs one suite for the active candidate on a Linux runner, which the dashboard's "Run on Linux" dispatches. It receives `pr_number`, `candidate_id`, `profile`, `suite` and `expected_head`, and must set `run-name` to `qa-run PR #<pr_number> <candidate_id> <profile>/<suite> <expected_head>` so the dashboard can find the run again. See `examples/tauri-smoke/.github/workflows/qa-run.yml` (a template that has never run).
 
 The file is parsed as data before any of your code runs. A malformed file is reported field by field (for example
 `projectId: missing-field`) and nothing is installed.

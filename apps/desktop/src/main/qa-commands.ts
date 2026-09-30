@@ -133,10 +133,20 @@ async function loadProject(
       readOnly: !['admin', 'maintain', 'write'].includes(role),
       profiles: project.profiles.map((profile) => profile.id),
       requirements,
+      ...remoteRunView(project),
       pullRequests,
       history: await historyView(repository, api),
     },
   };
+}
+
+/** The Linux (profile, suite) pairs a project's run workflow can be asked for: a suite counts for a profile if it lists one of its requirements. */
+function remoteRunView(project: DiscoveredProject['project']): Pick<ProjectView, 'remoteRun'> {
+  const workflow = project.workflows.run;
+  if (workflow === undefined) return {};
+  const linux = project.profiles.filter((profile) => profile.os === 'linux').map((profile) => profile.id);
+  const options = project.suites.flatMap((suite) => linux.filter((profile) => suite.requirements.some((key) => profileOf(key) === profile)).map((profile) => ({ profile, suite: suite.id })));
+  return { remoteRun: { workflow, options } };
 }
 
 async function pullRequestView(repository: string, entry: unknown, api: DashboardApi, evaluate: typeof evaluatePullRequest): Promise<PullRequestView | undefined> {

@@ -13,6 +13,8 @@ const qa: QaBridge = {
   recordManualCheck: (request) => ipcRenderer.invoke(CHANNELS.recordManualCheck, request),
   syncManualResult: (request) => ipcRenderer.invoke(CHANNELS.syncManualResult, request),
   claimManualCheck: (request) => ipcRenderer.invoke(CHANNELS.claimManualCheck, request),
+  runOnLinux: (request) => ipcRenderer.invoke(CHANNELS.runOnLinux, request),
+  listRemoteRuns: (target) => ipcRenderer.invoke(CHANNELS.listRemoteRuns, target),
 };
 
 contextBridge.exposeInMainWorld('qa', qa);

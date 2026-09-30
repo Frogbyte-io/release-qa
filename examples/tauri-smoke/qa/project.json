@@ -13,6 +13,6 @@
   "suites": [{ "id": "release", "requirements": ["windows/persistence", "linux/persistence"] }],
   "scenarioFiles": ["persistence.spec.ts"],
   "lifecycleModule": "lifecycle.ts",
-  "workflows": { "prepare": "qa-prepare.yml", "gate": "qa-gate.yml", "publish": "qa-publish.yml" },
+  "workflows": { "prepare": "qa-prepare.yml", "gate": "qa-gate.yml", "publish": "qa-publish.yml", "run": "qa-run.yml" },
   "markers": { "releaseNotes": "release-notes", "qa": "qa" }
 }

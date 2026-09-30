@@ -59,6 +59,8 @@ export function fakeBridge(overrides: Partial<QaBridge> = {}): QaBridge & { call
     recordManualCheck: record('recordManualCheck', overrides.recordManualCheck),
     syncManualResult: record('syncManualResult', overrides.syncManualResult),
     claimManualCheck: record('claimManualCheck', overrides.claimManualCheck),
+    runOnLinux: record('runOnLinux', overrides.runOnLinux),
+    listRemoteRuns: record('listRemoteRuns', overrides.listRemoteRuns ?? (async () => ({ ok: true as const, configured: true, runs: [] }))),
   };
 }
 

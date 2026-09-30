@@ -22,7 +22,13 @@ export interface Project {
   suites: Suite[];
   scenarioFiles: string[];
   lifecycleModule: string;
-  workflows: { prepare: string; gate: string; publish: string };
+  workflows: {
+    prepare: string;
+    gate: string;
+    publish: string;
+    /** Optional: runs one suite for the active candidate on a Linux runner (see `dispatchSuiteRun`). Absent means no remote runs. */
+    run?: string;
+  };
   markers: { releaseNotes: string; qa: string };
 }
 
@@ -31,7 +37,7 @@ const SPEC: FieldSpec = {
 };
 const PROFILE_SPEC: FieldSpec = { required: ['id', 'os', 'arch'] };
 const SUITE_SPEC: FieldSpec = { required: ['id', 'requirements'] };
-const WORKFLOWS_SPEC: FieldSpec = { required: ['prepare', 'gate', 'publish'] };
+const WORKFLOWS_SPEC: FieldSpec = { required: ['prepare', 'gate', 'publish'], optional: ['run'] };
 const MARKERS_SPEC: FieldSpec = { required: ['releaseNotes', 'qa'] };
 
 export function parseProject(input: unknown): ParseResult<Project> {
@@ -76,6 +82,7 @@ export function parseProject(input: unknown): ParseResult<Project> {
         prepare: c.fileName(workflows.prepare, 'workflows.prepare'),
         gate: c.fileName(workflows.gate, 'workflows.gate'),
         publish: c.fileName(workflows.publish, 'workflows.publish'),
+        ...(workflows.run === undefined ? {} : { run: c.fileName(workflows.run, 'workflows.run') }),
       },
       markers: markers && { releaseNotes: releaseNotesMarker, qa: qaMarker },
     } as Project;

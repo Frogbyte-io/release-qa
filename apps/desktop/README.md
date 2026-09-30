@@ -2,8 +2,8 @@
 
 An Electron + Vue window that shows the accounts, projects, pull requests, candidates, per-environment checks, manual
 work, evidence and published history that the shared commands return (Task 5.1), and lets a maintainer prepare a
-candidate, open the pull request and merge it, and record manual check results with notes and evidence (Task 5.2, parts 1
-and 3). Running a suite and resuming are the rest of 5.2 and are not here yet.
+candidate, open the pull request and merge it, record manual check results with notes and evidence, and start a suite on
+a Linux runner through GitHub and watch it (Task 5.2, parts 1, 3 and 4). Resuming is the rest of 5.2 and is not here yet.
 
 ```text
 npm run build       # main, preload and renderer into dist/
@@ -67,6 +67,33 @@ the pull request has an active candidate). It opens `views/ManualCheck.vue`. Des
 
 Recording, claiming and uploading each need write access at the moment they happen; an account that lost it can still see
 the saved results, marked **Not synced**, with the reason.
+## Linux runs through GitHub
+
+A project that declares the optional `workflows.run` in `qa/project.json` gets a **Run on Linux** action. The dashboard
+runs on Windows; the suite runs on a GitHub Linux runner, so the remote run belongs to GitHub and not to the window.
+
+| Piece | What it does |
+| --- | --- |
+| Confirmation | Shows candidate, profile, suite, the exact head, the workflow it starts, that it runs on GitHub (not on this computer), that it uses Actions minutes and that its results count only once synced and accepted by the gate. Disabled, with the reason, for a read-only account, a project without `workflows.run` and a pull request with no active candidate |
+| Privileged side (`src/main/remote-runs.ts`) | Re-validates every field; write access; the project's `qa/project.json` from the default branch must offer that Linux profile and suite; the gate is evaluated again with the head pinned and the candidate must still be the active one; then the shared `dispatchSuiteRun` (from the default branch only, verifies the returned run by id, workflow file, event, title, workflow revision and repository) |
+| Runs list | The window never keeps the list. `listRemoteRuns` reads the workflow's `workflow_dispatch` runs on the default branch from GitHub, keeps those whose title names this pull request, and reads each unfinished run's jobs. Closing and reopening the app, or opening it on another machine, shows the same runs. It polls every 15 s while the release view is open and stops when it closes; a run keeps going on GitHub regardless |
+| States | Exactly one of Queued, Runner unavailable, Running, Blocked, Completed (with GitHub's conclusion), from the shared `remoteRunStatus`. Blocked is a run or job GitHub holds for approval, an environment protection rule or a concurrency group, or a finished run with conclusion `action_required` |
+
+**Runner unavailable is a guess.** GitHub does not say "no runner matches" or "all runners are busy"; both look like a job
+queued with no runner assigned. The dashboard shows Runner unavailable when a job has had no runner for 5 minutes, and
+names the labels the job needs. A slow hosted runner also crosses that line, and a self-hosted runner that comes online
+clears it. Listing runners would need admin rights and is not attempted.
+
+**Completed is not a pass.** A finished job says nothing about QA readiness: that still comes only from reports synced to
+the candidate and accepted by the evaluator. A run for a different head or candidate than the one on screen is tagged as such.
+
+If a read fails (sign-in expired, access lost, network), the runs already shown stay, with the reason and "last successful
+read"; a first read that fails is an error, never "no runs". The list is a status view: any writer can dispatch the
+workflow, so a run's title is not evidence of who started it or what it ran.
+
+The consumer's workflow contract (inputs, and the `run-name` the dashboard searches for) is in
+[`docs/authoring-tests.md`](../../docs/authoring-tests.md); a template is
+`examples/tauri-smoke/.github/workflows/qa-run.yml`.
 
 ## States
 
@@ -98,8 +125,6 @@ the saved results, marked **Not synced**, with the reason.
 - **Actions have not run against live GitHub.** `prepareCandidate`, `mergeReleasePr`, the ordinary merge and the refusal
   messages are tested with fakes. For an ordinary pull request the merge method list is not restricted to what the
   repository allows; a disallowed one fails with GitHub's refusal, which the transport does not detail.
-- **Linux jobs** are not triggered from the window: no generic Linux workflow exists in this repository, and the
-  consumer's own workflows are not known to it. That, running suites and resume are the rest of 5.2.
 - **Manual checks have not run against live GitHub or in the real window.** Tests use a fake release (assets, permissions,
   two signed-in users) with the real shared recording, sync and claim code, and the component tests use a fake bridge. The
   file dialog, the app data folder and a live draft release have not been exercised, and nobody has confirmed that a
@@ -115,6 +140,16 @@ the saved results, marked **Not synced**, with the reason.
   many reports, and each open of the view repeats it.
 - **If reconciliation dispatch fails after a successful upload**, the result is marked synced (its acknowledgements are saved)
   while the upload reports an error to retry; the window then no longer offers Upload for it.
+- **Linux runs have never touched a live GitHub runner.** `dispatchSuiteRun`, `remoteRunStatus` and the runs list are
+  tested with fake API responses shaped after GitHub's documented fields. Not observed: the real `run-name`/`display_title`
+  after a dispatch, real job `status`/`runner_id`/`labels` values in each state (`waiting` for environment approval,
+  `action_required`), how long real runners take to pick up a job, and rate use of polling.
+- **The example workflow has never run.** `examples/tauri-smoke/.github/workflows/qa-run.yml` is a template. Its steps to
+  download and verify the candidate and to sync the report are marked NOT IMPLEMENTED and fail on purpose: the tool has no
+  command line for either yet. Until they exist, a Linux run started here cannot produce a QA result.
+- **Remote runs are not connected to results.** The window lists GitHub Actions runs; it does not yet show which
+  requirements a run's synced report satisfied. Resume, sync from the window and manual results are the rest of 5.2, as is
+  the live "another tester contributes a checkpoint" check.
 - **Packaging** (an installer for the dashboard itself) is not done; `npm start` runs it from a checkout.
 
 ## Evidence

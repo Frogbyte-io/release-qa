@@ -251,6 +251,20 @@ describe('project', () => {
     expectIssue(parseProject({ ...project(), workflows: { ...project().workflows, gate: '../qa-gate.yml' } }), 'workflows.gate', 'unsafe-path');
   });
 
+  test('accepts an optional run workflow and keeps a project without one valid', () => {
+    const p = project();
+    expectValid(parseProject(p));
+    const withRun = parseProject({ ...p, workflows: { ...p.workflows, run: 'qa-run.yml' } });
+    expectValid(withRun);
+    if (withRun.ok) expect(withRun.value.workflows.run).toBe('qa-run.yml');
+    if (parseProject(p).ok) expect('run' in (parseProject(p) as { value: { workflows: object } }).value.workflows).toBe(false);
+  });
+
+  test('rejects a run workflow that is a path or not a string', () => {
+    expectIssue(parseProject({ ...project(), workflows: { ...project().workflows, run: '../qa-run.yml' } }), 'workflows.run', 'unsafe-path');
+    expectIssue(parseProject({ ...project(), workflows: { ...project().workflows, run: 5 } }), 'workflows.run', 'invalid-type');
+  });
+
   test('rejects an unsupported operating system', () => {
     expectIssue(parseProject(broken(project(), 'profiles.0.os', 'macos')), 'profiles[0].os', 'invalid-value');
   });

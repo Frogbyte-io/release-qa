@@ -54,7 +54,7 @@ export function parseMergeRequest(value: unknown): MergeRequest | undefined {
 /** Where a pull request lives, built here from validated parts, never taken from the window as a URL. */
 export const pullRequestUrl = (repository: string, number: number): string => `https://github.com/${repository}/pull/${number}`;
 
-const refusal = (error: string): { ok: false; error: string } => ({ ok: false, error });
+export const refusal = (error: string): { ok: false; error: string } => ({ ok: false, error });
 const uncertain = (error: string): { ok: false; error: string; uncertain: true } => ({ ok: false, error, uncertain: true });
 
 const ACCESS_TEXT: Record<string, string> = {
@@ -65,9 +65,9 @@ const ACCESS_TEXT: Record<string, string> = {
   'not-found': 'The repository or pull request was not found.',
   'network-error': 'GitHub could not be reached, or refused the request.',
 };
-const accessText = (reason: string): string => ACCESS_TEXT[reason] ?? reason;
+export const accessText = (reason: string): string => ACCESS_TEXT[reason] ?? reason;
 
-async function requireWrite(repository: string, api: ActionApi): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function requireWrite(repository: string, api: ActionApi): Promise<{ ok: true } | { ok: false; error: string }> {
   const access = await inspectGitHubAccess(repository, api);
   if (!access.ok) return refusal(accessText(access.reason));
   return WRITE_ROLES.includes(access.role) ? { ok: true } : refusal('Your account has read-only access to this repository; it cannot merge.');

@@ -16,6 +16,8 @@ export const CHANNELS = {
   recordManualCheck: 'qa:record-manual-check',
   syncManualResult: 'qa:sync-manual-result',
   claimManualCheck: 'qa:claim-manual-check',
+  runOnLinux: 'qa:run-on-linux',
+  listRemoteRuns: 'qa:list-remote-runs',
 } as const;
 
 export interface QaBridge {
@@ -31,6 +33,8 @@ export interface QaBridge {
   previewMerge(target: PullTarget): Promise<MergePreviewResult>;
   mergePullRequest(request: MergeRequest): Promise<ActionResult>;
   openPullRequest(target: Pick<PullTarget, 'repository' | 'number'>): Promise<ActionResult>;
+  runOnLinux(request: RemoteRunRequest): Promise<ActionResult>;
+  listRemoteRuns(target: Pick<PullTarget, 'repository' | 'number'>): Promise<RemoteRunsResult>;
 }
 
 /** A pull request as the person saw it. The head is what they looked at; the privileged side refuses if it has moved. */
@@ -39,6 +43,35 @@ export interface PullTarget {
   number: number;
   headSha: string;
 }
+
+/** A suite to run on a Linux runner through GitHub, for the head and candidate the person was looking at. */
+export interface RemoteRunRequest extends PullTarget {
+  candidateId: string;
+  profile: string;
+  suite: string;
+}
+
+/** Mirrors `RemoteRunState` in the shared package; declared here so the window's program does not import Node-side code. */
+export type RemoteRunState = 'queued' | 'runner-unavailable' | 'running' | 'blocked' | 'completed';
+
+export interface RemoteRunView {
+  runId: number;
+  attempt: number;
+  url: string;
+  createdAt: string;
+  candidateId: string;
+  profile: string;
+  suite: string;
+  headSha: string;
+  /** Exactly one; see `remoteRunStatus` in the shared package for how each is decided and what the heuristics cannot know. */
+  state: RemoteRunState;
+  /** Only when `state` is `completed`. */
+  conclusion?: string;
+  detail: string;
+}
+
+/** Read from GitHub each time, never from what this app remembers. `configured: false` means the project has no run workflow. */
+export type RemoteRunsResult = { ok: true; configured: boolean; runs: RemoteRunView[] } | { ok: false; error: string };
 
 export type MergeMethod = 'merge' | 'squash' | 'rebase';
 export const MERGE_METHODS: readonly MergeMethod[] = ['merge', 'squash', 'rebase'];
@@ -190,6 +223,8 @@ export interface ProjectView {
   readOnly: boolean;
   profiles: string[];
   requirements: RequirementView[];
+  /** Present only when the project declares `workflows.run`: the workflow, and the Linux (profile, suite) pairs it can run. */
+  remoteRun?: { workflow: string; options: Array<{ profile: string; suite: string }> };
   pullRequests: { status: 'ok'; items: PullRequestView[] } | { status: 'unavailable'; reason: string };
   history: HistoryView;
 }
