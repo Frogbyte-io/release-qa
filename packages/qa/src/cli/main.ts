@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import type { ValidationIssue } from '../model/validate.ts';
 import type { ScenarioEvent } from '../runner/execute.ts';
 import { parseArgs } from './args.ts';
+import { runDownloadCandidate, runSyncRun, type CiDeps } from './ci-commands.ts';
 import { runDoctor, type DoctorReport } from './doctor.ts';
 import { runDesignate, runReset, runStatus, type StatusReport } from './environment-commands.ts';
 import { loadProject } from './project.ts';
@@ -32,6 +33,8 @@ export async function main(
   io: Io = defaultIo,
   cwd: () => string = () => process.cwd(),
   signal: AbortSignal = new AbortController().signal,
+  /** Test seams for the commands that talk to GitHub; the default is the signed-in `gh` or `GH_TOKEN`. */
+  ci: CiDeps = {},
 ): Promise<number> {
   const parsed = parseArgs(argv);
   if (!parsed.ok) {
@@ -122,6 +125,27 @@ export async function main(
       }
       printRun(io, command.json, result.summary);
       return result.summary.exitCode;
+    }
+
+    case 'download-candidate': {
+      const result = await runDownloadCandidate({ repository: command.repo, pullRequest: command.pr, head: command.head, candidateId: command.candidate, profile: command.profile, out: command.out }, cwd(), ci);
+      if (!result.ok) {
+        reportError(io, command.json, result.error);
+        return EXIT.infrastructure;
+      }
+      io.log(command.json ? JSON.stringify(result) : `candidate ${result.candidateId}: ${result.artifact} verified (SHA-256 ${result.sha256}); manifest ${result.manifest}`);
+      return EXIT.ok;
+    }
+
+    case 'sync-run': {
+      const stateDir = command.state === undefined ? join(defaultRoot(cwd), 'runs') : resolve(cwd(), command.state);
+      const result = await runSyncRun({ repository: command.repo, pullRequest: command.pr, head: command.head, candidateId: command.candidate, runId: command.run, stateDir }, ci);
+      if (!result.ok) {
+        reportError(io, command.json, result.error);
+        return EXIT.infrastructure;
+      }
+      io.log(command.json ? JSON.stringify(result) : `synced run ${result.runId} to candidate ${result.candidateId} (release ${result.releaseId}) as ${result.actor}: ${result.uploaded} file(s) uploaded`);
+      return EXIT.ok;
     }
   }
 }

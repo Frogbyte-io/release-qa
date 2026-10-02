@@ -52,7 +52,34 @@ export interface ResumeCommand {
   json: boolean;
 }
 
-export type Command = DoctorCommand | DesignateCommand | StatusCommand | ResetCommand | RunCommand | ResumeCommand;
+/** Fetches the active candidate's file for a profile from its draft release, verifies it and writes a local manifest. */
+export interface DownloadCandidateCommand {
+  name: 'download-candidate';
+  repo: string;
+  pr: number;
+  /** The pull request head the person reviewed; the command refuses if the pull request has moved. */
+  head: string;
+  /** The candidate the person was shown; the command refuses if another is active. */
+  candidate: string;
+  profile: string;
+  /** The directory the verified file and `candidate.json` are written to. */
+  out: string;
+  json: boolean;
+}
+
+/** Uploads one local run's report, events and evidence to the active candidate's draft release. */
+export interface SyncRunCommand {
+  name: 'sync-run';
+  repo: string;
+  pr: number;
+  head: string;
+  candidate: string;
+  run: string;
+  state: string | undefined;
+  json: boolean;
+}
+
+export type Command = DoctorCommand | DesignateCommand | StatusCommand | ResetCommand | RunCommand | ResumeCommand | DownloadCandidateCommand | SyncRunCommand;
 
 export type ParsedArgs = { ok: true; command: Command } | { ok: false; error: string; json: boolean };
 
@@ -70,6 +97,8 @@ const SPECS: Record<Command['name'], Spec> = {
   reset: { required: [], optional: ['root'] },
   run: { required: ['project', 'candidate', 'profile', 'suite'], optional: ['root', 'state'] },
   resume: { required: ['run'], optional: ['state'] },
+  'download-candidate': { required: ['repo', 'pr', 'head', 'candidate', 'profile', 'out'], optional: [] },
+  'sync-run': { required: ['repo', 'pr', 'head', 'candidate', 'run'], optional: ['state'] },
 };
 
 const COMMAND_NAMES = Object.keys(SPECS) as Command['name'][];
@@ -101,7 +130,36 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       if (!RUN_ID.test(run)) return fail(`--run must be a run id (letters, digits, ".", "_" or "-", starting with a letter or digit), not ${JSON.stringify(run)}`, json);
       return { ok: true, command: { name, run, state: flags.values.state, json } };
     }
+    case 'download-candidate': {
+      const { repo, pr, head, candidate, profile, out } = flags.values as Record<string, string>;
+      const bad = checkTarget(repo!, pr!, head!, candidate!) ?? (PROFILE_ID.test(profile!) ? undefined : `--profile must be a profile id (lower-case letters, digits, ".", "_" or "-", starting with a letter or digit), not ${JSON.stringify(profile)}`);
+      if (bad !== undefined) return fail(bad, json);
+      if (out!.trim() === '') return fail('--out must name a directory', json);
+      return { ok: true, command: { name, repo: repo!, pr: Number(pr), head: head!, candidate: candidate!, profile: profile!, out: out!, json } };
+    }
+    case 'sync-run': {
+      const { repo, pr, head, candidate, run } = flags.values as Record<string, string>;
+      const bad = checkTarget(repo!, pr!, head!, candidate!);
+      if (bad !== undefined) return fail(bad, json);
+      // The run id becomes a directory name under the state directory, so it must be exactly the shape a run gets.
+      if (!SYNC_RUN_ID.test(run!)) return fail(`--run must be a run id such as run-20260101T000000Z-abc123, not ${JSON.stringify(run)}`, json);
+      return { ok: true, command: { name, repo: repo!, pr: Number(pr), head: head!, candidate: candidate!, run: run!, state: flags.values.state, json } };
+    }
   }
+}
+
+const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const PROFILE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const SYNC_RUN_ID = /^run-[0-9TZ]+-[0-9a-f]{6}$/;
+const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** The arguments both GitHub commands share, each checked before anything is sent to GitHub or put in a path. */
+function checkTarget(repo: string, pr: string, head: string, candidate: string): string | undefined {
+  if (!REPOSITORY.test(repo) || repo.split('/').some((part) => part === '.' || part === '..')) return `--repo must be owner/name, not ${JSON.stringify(repo)}`;
+  if (!/^[1-9][0-9]{0,8}$/.test(pr)) return `--pr must be a positive pull request number, not ${JSON.stringify(pr)}`;
+  if (!/^[0-9a-f]{40}$/.test(head)) return '--head must be the full 40-character pull request head SHA, in lowercase';
+  if (!ID.test(candidate)) return `--candidate must be a candidate id (letters, digits, ".", "_" or "-", starting with a letter or digit), not ${JSON.stringify(candidate)}`;
+  return undefined;
 }
 
 const countJson = (argv: readonly string[]): number => argv.filter((token) => token === '--json').length;

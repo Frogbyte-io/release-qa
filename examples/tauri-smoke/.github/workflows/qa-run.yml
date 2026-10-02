@@ -1,8 +1,29 @@
 name: qa-run
 # EXAMPLE, NOT RUN. This file is a template for a consumer's `workflows.run` (qa/project.json). GitHub only reads
 # workflows under the repository root's `.github/workflows/`, so it does nothing where it sits; a consumer copies it
-# there. It has never executed on a GitHub runner. Two steps are marked NOT IMPLEMENTED because the tool has no command
-# for them yet, and they fail on purpose rather than pretend.
+# there. It has NEVER executed on a GitHub runner: every step is written against documented behaviour and the fake
+# transports of the tool's tests, and none has been observed working here.
+#
+# What the tool's commands now do (both are in packages/qa, tested with fakes):
+#   download-candidate  fetches the candidate's file for the profile by release asset id, checks its SHA-256 against the
+#                       candidate record, and only then writes the local manifest `run --candidate` reads.
+#   sync-run            uploads the run's report, events and evidence to the candidate's draft release.
+#
+# IDENTITY. The merge gate counts an uploaded report only if its uploader is a user with write, maintain or admin access
+# to the repository AND is the report's own `actor` (loadCandidateProgress in packages/qa/src/github/sync.ts), and
+# `sync-run` itself needs `GET /user` to know who is uploading. The workflow's GITHUB_TOKEN is the `github-actions[bot]`
+# installation, not a user: it cannot answer `GET /user`, so `sync-run` refuses before uploading, and even an upload made
+# some other way would come from a bot that is not a collaborator, which the gate ignores. So `contents: write` on
+# GITHUB_TOKEN would not make a result count, and it is deliberately not granted. The sync job instead reads a repository
+# secret that YOU create, named QA_SYNC_TOKEN here, holding a token of a person (or machine user) who has write access to
+# this repository. The tool does not create, rotate or check that token. Results will appear as uploaded by that user.
+# Whether that token needs the Actions "write" permission is also unproven: after the upload, `sync-run` asks for the
+# `qa-reconcile.yml` workflow to be dispatched, which GitHub only allows with it.
+#
+# Not proven, because nothing here has run: that GITHUB_TOKEN with `contents: read` can read the draft release's assets
+# (draft releases are visible only to people with push access; if the download step cannot see the release, the job
+# needs `contents: write` for that step and nothing else changes); the real asset download on a runner; that the
+# journal survives the artifact round trip between the two jobs; and the Tauri app under xvfb.
 #
 # The dashboard dispatches it from the default branch with these inputs and finds the run again by its title, so
 # `run-name` must stay exactly this shape (see `remoteRunTitle` in packages/qa/src/github/remote-run.ts):
@@ -46,6 +67,10 @@ jobs:
   run:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # Reads only. The job runs the reviewed pull request's own test code, so it holds nothing that can write.
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       # Inputs go through the environment, never interpolated into script text. The token is not here: the job runs the
       # reviewed pull request's own test code, which must not find it in its environment.
@@ -91,13 +116,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1
 
-      - name: Download and verify the candidate (NOT IMPLEMENTED)
+      # Runs the tool from the trusted checkout, before any of the pull request's code has executed. The token is read-only
+      # and exists only for this step. Nothing usable is written unless the file's SHA-256 matches the candidate record.
+      - name: Download and verify the candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Needs: fetch the candidate's Linux artifact from the draft release by asset id, check its SHA-256 against the
-          # candidate record (downloadCandidate in packages/qa/src/github/candidate.ts does this) and write a local
-          # candidate manifest for `release-qa run --candidate`. There is no command line for it yet.
-          echo "candidate download is not implemented" >&2
-          exit 1
+          node release-qa/packages/qa/src/cli/main.ts download-candidate \
+            --repo "$GITHUB_REPOSITORY" --pr "$PR" --head "$EXPECTED_HEAD" --candidate "$CANDIDATE" \
+            --profile "$PROFILE" --out "$RUNNER_TEMP/candidate" --json
 
       - name: Run the suite under a virtual display
         run: |
@@ -105,18 +132,9 @@ jobs:
           xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" \
             node release-qa/packages/qa/src/cli/main.ts run \
               --project subject/examples/tauri-smoke/qa/project.json \
-              --candidate candidate/candidate.json \
+              --candidate "$RUNNER_TEMP/candidate/candidate.json" \
               --profile "$PROFILE" --suite "$SUITE" \
               --root "$RUNNER_TEMP/qa-root" --state "$RUNNER_TEMP/qa-runs" --json
-
-      - name: Sync the report to the candidate (NOT IMPLEMENTED)
-        if: ${{ !cancelled() }}
-        run: |
-          # Needs: upload the run's report, events and evidence to the candidate's draft release (syncRun in
-          # packages/qa/src/github/sync.ts), as the identity the gate accepts. GITHUB_TOKEN would also need
-          # `contents: write`. There is no command line for it yet. Until it exists, a finished run here is not a QA result.
-          echo "report sync is not implemented" >&2
-          exit 1
 
       - name: Keep the raw run journal
         if: ${{ !cancelled() }}
@@ -125,3 +143,49 @@ jobs:
           name: qa-run-${{ inputs.profile }}-${{ inputs.suite }}
           path: ${{ runner.temp }}/qa-runs
           if-no-files-found: warn
+
+  # A separate job, so the token of a user never shares a runner with the pull request's test code, which has already run
+  # in the job above. It still trusts the journal that job produced (the pull request's tests decide their own outcomes),
+  # which is why an uploaded report is evidence for a reviewer and not proof.
+  sync:
+    needs: run
+    if: ${{ !cancelled() && needs.run.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # GITHUB_TOKEN reads only; the upload is made with QA_SYNC_TOKEN, see IDENTITY in the header.
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      PR: ${{ inputs.pr_number }}
+      CANDIDATE: ${{ inputs.candidate_id }}
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Frogbyte-io/release-qa
+          ref: main
+          path: release-qa
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: release-qa/.node-version
+      - run: npm ci
+        working-directory: release-qa
+      - uses: actions/download-artifact@v4
+        with:
+          name: qa-run-${{ inputs.profile }}-${{ inputs.suite }}
+          path: ${{ runner.temp }}/qa-runs
+
+      # sync-run validates every argument itself, refuses unless the pull request is still at the reviewed head and the
+      # candidate is still the active one, and exits non-zero on any failure, so a run that did not sync shows as failed.
+      - name: Sync the report to the candidate
+        env:
+          GH_TOKEN: ${{ secrets.QA_SYNC_TOKEN }}
+        run: |
+          runs=("$RUNNER_TEMP"/qa-runs/run-*/)
+          [ "${#runs[@]}" -eq 1 ] && [ -d "${runs[0]}" ] || { echo "expected exactly one run in the journal artifact" >&2; exit 1; }
+          run_id=$(basename "${runs[0]}")
+          node release-qa/packages/qa/src/cli/main.ts sync-run \
+            --repo "$GITHUB_REPOSITORY" --pr "$PR" --head "$EXPECTED_HEAD" --candidate "$CANDIDATE" \
+            --run "$run_id" --state "$RUNNER_TEMP/qa-runs" --json
