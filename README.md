@@ -35,12 +35,23 @@ node packages/qa/src/cli/main.ts reset [--root <path>] [--json]       # reaps wh
 node packages/qa/src/cli/main.ts doctor --project <qa/project.json> --profile <id> [--json]
 node packages/qa/src/cli/main.ts run --project <qa/project.json> --candidate <candidate.json> --profile <id> --suite <id> [--root <path>] [--state <dir>] [--json]
 node packages/qa/src/cli/main.ts resume --run <run id> [--state <dir>] [--json]
+node packages/qa/src/cli/main.ts download-candidate --repo <owner/name> --pr <n> --head <sha> --candidate <id> --profile <id> --out <dir> [--json]
+node packages/qa/src/cli/main.ts sync-run --repo <owner/name> --pr <n> --head <sha> --candidate <id> --run <run id> [--state <dir>] [--json]
 ```
 
 `doctor` and `run` need a consumer's `qa/project.json`; the sample's is [`examples/tauri-smoke/qa`](examples/tauri-smoke/qa),
 and [the setup guide](docs/guides/run-the-sample.md) takes a fresh machine to a passing run.
 `run` also needs a [local candidate manifest](docs/decisions/local-runs.md#the-local-candidate-manifest) naming the
 file to test and its SHA-256, which is checked before anything is installed.
+
+`download-candidate` and `sync-run` are for a CI job (see the example `qa-run.yml`) and use the signed-in `gh` or the
+`GH_TOKEN` of the environment. `download-candidate` finds the pull request's active candidate, refuses unless it is
+`--candidate` at `--head`, downloads the profile's file by release asset id, and writes `candidate.json` beside it in
+`--out` only after the file's SHA-256 matches the candidate record; a file that does not match leaves nothing in `--out`.
+`sync-run` uploads one run's report, events and evidence to the candidate's draft release. The merge gate counts a report
+only when its uploader is a user with write access who is also its actor, so `sync-run` refuses before uploading when it
+cannot tell who the user is (a workflow's `GITHUB_TOKEN` cannot) or when that user lacks write access. Both exit `3` on
+any failure, and never print a token.
 
 `--root` defaults to `.release-qa` and `--state` to `.release-qa/runs`, under the current directory (gitignored).
 Results go to stdout, problems and progress to stderr; `--json` makes the result one line of JSON. `run` prints its

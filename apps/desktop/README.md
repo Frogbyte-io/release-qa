@@ -171,9 +171,17 @@ The Run page (from the release view) runs one suite for one environment against 
   tested with fake API responses shaped after GitHub's documented fields. Not observed: the real `run-name`/`display_title`
   after a dispatch, real job `status`/`runner_id`/`labels` values in each state (`waiting` for environment approval,
   `action_required`), how long real runners take to pick up a job, and rate use of polling.
-- **The example workflow has never run.** `examples/tauri-smoke/.github/workflows/qa-run.yml` is a template. Its steps to
-  download and verify the candidate and to sync the report are marked NOT IMPLEMENTED and fail on purpose: the tool has no
-  command line for either yet. Until they exist, a Linux run started here cannot produce a QA result.
+- **The example workflow has never run.** `examples/tauri-smoke/.github/workflows/qa-run.yml` is a template that has not
+  executed on a GitHub runner. Its two formerly missing steps now call the tool: `download-candidate` fetches the
+  candidate's file by asset id, checks its SHA-256 and writes the manifest `run --candidate` reads, and `sync-run` uploads
+  a run's report, events and evidence to the candidate's draft release. Both are tested only against fake GitHub responses.
+- **A Linux run needs a user's token to produce a QA result.** The merge gate counts a synced report only when its uploader
+  is a user with write access who is also the report's actor. The workflow's `GITHUB_TOKEN` is the `github-actions[bot]`
+  installation: it cannot tell `sync-run` who it is (`GET /user`), and a bot upload would be ignored by the gate. The
+  example therefore uploads in a separate job with a repository secret, `QA_SYNC_TOKEN`, that a consumer creates from a
+  user (or machine user) with write access; the tool does not create or check it. Unproven: that GitHub accepts this on a
+  runner, which permissions that token needs (including dispatching `qa-reconcile.yml`), and that `GITHUB_TOKEN` with
+  `contents: read` can see the draft release's assets.
 - **Remote runs are not connected to results.** The window lists GitHub Actions runs; it does not yet show which
   requirements a run's synced report satisfied. Resume, sync from the window and manual results are the rest of 5.2, as is
   the live "another tester contributes a checkpoint" check.

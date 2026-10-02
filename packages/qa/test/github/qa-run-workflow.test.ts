@@ -28,15 +28,71 @@ describe('the example run workflow', () => {
     expect(scripts.filter((line) => line.includes('${{'))).toEqual([]);
   });
 
-  test('the token is scoped to the step that needs it, not the job that runs the pull request tests', () => {
-    const tokenLines = lines.map((line, index) => ({ line, index })).filter(({ line }) => line.includes('GH_TOKEN:'));
-    expect(tokenLines).toHaveLength(1);
-    expect(indent(tokenLines[0]!.line)).toBeGreaterThan(6);
+  /** Each step of the file as its own run of lines, so a test can say which step holds a token. */
+  function steps(): string[][] {
+    const found: string[][] = [];
+    for (const line of lines) {
+      if (/^ {6}- /.test(line)) found.push([line]);
+      else if (found.length > 0 && !/^ {0,4}\S/.test(line)) found.at(-1)!.push(line);
+    }
+    return found;
+  }
+  const holdsToken = (step: string[]): boolean => step.some((line) => /\$\{\{\s*(github\.token|secrets\.)/.test(line));
+
+  test('no token sits in a job-level or workflow-level environment, only in the steps that need one', () => {
+    const tokenLines = lines.map((line, index) => ({ line, index })).filter(({ line }) => /\$\{\{\s*(github\.token|secrets\.)/.test(line));
+    expect(tokenLines).toHaveLength(3);
+    for (const { line } of tokenLines) expect(indent(line)).toBeGreaterThan(6);
+    for (const { line } of tokenLines) expect(line.trimStart().startsWith('GH_TOKEN:')).toBe(true);
   });
 
-  test('neither checkout leaves credentials in the checked out repository', () => {
+  test('the step that runs the pull request tests holds no token', () => {
+    const suite = steps().find((step) => step.some((line) => /main\.ts run /.test(line)));
+    expect(suite).toBeDefined();
+    expect(holdsToken(suite!)).toBe(false);
+  });
+
+  test('only the head check, the download and the sync steps hold a token', () => {
+    const withToken = steps().filter(holdsToken);
+    expect(withToken.map((step) => step.find((line) => line.includes('name:'))?.trim())).toEqual([
+      '- name: Validate inputs and re-check what the dashboard saw',
+      '- name: Download and verify the candidate',
+      '- name: Sync the report to the candidate',
+    ]);
+  });
+
+  test('the report is uploaded as a user, never with the workflow token, and in a job apart from the tests', () => {
+    const sync = steps().find((step) => step.some((line) => line.includes('main.ts sync-run')));
+    expect(sync).toBeDefined();
+    expect(sync!.some((line) => line.includes('github.token'))).toBe(false);
+    expect(sync!.some((line) => line.includes('secrets.QA_SYNC_TOKEN'))).toBe(true);
+    // The two jobs are separate: the sync job starts after the run job and does not run the suite.
+    const text = lines.join('\n');
+    expect(text).toMatch(/\n {2}sync:\n {4}needs: run\n/);
+    expect(text.slice(text.indexOf('\n  sync:'))).not.toMatch(/main\.ts run /);
+  });
+
+  test('the sync job holding the user token runs the tool commit the run job used, not a moving branch', () => {
+    const text = lines.join('\n');
+    const sync = text.slice(text.indexOf('\n  sync:'));
+    expect(sync).toContain('ref: ${{ needs.run.outputs.tool_sha }}');
+    expect(sync).not.toMatch(/ref: main/);
+    expect(text).toContain('tool_sha: ${{ steps.tool.outputs.sha }}');
+  });
+
+  test('the sync job is skipped when the run job left no journal, so the real failure stays the one to read', () => {
+    const text = lines.join('\n');
+    expect(text).toMatch(/\n {4}if: \$\{\{ !cancelled\(\) && needs\.run\.outputs\.has_journal == 'true' \}\}\n/);
+    expect(text).toContain('has_journal: ${{ steps.journal.outputs.has }}');
+  });
+
+  test('no job can write: GITHUB_TOKEN is read-only everywhere, since it is not an identity the gate accepts', () => {
+    expect(lines.filter((line) => /:\s*write(?:-all)?\s*$/.test(line))).toEqual([]);
+  });
+
+  test('no checkout leaves credentials in the checked out repository', () => {
     const checkouts = lines.filter((line) => line.includes('actions/checkout@')).length;
-    expect(checkouts).toBe(2);
+    expect(checkouts).toBe(3);
     expect(lines.filter((line) => line.includes('persist-credentials: false'))).toHaveLength(checkouts);
   });
 });
