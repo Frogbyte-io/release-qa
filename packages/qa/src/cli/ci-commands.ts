@@ -1,4 +1,4 @@
-import { rm, stat, writeFile } from 'node:fs/promises';
+import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { downloadCandidate, type CandidateDownloadApi } from '../github/candidate.ts';
 import { evaluatePullRequest, type GateApi } from '../github/pull-request-gate.ts';
@@ -70,6 +70,10 @@ export async function runDownloadCandidate(input: Target & { profile: string; ou
 
     // A crash after the verified file was linked and before the manifest was written leaves the file alone. It is removed
     // only if it is exactly the candidate's file; any other file of that name is somebody's, and is never replaced.
+    // A crash inside the download also leaves its own temporary directory (a partial copy). Those carry this tool's prefix.
+    for (const entry of await readdir(out, { withFileTypes: true }).catch(() => [])) {
+      if (entry.isDirectory() && entry.name.startsWith('.release-qa-download-')) await rm(join(out, entry.name), { recursive: true, force: true });
+    }
     const leftover = join(out, artifact.name);
     if (await exists(leftover)) {
       if (await sha256Of(leftover).catch(() => undefined) !== artifact.sha256) return { ok: false, error: `${leftover} already exists and is not the candidate's file; it is not replaced` };

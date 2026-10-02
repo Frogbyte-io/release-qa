@@ -197,6 +197,16 @@ describe('download-candidate', () => {
     expect((await readdir(join(dir, 'candidate'))).sort()).toEqual(['candidate.json', 'smoke_amd64.deb']);
   });
 
+  test('a temporary download directory left by a crash is removed on retry, and unrelated files are kept', async () => {
+    const dir = await makeDir();
+    await mkdir(join(dir, 'candidate', '.release-qa-download-abc123'), { recursive: true });
+    await writeFile(join(dir, 'candidate', '.release-qa-download-abc123', 'smoke_amd64.deb'), 'partial');
+    await writeFile(join(dir, 'candidate', 'notes.txt'), 'keep');
+    const out = io();
+    expect(await main(argv('candidate'), out.sink, () => dir, undefined, { api: api(bytes), evaluate: evaluated() })).toBe(EXIT.ok);
+    expect((await readdir(join(dir, 'candidate'))).sort()).toEqual(['candidate.json', 'notes.txt', 'smoke_amd64.deb']);
+  });
+
   test('a different file of the same name is never replaced', async () => {
     const dir = await makeDir();
     await mkdir(join(dir, 'candidate'));
