@@ -72,8 +72,22 @@ describe('the example run workflow', () => {
     expect(text.slice(text.indexOf('\n  sync:'))).not.toMatch(/main\.ts run /);
   });
 
+  test('the sync job holding the user token runs the tool commit the run job used, not a moving branch', () => {
+    const text = lines.join('\n');
+    const sync = text.slice(text.indexOf('\n  sync:'));
+    expect(sync).toContain('ref: ${{ needs.run.outputs.tool_sha }}');
+    expect(sync).not.toMatch(/ref: main/);
+    expect(text).toContain('tool_sha: ${{ steps.tool.outputs.sha }}');
+  });
+
+  test('the sync job is skipped when the run job left no journal, so the real failure stays the one to read', () => {
+    const text = lines.join('\n');
+    expect(text).toMatch(/\n {4}if: \$\{\{ !cancelled\(\) && needs\.run\.outputs\.has_journal == 'true' \}\}\n/);
+    expect(text).toContain('has_journal: ${{ steps.journal.outputs.has }}');
+  });
+
   test('no job can write: GITHUB_TOKEN is read-only everywhere, since it is not an identity the gate accepts', () => {
-    expect(lines.filter((line) => /:\s*write\s*$/.test(line))).toEqual([]);
+    expect(lines.filter((line) => /:\s*write(?:-all)?\s*$/.test(line))).toEqual([]);
   });
 
   test('no checkout leaves credentials in the checked out repository', () => {

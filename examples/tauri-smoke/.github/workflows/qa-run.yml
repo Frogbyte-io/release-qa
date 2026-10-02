@@ -67,6 +67,10 @@ jobs:
   run:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # What the sync job needs to know: the exact tool commit this job used, and whether a journal exists to upload.
+    outputs:
+      tool_sha: ${{ steps.tool.outputs.sha }}
+      has_journal: ${{ steps.journal.outputs.has }}
     # Reads only. The job runs the reviewed pull request's own test code, so it holds nothing that can write.
     permissions:
       contents: read
@@ -99,6 +103,9 @@ jobs:
           ref: main
           path: release-qa
           persist-credentials: false
+      - name: Record the tool commit, so the sync job runs exactly the same code
+        id: tool
+        run: echo "sha=$(git -C release-qa rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       # The tests and app under test, at exactly the head that was reviewed.
       - uses: actions/checkout@v4
         with:
@@ -136,6 +143,12 @@ jobs:
               --profile "$PROFILE" --suite "$SUITE" \
               --root "$RUNNER_TEMP/qa-root" --state "$RUNNER_TEMP/qa-runs" --json
 
+      - name: Note whether the run left a journal
+        id: journal
+        if: ${{ !cancelled() }}
+        run: |
+          if compgen -G "$RUNNER_TEMP/qa-runs/run-*" > /dev/null; then echo "has=true" >> "$GITHUB_OUTPUT"; else echo "has=false" >> "$GITHUB_OUTPUT"; fi
+
       - name: Keep the raw run journal
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -149,7 +162,9 @@ jobs:
   # which is why an uploaded report is evidence for a reviewer and not proof.
   sync:
     needs: run
-    if: ${{ !cancelled() && needs.run.result != 'skipped' }}
+    # Only when the run left a journal. A scenario failure does (and still syncs); a job that failed earlier, such as
+    # validation or the download, did not, and its own failure is the one to read, not a missing-artifact error here.
+    if: ${{ !cancelled() && needs.run.outputs.has_journal == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # GITHUB_TOKEN reads only; the upload is made with QA_SYNC_TOKEN, see IDENTITY in the header.
@@ -164,7 +179,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Frogbyte-io/release-qa
-          ref: main
+          # The exact commit the run job used, not a moving branch: this job holds a user's token.
+          ref: ${{ needs.run.outputs.tool_sha }}
           path: release-qa
           persist-credentials: false
       - uses: actions/setup-node@v4

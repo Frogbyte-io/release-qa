@@ -5,6 +5,7 @@ import { evaluatePullRequest, type GateApi } from '../github/pull-request-gate.t
 import { syncRun } from '../github/sync.ts';
 import { GhTransport } from '../github/transport.ts';
 import type { Candidate } from '../model/candidate.ts';
+import { sha256Of } from '../util/sha256.ts';
 import { reportForSync } from './run.ts';
 
 /** Everything these commands read from or write to GitHub. The default is the signed-in `gh` (or `GH_TOKEN`). */
@@ -46,6 +47,8 @@ async function activeCandidate(target: Target, api: CiApi, deps: CiDeps): Promis
   const { candidate, candidateId, candidateReleaseId } = evaluated.value;
   if (candidate === undefined || candidateId === undefined || candidateReleaseId === undefined) return { ok: false, error: `${target.repository}#${target.pullRequest} has no active candidate` };
   if (candidateId !== target.candidateId) return { ok: false, error: `the active candidate is ${candidateId}, not ${target.candidateId}; it was replaced after it was reviewed` };
+  // The gate can pass for a candidate prepared from an older commit; the artifact and report would then be stale.
+  if (candidate.sourceSha !== target.head) return { ok: false, error: `candidate ${candidate.id} was prepared for ${candidate.sourceSha}, not ${target.head}; it is stale` };
   return { ok: true, candidate, releaseId: candidateReleaseId };
 }
 
@@ -64,6 +67,14 @@ export async function runDownloadCandidate(input: Target & { profile: string; ou
     const artifact = candidate.artifacts.find((item) => item.profile === input.profile);
     if (artifact === undefined) return { ok: false, error: `candidate ${candidate.id} has no artifact for profile ${input.profile}` };
     if (await exists(join(out, MANIFEST))) return { ok: false, error: `${join(out, MANIFEST)} already exists; it is not replaced` };
+
+    // A crash after the verified file was linked and before the manifest was written leaves the file alone. It is removed
+    // only if it is exactly the candidate's file; any other file of that name is somebody's, and is never replaced.
+    const leftover = join(out, artifact.name);
+    if (await exists(leftover)) {
+      if (await sha256Of(leftover).catch(() => undefined) !== artifact.sha256) return { ok: false, error: `${leftover} already exists and is not the candidate's file; it is not replaced` };
+      await rm(leftover, { force: true });
+    }
 
     const downloaded = await (deps.download ?? downloadCandidate)(candidate, input.profile, out, api);
     if (!downloaded.ok) return downloaded;

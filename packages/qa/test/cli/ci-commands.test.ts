@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
+import { GhTransport } from '../../src/github/transport.ts';
 import { parseArgs } from '../../src/cli/args.ts';
 import type { CiApi } from '../../src/cli/ci-commands.ts';
 import { EXIT, main } from '../../src/cli/main.ts';
@@ -175,6 +176,37 @@ describe('download-candidate', () => {
     expect(await readdir(dir)).toEqual([]);
   });
 
+  test('a candidate prepared for another commit than the reviewed head is refused, though the gate passed', async () => {
+    const dir = await makeDir();
+    const downloaded: string[] = [];
+    for (const [argvs, name] of [[argv('candidate'), 'download'], [['sync-run', ...target, '--run', RUN_ID], 'sync']] as const) {
+      const out = io();
+      const stale = evaluated({ candidate: { ...active, sourceSha: SHA1.base } });
+      expect(await main([...argvs], out.sink, () => dir, undefined, { api: api(bytes, downloaded), evaluate: stale }), name).toBe(EXIT.infrastructure);
+      expect(out.error.join(' ')).toContain('is stale');
+    }
+    expect(downloaded).toEqual([]);
+  });
+
+  test('a verified file left by a crash before the manifest was written is replaced on retry', async () => {
+    const dir = await makeDir();
+    await mkdir(join(dir, 'candidate'));
+    await writeFile(join(dir, 'candidate', 'smoke_amd64.deb'), bytes);
+    const out = io();
+    expect(await main(argv('candidate'), out.sink, () => dir, undefined, { api: api(bytes), evaluate: evaluated() })).toBe(EXIT.ok);
+    expect((await readdir(join(dir, 'candidate'))).sort()).toEqual(['candidate.json', 'smoke_amd64.deb']);
+  });
+
+  test('a different file of the same name is never replaced', async () => {
+    const dir = await makeDir();
+    await mkdir(join(dir, 'candidate'));
+    await writeFile(join(dir, 'candidate', 'smoke_amd64.deb'), 'somebody else');
+    const out = io();
+    expect(await main(argv('candidate'), out.sink, () => dir, undefined, { api: api(bytes), evaluate: evaluated() })).toBe(EXIT.infrastructure);
+    expect(out.error.join(' ')).toContain('not the candidate');
+    expect(await readFile(join(dir, 'candidate', 'smoke_amd64.deb'), 'utf8')).toBe('somebody else');
+  });
+
   test('an existing manifest is not replaced', async () => {
     const dir = await makeDir();
     await mkdir(join(dir, 'candidate'));
@@ -295,13 +327,23 @@ describe('sync-run', () => {
     expect(api.assets).toEqual([]);
   });
 
-  test('output never contains the token from the environment', async () => {
+  test('output never contains the token, even when the real transport fails with it in its own stderr', async () => {
+    // A stand-in for `gh` that fails the way a rejected call does, printing the token it was given. The real GhTransport
+    // must classify that, never pass it on.
+    const dir = await makeDir();
+    const fakeGh = join(dir, 'gh.mjs');
+    await writeFile(fakeGh, "console.error('HTTP 401 bad credentials for ' + process.env.GH_TOKEN); process.exit(1);\n");
     const previous = process.env.GH_TOKEN;
     process.env.GH_TOKEN = 'ghp_sentinel_token_value';
     try {
-      const out = io();
-      await main(argv(await makeRun(), ['--json']), out.sink, () => '.', undefined, { api: new MemoryApi() as unknown as CiApi, evaluate: evaluated() });
-      expect([...out.log, ...out.error].join('\n')).not.toContain('ghp_sentinel_token_value');
+      const transport = new GhTransport(process.execPath, [fakeGh]) as unknown as CiApi;
+      const sync = io();
+      expect(await main(argv(await makeRun(), ['--json']), sync.sink, () => '.', undefined, { api: transport, evaluate: evaluated() })).toBe(EXIT.infrastructure);
+      const download = io();
+      expect(await main(['download-candidate', ...target, '--profile', 'linux', '--out', 'c', '--json'], download.sink, () => dir, undefined, { api: transport, evaluate: evaluated() })).toBe(EXIT.infrastructure);
+      const text = [...sync.log, ...sync.error, ...download.log, ...download.error].join('\n');
+      expect(text).toContain('logged-out');
+      expect(text).not.toContain('ghp_sentinel_token_value');
     } finally {
       if (previous === undefined) delete process.env.GH_TOKEN;
       else process.env.GH_TOKEN = previous;
