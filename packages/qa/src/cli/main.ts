@@ -144,6 +144,7 @@ export async function main(
         reportError(io, command.json, result.error);
         return EXIT.infrastructure;
       }
+      if (result.notice !== undefined && !command.json) io.error(`note: ${result.notice}`);
       io.log(command.json ? JSON.stringify(result) : `synced run ${result.runId} to candidate ${result.candidateId} (release ${result.releaseId}) as ${result.actor}: ${result.uploaded} file(s) uploaded`);
       return EXIT.ok;
     }

@@ -27,7 +27,8 @@ export interface SyncRunInput {
   report: Report;
   api: SyncApi;
 }
-export type SyncRunResult = { ok: true; reportId: string; uploaded: number } | { ok: false; error: string };
+/** `notice` is set when the upload is complete but something optional did not happen; it is never a reason to retry. */
+export type SyncRunResult = { ok: true; reportId: string; uploaded: number; notice?: string } | { ok: false; error: string };
 
 export interface CandidateProgress {
   candidateId: string;
@@ -129,6 +130,12 @@ export async function syncRun(input: SyncRunInput): Promise<SyncRunResult> {
       previous = ack.id;
     }
     const dispatched = await input.api.dispatchReconciliation(input.repository, input.releaseId);
+    // Reconciliation only rebuilds a summary; the merge gate reads the uploaded report itself. A repository that has no
+    // qa-reconcile.yml (GitHub answers 404 to the dispatch) has nothing to notify, and retrying would never change that, so
+    // the verified upload is reported as done. Any other failure may be temporary and is still a reason to retry.
+    if (!dispatched.ok && dispatched.reason === 'not-found') {
+      return { ok: true, reportId: input.report.id, uploaded: uploaded.length + 1, notice: `${input.repository} has no qa-reconcile.yml workflow, so no reconciliation summary was requested; the upload itself is complete and verified` };
+    }
     if (!dispatched.ok) return { ok: false, error: `upload completed; reconciliation dispatch failed and should be retried: ${dispatched.reason}` };
     return { ok: true, reportId: input.report.id, uploaded: uploaded.length + 1 };
   } catch {

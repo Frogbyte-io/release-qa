@@ -170,7 +170,7 @@ void (primary ? app.whenReady() : new Promise<never>(() => undefined)).then(() =
   if (capture !== undefined && !app.isPackaged) {
     window.webContents.once('did-finish-load', () => {
       import('./capture.ts')
-        .then(({ captureViews }) => captureViews(window, capture, process.env.RELEASE_QA_CAPTURE_PREFIX ?? 'window'))
+        .then(({ captureViews }) => captureViews(window, capture, process.env.RELEASE_QA_CAPTURE_PREFIX ?? 'window', process.env.RELEASE_QA_CAPTURE_OPEN === undefined ? {} : { open: process.env.RELEASE_QA_CAPTURE_OPEN }))
         .then(() => app.exit(0), (error: unknown) => { console.error('capture failed:', error); app.exit(1); });
     });
   }

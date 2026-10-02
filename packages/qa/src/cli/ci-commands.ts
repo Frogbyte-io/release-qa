@@ -31,7 +31,7 @@ export type DownloadResult =
   | { ok: false; error: string };
 
 export type SyncResult =
-  | { ok: true; candidateId: string; runId: string; releaseId: number; actor: string; uploaded: number }
+  | { ok: true; candidateId: string; runId: string; releaseId: number; actor: string; uploaded: number; notice?: string }
   | { ok: false; error: string };
 
 const MANIFEST = 'candidate.json';
@@ -125,7 +125,7 @@ export async function runSyncRun(input: Target & { runId: string; stateDir: stri
 
     const synced = await (deps.sync ?? syncRun)({ repository: input.repository, releaseId, runId: input.runId, runDirectory: report.runDirectory, report: report.report, api });
     if (!synced.ok) return { ok: false, error: `${synced.error}; local results are kept and syncing again is safe` };
-    return { ok: true, candidateId: candidate.id, runId: input.runId, releaseId, actor: identity.value, uploaded: synced.uploaded };
+    return { ok: true, candidateId: candidate.id, runId: input.runId, releaseId, actor: identity.value, uploaded: synced.uploaded, ...(synced.notice === undefined ? {} : { notice: synced.notice }) };
   } catch (error) {
     return { ok: false, error: `could not sync the run: ${error instanceof Error ? error.message : String(error)}` };
   }

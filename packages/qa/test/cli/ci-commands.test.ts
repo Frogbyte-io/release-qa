@@ -249,7 +249,8 @@ describe('sync-run', () => {
       return { ok: true as const, value: asset };
     }
     async currentUser() { return this.login === undefined ? { ok: false as const, reason: 'missing-scope' } : { ok: true as const, value: this.login }; }
-    async dispatchReconciliation() { return { ok: true as const, value: true as const }; }
+    dispatchFailure: string | undefined;
+    async dispatchReconciliation() { return this.dispatchFailure === undefined ? { ok: true as const, value: true as const } : { ok: false as const, reason: this.dispatchFailure }; }
   }
 
   /** A state directory holding one finished run of the active candidate, as `run` leaves it. */
@@ -289,6 +290,19 @@ describe('sync-run', () => {
     const out = io();
     expect(await main(argv(state), out.sink, () => '.', undefined, { api: new MemoryApi() as unknown as CiApi, evaluate: evaluated() })).toBe(EXIT.ok);
     expect(out.log[0]).toContain(`synced run ${RUN_ID} to candidate cand-0001`);
+  });
+
+  test('a repository without a reconcile workflow is exit 0, with a note on stderr and in --json', async () => {
+    const state = await makeRun();
+    const api = new MemoryApi();
+    api.dispatchFailure = 'not-found';
+    const out = io();
+    expect(await main(argv(state), out.sink, () => '.', undefined, { api: api as unknown as CiApi, evaluate: evaluated() })).toBe(EXIT.ok);
+    expect(out.error.join(' ')).toContain('has no qa-reconcile.yml workflow');
+    expect(out.log[0]).toContain(`synced run ${RUN_ID}`);
+    const json = io();
+    expect(await main(argv(state, ['--json']), json.sink, () => '.', undefined, { api: api as unknown as CiApi, evaluate: evaluated() })).toBe(EXIT.ok);
+    expect(JSON.parse(json.log[0]!)).toMatchObject({ ok: true, notice: expect.stringContaining('qa-reconcile.yml') });
   });
 
   test('an upload that fails is exit 3 with an honest message, and nothing is acknowledged', async () => {
