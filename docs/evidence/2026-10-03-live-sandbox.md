@@ -93,16 +93,34 @@ published releases with "QA recorded") and pull request #27.
 - Not covered: read-only account, many repositories, expired sign-in, SSO. The first live capture took 89 s end to end for one
   repository with one pull request.
 
-## E. Linux run through GitHub: NOT DONE
+## E. Linux run through GitHub: RUN PROVEN, SYNC WAITING FOR THE TOKEN
 
-The sandbox's `qa/project.json` has no `workflows.run`, and there is no `qa-run.yml` on its default branch (`game-ci.yml`,
-`qa-gate.yml`, `qa-prepare.yml`, `qa-publish.yml`, `qa-submit.yml` only). The template
-`examples/tauri-smoke/.github/workflows/qa-run.yml` uploads results with a repository secret `QA_SYNC_TOKEN`, so adding it
-needs a secret (a token of a user with write access) that does not exist and that I may not create, and a `workflows.run` entry
-in the sandbox's `qa/project.json` through a merged sandbox pull request. To set it up someone needs to: create
-`QA_SYNC_TOKEN` in the sandbox, add the workflow and `workflows.run`, merge that, and decide which suite it runs (the sandbox
-has none, so a suite with Linux requirements must be added too; `linux` currently has no requirement).
-The `qa-reconcile.yml` the tool dispatches after a sync is also missing there (see bug 1).
+At first the sandbox had no `workflows.run`, no `qa-run.yml` and no Linux requirement. Sandbox PR #28 (merged as
+`e318101`) added:
+- an automated `linux/persistence` requirement (required by the policy), suite `release` and its scenario: the candidate's
+  verified `.deb` is unpacked with `dpkg-deb -x`, a round of the game is played under Xvfb, the best score is checked on
+  disk, the app is restarted and must show it again;
+- `.github/workflows/qa-run.yml`, adapted from the example, with the tool pinned to `ee8f706`.
+
+Review of that PR found two faults that were also in the example, fixed in both:
+1. The `run-name` was unquoted, so YAML read everything from ` #` on as a comment and the title lost what the dashboard
+   looks a run up by. It is quoted now; the live run's title came through whole.
+2. A draft release's assets are visible only to push-capable tokens, so a `contents: read` GITHUB_TOKEN would not reach
+   the candidate. A separate `download` job now holds `contents: write`, runs only the pinned tool (the pull request is
+   never checked out there) and hands the verified file on as an artifact; the `run` job stays read-only and re-checks the
+   SHA-256. A `contents: read` download was not tried.
+
+Live run, against sandbox release PR #29 (0.1.2, candidate `cand-37150948200-1` from prepare run 37150948200): qa-run
+37151109740, title `qa-run PR #29 cand-37150948200-1 linux/release f05c9c9…`.
+- `download`: success; the `.deb` verified against the candidate record.
+- `run`: success; the re-check matched (`70a0ccbc…`), `linux/persistence: passed`, cleanup ok. The app started on the
+  runner with `--no-sandbox`, as a normal user.
+- `sync`: failed as expected, because `QA_SYNC_TOKEN` does not exist yet. The error read
+  `cannot read pull request: network-error`, which hid the cause; `gh`'s "set the GH_TOKEN environment variable" (and
+  "gh auth login") are now classified as `logged-out`.
+
+Still to prove once the user has created `QA_SYNC_TOKEN` (a fine-grained token for the sandbox only): the upload, and that
+the gate counts it. The `qa-reconcile.yml` the tool dispatches after a sync is missing in the sandbox (see bug 1).
 
 ## F. Packaged app: NOT DONE
 
