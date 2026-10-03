@@ -170,6 +170,22 @@ console.log(JSON.stringify({ id: 17 }));`);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  test('only a 404 of the reconcile dispatch itself is a missing workflow, a failed repository lookup is not', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-gh-reconcile-'));
+    try {
+      const lookup404 = join(dir, 'lookup-404.mjs');
+      await writeFile(lookup404, `console.error('HTTP 404: Not Found'); process.exit(1);`);
+      expect(await new GhTransport(process.execPath, [lookup404]).dispatchReconciliation('team/sample', 7)).toEqual({ ok: false, reason: 'repository-lookup-failed' });
+      const lookup403 = join(dir, 'lookup-403.mjs');
+      await writeFile(lookup403, `console.error('HTTP 403: permission denied'); process.exit(1);`);
+      expect(await new GhTransport(process.execPath, [lookup403]).dispatchReconciliation('team/sample', 7)).toEqual({ ok: false, reason: 'insufficient-role' });
+      const dispatch404 = join(dir, 'dispatch-404.mjs');
+      await writeFile(dispatch404, `if (process.argv.includes('POST')) { for await (const chunk of process.stdin) void chunk; console.error('HTTP 404: Not Found'); process.exit(1); }
+console.log(JSON.stringify({ default_branch: 'main' }));`);
+      expect(await new GhTransport(process.execPath, [dispatch404]).dispatchReconciliation('team/sample', 7)).toEqual({ ok: false, reason: 'workflow-not-found' });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   test('classifies a rejected write without exposing its body', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'qa-gh-write-'));
     try {

@@ -113,22 +113,30 @@ electron-builder or similar). Nothing to build; the unpackaged window in D is th
 
 1. **`sync-run` failed (exit 3) after a complete, verified upload when the repository has no `qa-reconcile.yml`.** The
    shared `syncRun` ends by dispatching that workflow and treated any failure, including 404, as "retry". Retrying could never
-   succeed, and the gate does not need reconciliation. Fixed in `packages/qa/src/github/sync.ts`: a `not-found` from the
-   dispatch now returns success with a `notice`, the CLI prints it on stderr (and in `--json`), and every other dispatch failure
-   still reports an error to retry. Tests: `sync.test.ts` (two) and `ci-commands.test.ts` (one). The dashboard's manual
+   succeed, and the gate does not need reconciliation. Fixed in `packages/qa/src/github/sync.ts` and `transport.ts`: a 404 to
+   the dispatch request itself (`workflow-not-found`; GitHub also answers 404 when the token cannot see the workflow) now
+   returns success with a `notice`, the CLI prints it on stderr (and in `--json`). A failed repository lookup before the
+   dispatch is `repository-lookup-failed` and, like every other dispatch failure, still reports an error to retry. Tests:
+   `sync.test.ts` (two), `candidate.test.ts` (the real `GhTransport` with a stand-in `gh`) and `ci-commands.test.ts` (one). The dashboard's manual
    upload uses the same function and benefits the same way.
 2. **Live capture photographed the Loading screen.** `captureViews` waited a fixed 1.2 s, enough for a fixture only, and always
    opened the first listed pull request. Fixed in `apps/desktop/src/main/capture.ts`: it waits for the loading line to clear
-   (180 s limit, then fails), and `RELEASE_QA_CAPTURE_OPEN=<repo>-<number>` picks the pull request; a missing one is an error
+   (180 s limit, then fails), a failed read fails the capture with its message instead of photographing it, and
+   `RELEASE_QA_CAPTURE_OPEN=<repo>-<number>` picks the pull request (empty counts as unset); a missing one is an error
    instead of a silent skip. Test: `apps/desktop/test/capture.spec.ts`.
+3. **`download-candidate` took the first artifact of the profile.** Windows candidates carry two (the installer and its
+   `.blockmap`), listed installer first, which is the only reason it worked. Fixed with `installableArtifact` in
+   `packages/qa/src/model/candidate.ts`, used by `download-candidate`, `downloadCandidate` and the dashboard's run: the
+   `.blockmap` is never chosen, and a profile left with zero or several installable files is refused as ambiguous. Tests:
+   `test/model/installable-artifact.test.ts` and `ci-commands.test.ts` (blockmap listed first; two installers).
 
 ## Observations that are not fixed
 
-- `download-candidate` takes the first artifact of the requested profile (`find`). Windows candidates now carry two (the
-  installer and its `.blockmap`), listed installer first, which is what made it work. The code does not select by file kind, so
-  an order change would download the blockmap; the manifest also names only that one file.
 - The `release-qa` commit status is refreshed only by pull-request events. After a sync it stays stale until the pull
-  request is edited (A.5). I did not check whether it also stays green after a new candidate replaces a passing one; that
+  request is edited (A.5). Checked in the code: `qa-reconcile.yml` does not refresh it either. It runs with
+  `contents: read` and `reconcile-cli.ts` only writes a step summary; the status is posted only by `gate-cli.ts` and
+  `gate-finalize.ts`. So a sync that should turn the status green needs the gate rerun (an edit, a push, or a re-run of
+  the gate workflow); the `sync-run` notice says so. I did not check whether it also stays green after a new candidate replaces a passing one; that
   needs the gate to rerun from `qa-prepare` or a sync, which is the consumer workflow's design.
 - The local disk (C:) was almost full (60 MB free at one point), so the first `run` failed cleanly with
   `ENOSPC ... copyfile` before anything ran (exit 3, run id announced). That was the machine, not the tool; scratch files were

@@ -6,6 +6,7 @@ import { canonical } from '../model/canonical.ts';
 import { eventDigest, type RunEvent } from '../runner/events.ts';
 import { appendEvent, readRun } from '../runner/journal.ts';
 import { parseReport } from '../model/result.ts';
+import { WORKFLOW_NOT_FOUND } from './transport.ts';
 import { parseSyncedEvidenceRecord, parseSyncedEventRecord, parseSyncedReportManifest, objectSha256, type SyncedObjectRef } from './reports.ts';
 
 export interface SyncAsset { id: number; name: string; uploader?: { login?: string }; state?: string; createdAt?: string; }
@@ -130,11 +131,12 @@ export async function syncRun(input: SyncRunInput): Promise<SyncRunResult> {
       previous = ack.id;
     }
     const dispatched = await input.api.dispatchReconciliation(input.repository, input.releaseId);
-    // Reconciliation only rebuilds a summary; the merge gate reads the uploaded report itself. A repository that has no
-    // qa-reconcile.yml (GitHub answers 404 to the dispatch) has nothing to notify, and retrying would never change that, so
-    // the verified upload is reported as done. Any other failure may be temporary and is still a reason to retry.
-    if (!dispatched.ok && dispatched.reason === 'not-found') {
-      return { ok: true, reportId: input.report.id, uploaded: uploaded.length + 1, notice: `${input.repository} has no qa-reconcile.yml workflow, so no reconciliation summary was requested; the upload itself is complete and verified` };
+    // Reconciliation only writes a step summary (reconcile-cli.ts); the merge gate reads the uploaded report itself, and the
+    // commit status is refreshed by the gate workflow on pull request events, not by this. A 404 to the dispatch itself
+    // (the workflow is missing, or the token cannot see it) will not change on retry, so the verified upload is reported as
+    // done with a note. Any other failure, including a failed repository lookup, may be temporary and is still retried.
+    if (!dispatched.ok && dispatched.reason === WORKFLOW_NOT_FOUND) {
+      return { ok: true, reportId: input.report.id, uploaded: uploaded.length + 1, notice: `qa-reconcile.yml was not found or is not accessible in ${input.repository}, so no reconciliation summary was requested. The upload itself is complete and verified. This does not refresh the pull request's release-qa status; that is updated by the repository's gate workflow when the pull request is next evaluated` };
     }
     if (!dispatched.ok) return { ok: false, error: `upload completed; reconciliation dispatch failed and should be retried: ${dispatched.reason}` };
     return { ok: true, reportId: input.report.id, uploaded: uploaded.length + 1 };

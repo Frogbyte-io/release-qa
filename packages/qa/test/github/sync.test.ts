@@ -88,15 +88,17 @@ describe('GitHub report synchronization', () => {
 
   test('a repository without a reconcile workflow still gets a complete, verified upload', async () => {
     const api = new MemoryApi();
-    api.dispatchFailure = 'not-found';
+    api.dispatchFailure = 'workflow-not-found';
     const result = await createRun(api, 'run-no-reconcile', 'tester-a', 'attempt-no-reconcile', 'windows/persistence');
-    expect(result).toMatchObject({ ok: true, notice: expect.stringContaining('no qa-reconcile.yml workflow') });
+    expect(result).toMatchObject({ ok: true, notice: expect.stringContaining('not found or is not accessible') });
     expect(api.assets.some((asset) => asset.name === 'qa-report-run-no-reconcile.json')).toBe(true);
     expect((await readRun(dirs.at(-1)!)).pending).toEqual([]);
   });
 
   test('any other reconcile dispatch failure is still reported so the upload is retried', async () => {
     const api = new MemoryApi();
+    api.dispatchFailure = 'repository-lookup-failed';
+    expect(await createRun(api, 'run-lookup', 'tester-a', 'attempt-lookup', 'windows/persistence')).toEqual({ ok: false, error: expect.stringContaining('should be retried: repository-lookup-failed') });
     api.dispatchFailure = 'HTTP 403';
     const result = await createRun(api, 'run-forbidden', 'tester-a', 'attempt-forbidden', 'windows/persistence');
     expect(result).toEqual({ ok: false, error: expect.stringContaining('reconciliation dispatch failed and should be retried: HTTP 403') });

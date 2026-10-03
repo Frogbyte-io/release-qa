@@ -15,8 +15,10 @@ export interface CaptureOptions {
 export async function waitForLoaded(window: Pick<BrowserWindow, 'webContents'>, timeoutMs: number, poll = 250): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const loading = await window.webContents.executeJavaScript(`document.querySelector('[data-test="loading"]') !== null`);
-    if (loading !== true) return;
+    // The failed line carries the read's own message; a capture of it would look like a view, so it is an error instead.
+    const page = await window.webContents.executeJavaScript(`(() => { const failed = document.querySelector('[data-test="failed"]'); return failed !== null ? { failed: failed.textContent ?? '' } : { loading: document.querySelector('[data-test="loading"]') !== null }; })()`) as { failed?: string; loading?: boolean };
+    if (page.failed !== undefined) throw new Error(`the dashboard failed to load: ${page.failed}`);
+    if (page.loading !== true) return;
     if (Date.now() >= deadline) throw new Error(`the dashboard was still loading after ${timeoutMs} ms`);
     await pause(poll);
   }

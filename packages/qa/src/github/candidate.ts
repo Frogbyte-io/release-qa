@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { link, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Candidate } from '../model/candidate.ts';
-import { parseCandidate } from '../model/candidate.ts';
+import { installableArtifact, parseCandidate } from '../model/candidate.ts';
 import { sha256Of } from '../util/sha256.ts';
 import { GhTransport, inspectGitHubAccess, type ApiResult, type GitHubApi } from './transport.ts';
 
@@ -171,8 +171,9 @@ const message = (error: unknown): string => error instanceof Error ? error.messa
 export async function downloadCandidate(candidate: Candidate, profile: string, directory: string, api: CandidateDownloadApi = new GhTransport()): Promise<DownloadCandidateResult> {
   const parsed = parseCandidate(candidate);
   if (!parsed.ok) return { ok: false, error: `invalid candidate: ${parsed.error.message}` };
-  const artifact = parsed.value.artifacts.find((item) => item.profile === profile);
-  if (artifact === undefined) return { ok: false, error: `candidate ${candidate.id} has no artifact for profile ${profile}` };
+  const chosen = installableArtifact(parsed.value, profile);
+  if (!chosen.ok) return { ok: false, error: chosen.error };
+  const artifact = chosen.artifact;
 
   try {
     const repository = await api.get(`repositories/${candidate.repositoryId}`);

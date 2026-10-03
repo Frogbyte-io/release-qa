@@ -162,6 +162,41 @@ describe('download-candidate', () => {
     expect(await readdir(dir)).toEqual([]);
   });
 
+  test('the installer is chosen, not the updater blockmap listed before it', async () => {
+    const dir = await makeDir();
+    const map = Buffer.from('updater metadata');
+    const mapDigest = createHash('sha256').update(map).digest('hex');
+    const both = candidate({
+      artifacts: [
+        { profile: 'linux', name: 'smoke_amd64.deb.blockmap', sha256: mapDigest, assetId: 103, actionsArtifactId: 202 },
+        { profile: 'linux', name: 'smoke_amd64.deb', sha256: digest, assetId: 102, actionsArtifactId: 202 },
+      ],
+    });
+    const records = { ...metadata(), 'repos/team/sample/releases/assets/103': { id: 103, name: 'smoke_amd64.deb.blockmap', state: 'uploaded', digest: `sha256:${mapDigest}` } };
+    const downloaded: string[] = [];
+    const fake: CiApi = { ...api(bytes, downloaded), get: async (path) => (Object.hasOwn(records, path) ? { ok: true, value: records[path as keyof typeof records] } : { ok: false, reason: 'not-found' }) };
+    const out = io();
+    expect(await main(argv('candidate', ['--json']), out.sink, () => dir, undefined, { api: fake, evaluate: evaluated({ candidate: both }) })).toBe(EXIT.ok);
+    expect(downloaded).toEqual(['repos/team/sample/releases/assets/102']);
+    expect((await readdir(join(dir, 'candidate'))).sort()).toEqual(['candidate.json', 'smoke_amd64.deb']);
+  });
+
+  test('a profile with two installable files is refused as ambiguous and nothing is downloaded', async () => {
+    const dir = await makeDir();
+    const two = candidate({
+      artifacts: [
+        { profile: 'linux', name: 'a.deb', sha256: digest, assetId: 102, actionsArtifactId: 202 },
+        { profile: 'linux', name: 'b.deb', sha256: digest, assetId: 103, actionsArtifactId: 202 },
+      ],
+    });
+    const downloaded: string[] = [];
+    const out = io();
+    expect(await main(argv('c'), out.sink, () => dir, undefined, { api: api(bytes, downloaded), evaluate: evaluated({ candidate: two }) })).toBe(EXIT.infrastructure);
+    expect(out.error.join(' ')).toContain('ambiguous');
+    expect(downloaded).toEqual([]);
+    expect(await readdir(dir)).toEqual([]);
+  });
+
   test('a pull request with no active candidate, a failed evaluation and a missing profile are refused', async () => {
     const dir = await makeDir();
     const none = io();
@@ -295,10 +330,10 @@ describe('sync-run', () => {
   test('a repository without a reconcile workflow is exit 0, with a note on stderr and in --json', async () => {
     const state = await makeRun();
     const api = new MemoryApi();
-    api.dispatchFailure = 'not-found';
+    api.dispatchFailure = 'workflow-not-found';
     const out = io();
     expect(await main(argv(state), out.sink, () => '.', undefined, { api: api as unknown as CiApi, evaluate: evaluated() })).toBe(EXIT.ok);
-    expect(out.error.join(' ')).toContain('has no qa-reconcile.yml workflow');
+    expect(out.error.join(' ')).toContain('was not found or is not accessible');
     expect(out.log[0]).toContain(`synced run ${RUN_ID}`);
     const json = io();
     expect(await main(argv(state, ['--json']), json.sink, () => '.', undefined, { api: api as unknown as CiApi, evaluate: evaluated() })).toBe(EXIT.ok);

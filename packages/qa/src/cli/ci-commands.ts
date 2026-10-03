@@ -4,7 +4,7 @@ import { downloadCandidate, type CandidateDownloadApi } from '../github/candidat
 import { evaluatePullRequest, type GateApi } from '../github/pull-request-gate.ts';
 import { syncRun } from '../github/sync.ts';
 import { GhTransport } from '../github/transport.ts';
-import type { Candidate } from '../model/candidate.ts';
+import { installableArtifact, type Candidate } from '../model/candidate.ts';
 import { sha256Of } from '../util/sha256.ts';
 import { reportForSync } from './run.ts';
 
@@ -64,8 +64,9 @@ export async function runDownloadCandidate(input: Target & { profile: string; ou
     const active = await activeCandidate(input, api, deps);
     if (!active.ok) return active;
     const { candidate } = active;
-    const artifact = candidate.artifacts.find((item) => item.profile === input.profile);
-    if (artifact === undefined) return { ok: false, error: `candidate ${candidate.id} has no artifact for profile ${input.profile}` };
+    const chosen = installableArtifact(candidate, input.profile);
+    if (!chosen.ok) return chosen;
+    const artifact = chosen.artifact;
     if (await exists(join(out, MANIFEST))) return { ok: false, error: `${join(out, MANIFEST)} already exists; it is not replaced` };
 
     // A crash after the verified file was linked and before the manifest was written leaves the file alone. It is removed
