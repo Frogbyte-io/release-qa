@@ -170,6 +170,18 @@ console.log(JSON.stringify({ id: 17 }));`);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  test('gh with no token at all is logged out, not a network error, in a workflow and locally', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'qa-gh-no-token-'));
+    try {
+      const inActions = join(dir, 'actions.mjs');
+      await writeFile(inActions, `console.error('gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable. Example:'); process.exit(4);`);
+      expect(await new GhTransport(process.execPath, [inActions]).get('repos/team/sample/pulls/7')).toEqual({ ok: false, reason: 'logged-out' });
+      const local = join(dir, 'local.mjs');
+      await writeFile(local, `console.error('To get started with GitHub CLI, please run:  gh auth login'); process.exit(4);`);
+      expect(await new GhTransport(process.execPath, [local]).get('repos/team/sample/pulls/7')).toEqual({ ok: false, reason: 'logged-out' });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   test('only a 404 of the reconcile dispatch itself is a missing workflow, a failed repository lookup is not', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'qa-gh-reconcile-'));
     try {

@@ -165,7 +165,8 @@ export class GhTransport implements GitHubApi {
 function classifyGhError(stderr: string): AccessProblem {
   if (/SAML|SSO|organization.*(OAuth|access)|organization.*(forbid|restrict)/i.test(stderr)) return 'organization-rejected';
   if (/scope|X-OAuth-Scopes|Resource not accessible by integration/i.test(stderr)) return 'missing-scope';
-  if (/not logged|not authenticated|HTTP 401|authentication required/i.test(stderr)) return 'logged-out';
+  // gh with no token at all: in a workflow it asks for GH_TOKEN (an unset or empty secret), elsewhere for `gh auth login`.
+  if (/not logged|not authenticated|HTTP 401|authentication required|set the GH_TOKEN environment variable|gh auth login/i.test(stderr)) return 'logged-out';
   if (/HTTP 404|not found/i.test(stderr)) return 'not-found';
   if (/HTTP 403|permission|forbidden|must have.*access/i.test(stderr)) return 'insufficient-role';
   return 'network-error';
