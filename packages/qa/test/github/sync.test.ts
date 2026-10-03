@@ -36,7 +36,8 @@ class MemoryApi implements SyncApi {
     return { ok: true as const, value: asset };
   }
   async currentUser() { return { ok: true as const, value: this.actor }; }
-  async dispatchReconciliation() { return { ok: true as const, value: true as const }; }
+  dispatchFailure: string | undefined;
+  async dispatchReconciliation() { return this.dispatchFailure === undefined ? { ok: true as const, value: true as const } : { ok: false as const, reason: this.dispatchFailure }; }
 }
 
 async function createRun(api: MemoryApi, runId: string, actor: string, attemptId: string, requirement: RequirementKey, authenticatedAs = actor, evidence: string[] = [], duplicateAttempt = false) {
@@ -83,6 +84,24 @@ describe('GitHub report synchronization', () => {
     const third = await createRun(api, 'run-replay', 'tester-a', 'attempt-replay', 'windows/persistence');
     expect(third.ok).toBe(true);
     expect(api.assets.filter((asset) => asset.name.startsWith('qa-report-'))).toHaveLength(1);
+  });
+
+  test('a repository without a reconcile workflow still gets a complete, verified upload', async () => {
+    const api = new MemoryApi();
+    api.dispatchFailure = 'workflow-not-found';
+    const result = await createRun(api, 'run-no-reconcile', 'tester-a', 'attempt-no-reconcile', 'windows/persistence');
+    expect(result).toMatchObject({ ok: true, notice: expect.stringContaining('not found or is not accessible') });
+    expect(api.assets.some((asset) => asset.name === 'qa-report-run-no-reconcile.json')).toBe(true);
+    expect((await readRun(dirs.at(-1)!)).pending).toEqual([]);
+  });
+
+  test('any other reconcile dispatch failure is still reported so the upload is retried', async () => {
+    const api = new MemoryApi();
+    api.dispatchFailure = 'repository-lookup-failed';
+    expect(await createRun(api, 'run-lookup', 'tester-a', 'attempt-lookup', 'windows/persistence')).toEqual({ ok: false, error: expect.stringContaining('should be retried: repository-lookup-failed') });
+    api.dispatchFailure = 'HTTP 403';
+    const result = await createRun(api, 'run-forbidden', 'tester-a', 'attempt-forbidden', 'windows/persistence');
+    expect(result).toEqual({ ok: false, error: expect.stringContaining('reconciliation dispatch failed and should be retried: HTTP 403') });
   });
 
   test('report actor cannot differ from authenticated uploader', async () => {

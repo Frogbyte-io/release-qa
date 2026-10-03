@@ -22,7 +22,7 @@ export { discoverProjects, type Discovery, type DiscoveredProject, type Reposito
 export { GhTransport, inspectGitHubAccess, type AccessProblem, type ApiResult, type GitHubApi } from './github/transport.ts';
 export { profileOf } from './model/requirement.ts';
 export { mergeReleasePr, type MergeApi, type MergeResult } from './github/publish.ts';
-export { parseCandidate, type Artifact, type Candidate } from './model/candidate.ts';
+export { installableArtifact, parseCandidate, type Artifact, type Candidate } from './model/candidate.ts';
 export { parseException, type Exception } from './model/exception.ts';
 export { parseLocalCandidate, type LocalArtifact, type LocalCandidate } from './model/local-candidate.ts';
 export { parseProject, type EnvironmentProfile, type Project, type Suite } from './model/project.ts';
