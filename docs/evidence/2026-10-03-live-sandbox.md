@@ -4,7 +4,8 @@ Date: 2026-10-03 (the runs below happened between 23:14 UTC on 2026-10-02 and 23
 Machine: the maintainer's Windows 11 laptop, signed in with `gh` as `Andreas-Froyland` (admin on the sandbox; token scopes
 `gist`, `read:org`, `repo`, `workflow`). Code under test: `origin/main` at `33172e3` plus the fixes in this branch.
 Only `Frogbyte-io/release-qa-gate-sandbox` was written to. No ruleset, setting, secret or branch protection was changed and
-nothing was merged.
+nothing was merged in A to D. Section E was added later the same day: for it, sandbox PR #28 (the Linux run) was merged
+with the maintainer's go-ahead, and the maintainer creates the `QA_SYNC_TOKEN` secret themselves.
 
 Everything below was observed; where something was not, it says NOT DONE and why.
 

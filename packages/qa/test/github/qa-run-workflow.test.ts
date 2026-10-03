@@ -108,6 +108,15 @@ describe('the example run workflow', () => {
     expect(job('run')).toMatch(/^ {2}run:\n {4}needs: download\n/);
   });
 
+  test('the tool and every action are pinned to a full commit SHA, since one job can write', () => {
+    const tool = job('download').split('\n');
+    const toolRef = tool[tool.findIndex((line) => line.includes('repository: Frogbyte-io/release-qa')) + 1]!;
+    expect(toolRef).toMatch(/^ {10}ref: [0-9a-f]{40}$/);
+    const uses = lines.filter((line) => /^\s*(?:- )?uses: /.test(line));
+    expect(uses.length).toBeGreaterThan(0);
+    for (const line of uses) expect(line).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d/);
+  });
+
   test('the run job re-checks the verified file it was handed before the suite runs', () => {
     const run = job('run');
     expect(run.indexOf('Re-check the candidate file against its manifest')).toBeGreaterThan(run.indexOf('actions/download-artifact@'));

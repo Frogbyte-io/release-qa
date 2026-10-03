@@ -100,18 +100,19 @@ jobs:
           head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
           [ "$head" = "$EXPECTED_HEAD" ] || { echo "PR head is now $head, not $EXPECTED_HEAD"; exit 1; }
 
-      # The tool itself, pinned to a commit of your choosing. Replace the ref with a reviewed SHA; the other jobs check out
+      # The tool itself, pinned to a reviewed commit, never a branch: this job holds a token that can write. Move the pin by
+      # reviewing a newer commit of Frogbyte-io/release-qa and committing its SHA here; the other jobs check out
       # exactly the commit this job records.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Frogbyte-io/release-qa
-          ref: main
+          ref: ee8f7060b9e2f70e66534939f91c5052425b97d8
           path: release-qa
           persist-credentials: false
       - name: Record the tool commit, so the other jobs run exactly the same code
         id: tool
         run: echo "sha=$(git -C release-qa rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: release-qa/.node-version
       - run: npm ci
@@ -125,7 +126,7 @@ jobs:
           node release-qa/packages/qa/src/cli/main.ts download-candidate \
             --repo "$GITHUB_REPOSITORY" --pr "$PR" --head "$EXPECTED_HEAD" --candidate "$CANDIDATE" \
             --profile "$PROFILE" --out "$RUNNER_TEMP/candidate" --json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: qa-candidate-${{ inputs.profile }}-${{ inputs.suite }}
           path: ${{ runner.temp }}/candidate
@@ -147,19 +148,19 @@ jobs:
       PROFILE: ${{ inputs.profile }}
       SUITE: ${{ inputs.suite }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Frogbyte-io/release-qa
           ref: ${{ needs.download.outputs.tool_sha }}
           path: release-qa
           persist-credentials: false
       # The tests and app under test, at exactly the head that was reviewed.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.expected_head }}
           path: subject
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: release-qa/.node-version
       - run: npm ci
@@ -167,7 +168,7 @@ jobs:
 
       # The verified candidate from the download job, checked again here before any of the pull request's code runs.
       # The manifest's path is relative to the manifest, so the other runner's directory does not matter.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: qa-candidate-${{ inputs.profile }}-${{ inputs.suite }}
           path: ${{ runner.temp }}/candidate
@@ -208,7 +209,7 @@ jobs:
 
       - name: Keep the raw run journal
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: qa-run-${{ inputs.profile }}-${{ inputs.suite }}
           path: ${{ runner.temp }}/qa-runs
@@ -235,19 +236,19 @@ jobs:
       CANDIDATE: ${{ inputs.candidate_id }}
       EXPECTED_HEAD: ${{ inputs.expected_head }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Frogbyte-io/release-qa
           # The exact commit the other jobs used, not a moving branch: this job holds a user's token.
           ref: ${{ needs.download.outputs.tool_sha }}
           path: release-qa
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: release-qa/.node-version
       - run: npm ci
         working-directory: release-qa
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: qa-run-${{ inputs.profile }}-${{ inputs.suite }}
           path: ${{ runner.temp }}/qa-runs
