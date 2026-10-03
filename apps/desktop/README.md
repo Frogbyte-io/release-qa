@@ -12,6 +12,8 @@ npm start           # build, then open the window (needs `gh auth login`)
 npm test            # window and privileged-side tests, with a fixture GitHub transport
 npm run typecheck   # two programs: Node (main, preload, shared) and DOM (renderer)
 npm run capture     # after a build: window pixels for the recorded before/after snapshots -> evidence/
+                    # live: with RELEASE_QA_CAPTURE_DIR (and RELEASE_QA_CAPTURE_OPEN=<repo>-<pr number>) set and no fixture,
+                    # `electron .` waits for the real read to finish and captures it
 ```
 
 ## How it is split
@@ -131,26 +133,32 @@ The Run page (from the release view) runs one suite for one environment against 
 
 ## What is not proven
 
-- **Running a suite was proven only with a fake consumer on the development machine.** The tests run the real shared
-  runner against a scratch checkout whose scenarios do nothing. No real packaged Electron app has been installed, launched
-  and driven from the Run page, and the folder dialog, the single-instance lock, keeping the app open during a run, and
-  the bundled consumer worker (`consumer-worker.mjs`) in a built app have not been exercised.
-- **Sync and resume have not run against live GitHub.** The upload goes through the shared `syncRun` with a fake transport in
-  tests; a real draft release, permissions and network failure mid-upload are unproven.
+- **Running a suite from the window was proven only with a fake consumer on the development machine.** The tests run the real
+  shared runner against a scratch checkout whose scenarios do nothing. The CLI `run` has since run a scratch consumer
+  against a real candidate downloaded from the sandbox (see
+  [the live sandbox evidence](../../docs/evidence/2026-10-03-live-sandbox.md)), but its scenarios only inspected the installer
+  file: no real packaged Electron app has been installed, launched and driven, and nothing was started from the Run page. The
+  folder dialog, the single-instance lock, keeping the app open during a run, and the bundled consumer worker
+  (`consumer-worker.mjs`) in a built app have not been exercised. The sandbox declares no suite, so the Run page there offers none.
+- **Sync and resume were proven live from the CLI, not from the window.** `sync-run` uploaded a local run to the sandbox's draft
+  release, the gate accepted it, and a run killed mid-scenario was resumed and synced. The Run page's own Resume and Sync
+  buttons, a network failure mid-upload and a second tester contributing a checkpoint have not run live.
 - **Nobody has used it.** Whether the workflow is usable without manual GitHub edits or a hosted service (the issue's
   exit criterion) needs a person doing a real release.
-- **Not run against live GitHub.** Every test and the captured window use recorded data or a fixture transport. The
-  privileged side is the same code the CLI gate runs, but a live sign-in, a real repository listing and a large account
-  have not been exercised.
+- **Read against live GitHub for one small account only.** The unpackaged window was started without a fixture and showed the
+  sandbox repository and its pull request with the readiness the shared evaluator returned, blocked and then passed
+  (`docs/evidence/live-sandbox/`). That was one repository, one open pull request and an admin account. A read-only account, a
+  large account, an expired sign-in and SSO were not exercised live. The captured screenshots in `evidence/` are still recorded snapshots.
 - **"Last synchronization time"** is when the dashboard read GitHub (`loadedAt`). The evaluator does not return when
   reports were uploaded, so no report-level sync time is shown.
 - **Candidate details** are the id and draft release number the gate returns. Artifacts appear only in publication mode of
   the evaluator, which this read view does not use.
 - **`.vue` files are not type-checked.** `tsc` handles the `.ts` files and the tests exercise the components; `vue-tsc`
   has not been tried against TypeScript 7.
-- **Load time.** Projects load three at a time and each pull request runs the gate's several `gh` calls, so an account with many open pull requests waits on the Loading screen; nothing is shown until the read finishes. A release-intent pre-check or streaming partial results would help; neither is done.
-- **Actions have not run against live GitHub.** `prepareCandidate`, `mergeReleasePr`, the ordinary merge and the refusal
-  messages are tested with fakes. For an ordinary pull request the merge method list is not restricted to what the
+- **Load time.** Projects load three at a time and each pull request runs the gate's several `gh` calls, so an account with many open pull requests waits on the Loading screen; nothing is shown until the read finishes. A release-intent pre-check or streaming partial results would help; neither is done. Live, the first capture of a single repository with one open pull request took 89 seconds end to end (the Loading screen is what the first capture attempt recorded, which is why `capture` now waits for it to clear).
+- **Most actions have not run against live GitHub.** `prepareCandidate` ran live twice (library call, not the window's
+  button): it dispatched `qa-prepare.yml`, the run was verified, and a candidate was selected and then replaced. `mergeReleasePr`,
+  the ordinary merge and the refusal messages are tested with fakes; nothing was merged in the sandbox. For an ordinary pull request the merge method list is not restricted to what the
   repository allows; a disallowed one fails with GitHub's refusal, which the transport does not detail.
 - **Manual checks have not run against live GitHub or in the real window.** Tests use a fake release (assets, permissions,
   two signed-in users) with the real shared recording, sync and claim code, and the component tests use a fake bridge. The
@@ -165,8 +173,9 @@ The Run page (from the release view) runs one suite for one environment against 
   failure and an acknowledgement, and neither has a screen. Nor can a saved result be deleted or edited.
 - **Claims are read from GitHub with a full progress load** (every report and claim asset), which is slow on a candidate with
   many reports, and each open of the view repeats it.
-- **If reconciliation dispatch fails after a successful upload**, the result is marked synced (its acknowledgements are saved)
-  while the upload reports an error to retry; the window then no longer offers Upload for it.
+- **If reconciliation dispatch fails after a successful upload** (other than 404), the result is marked synced (its acknowledgements are saved)
+  while the upload reports an error to retry; the window then no longer offers Upload for it. A 404 (the repository has
+  no `qa-reconcile.yml`, as the sandbox does not) is reported as a note and the upload counts as complete, found live.
 - **Linux runs have never touched a live GitHub runner.** `dispatchSuiteRun`, `remoteRunStatus` and the runs list are
   tested with fake API responses shaped after GitHub's documented fields. Not observed: the real `run-name`/`display_title`
   after a dispatch, real job `status`/`runner_id`/`labels` values in each state (`waiting` for environment approval,
@@ -174,7 +183,9 @@ The Run page (from the release view) runs one suite for one environment against 
 - **The example workflow has never run.** `examples/tauri-smoke/.github/workflows/qa-run.yml` is a template that has not
   executed on a GitHub runner. Its two formerly missing steps now call the tool: `download-candidate` fetches the
   candidate's file by asset id, checks its SHA-256 and writes the manifest `run --candidate` reads, and `sync-run` uploads
-  a run's report, events and evidence to the candidate's draft release. Both are tested only against fake GitHub responses.
+  a run's report, events and evidence to the candidate's draft release. Both were run live from a Windows laptop against
+  the sandbox (hash verified, report accepted by the gate); the workflow that wraps them has still never run. The sandbox
+  has no `workflows.run` and no `QA_SYNC_TOKEN`, so a GitHub-hosted Linux run was not attempted.
 - **A Linux run needs a user's token to produce a QA result.** The merge gate counts a synced report only when its uploader
   is a user with write access who is also the report's actor. The workflow's `GITHUB_TOKEN` is the `github-actions[bot]`
   installation: it cannot tell `sync-run` who it is (`GET /user`), and a bot upload would be ignored by the gate. The
@@ -185,7 +196,8 @@ The Run page (from the release view) runs one suite for one environment against 
 - **Remote runs are not connected to results.** The window lists GitHub Actions runs; it does not yet show which
   requirements a run's synced report satisfied. Resume, sync from the window and manual results are the rest of 5.2, as is
   the live "another tester contributes a checkpoint" check.
-- **Packaging** (an installer for the dashboard itself) is not done; `npm start` runs it from a checkout.
+- **Packaging** (an installer for the dashboard itself) is not done: there is no packaging script, so a packaged build has
+  never been started against live GitHub. `npm start` runs it from a checkout.
 
 ## Evidence
 

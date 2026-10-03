@@ -8,6 +8,10 @@ export interface GitHubApi {
   get(path: string): Promise<ApiResult<unknown>>;
 }
 
+/** The dispatch of `qa-reconcile.yml` got a 404: the workflow is missing, or the token cannot see it. */
+export const WORKFLOW_NOT_FOUND = 'workflow-not-found';
+export const REPOSITORY_LOOKUP_FAILED = 'repository-lookup-failed';
+
 const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** GitHub CLI is the credential boundary. Arguments are arrays; stderr is classified, never shown to a renderer. */
@@ -89,12 +93,19 @@ export class GhTransport implements GitHubApi {
     });
   }
 
-  async dispatchReconciliation(repository: string, releaseId: number): Promise<ApiResult<true>> {
+  /**
+   * Asks for `qa-reconcile.yml` to run. `workflow-not-found` means only that the dispatch request itself got a 404, which GitHub
+   * also answers when the token cannot see the workflow. A failure of the preliminary repository lookup keeps its own reason
+   * (a lookup that 404s is `repository-lookup-failed`, never `workflow-not-found`), so a caller cannot mistake it for a missing workflow.
+   */
+  async dispatchReconciliation(repository: string, releaseId: number): Promise<{ ok: true; value: true } | { ok: false; reason: AccessProblem | typeof WORKFLOW_NOT_FOUND | typeof REPOSITORY_LOOKUP_FAILED }> {
     const repo = await this.get(`repos/${repository}`);
-    const branch = repo.ok && typeof repo.value === 'object' && repo.value !== null ? (repo.value as { default_branch?: unknown }).default_branch : undefined;
-    if (typeof branch !== 'string' || !branch) return { ok: false, reason: 'not-found' };
+    if (!repo.ok) return { ok: false, reason: repo.reason === 'not-found' ? REPOSITORY_LOOKUP_FAILED : repo.reason };
+    const branch = typeof repo.value === 'object' && repo.value !== null ? (repo.value as { default_branch?: unknown }).default_branch : undefined;
+    if (typeof branch !== 'string' || !branch) return { ok: false, reason: REPOSITORY_LOOKUP_FAILED };
     const response = await this.run(['api', '--method', 'POST', `repos/${repository}/actions/workflows/qa-reconcile.yml/dispatches`, '--input', '-', '--silent'], JSON.stringify({ ref: branch, inputs: { release_id: String(releaseId) } }));
-    return response.ok ? { ok: true, value: true } : response;
+    if (response.ok) return { ok: true, value: true };
+    return { ok: false, reason: response.reason === 'not-found' ? WORKFLOW_NOT_FOUND : response.reason };
   }
 
 

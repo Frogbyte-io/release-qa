@@ -4,7 +4,7 @@ import { downloadCandidate, type CandidateDownloadApi } from '../github/candidat
 import { evaluatePullRequest, type GateApi } from '../github/pull-request-gate.ts';
 import { syncRun } from '../github/sync.ts';
 import { GhTransport } from '../github/transport.ts';
-import type { Candidate } from '../model/candidate.ts';
+import { installableArtifact, type Candidate } from '../model/candidate.ts';
 import { sha256Of } from '../util/sha256.ts';
 import { reportForSync } from './run.ts';
 
@@ -31,7 +31,7 @@ export type DownloadResult =
   | { ok: false; error: string };
 
 export type SyncResult =
-  | { ok: true; candidateId: string; runId: string; releaseId: number; actor: string; uploaded: number }
+  | { ok: true; candidateId: string; runId: string; releaseId: number; actor: string; uploaded: number; notice?: string }
   | { ok: false; error: string };
 
 const MANIFEST = 'candidate.json';
@@ -64,8 +64,9 @@ export async function runDownloadCandidate(input: Target & { profile: string; ou
     const active = await activeCandidate(input, api, deps);
     if (!active.ok) return active;
     const { candidate } = active;
-    const artifact = candidate.artifacts.find((item) => item.profile === input.profile);
-    if (artifact === undefined) return { ok: false, error: `candidate ${candidate.id} has no artifact for profile ${input.profile}` };
+    const chosen = installableArtifact(candidate, input.profile);
+    if (!chosen.ok) return chosen;
+    const artifact = chosen.artifact;
     if (await exists(join(out, MANIFEST))) return { ok: false, error: `${join(out, MANIFEST)} already exists; it is not replaced` };
 
     // A crash after the verified file was linked and before the manifest was written leaves the file alone. It is removed
@@ -125,7 +126,7 @@ export async function runSyncRun(input: Target & { runId: string; stateDir: stri
 
     const synced = await (deps.sync ?? syncRun)({ repository: input.repository, releaseId, runId: input.runId, runDirectory: report.runDirectory, report: report.report, api });
     if (!synced.ok) return { ok: false, error: `${synced.error}; local results are kept and syncing again is safe` };
-    return { ok: true, candidateId: candidate.id, runId: input.runId, releaseId, actor: identity.value, uploaded: synced.uploaded };
+    return { ok: true, candidateId: candidate.id, runId: input.runId, releaseId, actor: identity.value, uploaded: synced.uploaded, ...(synced.notice === undefined ? {} : { notice: synced.notice }) };
   } catch (error) {
     return { ok: false, error: `could not sync the run: ${error instanceof Error ? error.message : String(error)}` };
   }

@@ -9,6 +9,7 @@ import {
   evaluatePullRequest,
   isRunId,
   listRuns,
+  installableArtifact,
   loadProject,
   parseCandidate,
   reportForSync,
@@ -272,8 +273,9 @@ async function assess(request: RunRequest, deps: RunDeps): Promise<{ ok: true; v
   if (!loaded.ok) return loaded;
   const { candidate } = loaded;
   if (candidate.id !== candidateId || candidate.pullRequest !== request.number) return refusal('The active candidate changed while it was being read. Refresh and try again.');
-  const artifact = candidate.artifacts.find((item) => item.profile === request.profile);
-  if (artifact === undefined) return refusal(`Candidate ${candidate.id} has no artifact for profile ${request.profile}.`);
+  const chosen = installableArtifact(candidate, request.profile);
+  if (!chosen.ok) return refusal(`${chosen.error}.`);
+  const artifact = chosen.artifact;
   if (request.runId !== undefined) {
     const run = (await listRuns(stateDirOf(stored))).find((item) => item.runId === request.runId);
     if (run?.candidateId !== candidate.id) return refusal(`Run ${request.runId} tested candidate ${run?.candidateId ?? 'unknown'}; the active candidate is now ${candidate.id}. A run for another candidate is not resumed.`);
@@ -339,7 +341,9 @@ async function stageCandidate(candidate: Candidate, repository: string, profile:
     await rm(incoming, { recursive: true, force: true });
     return refusal(`The candidate could not be downloaded: ${downloaded.error}`);
   }
-  const artifact = candidate.artifacts.find((item) => item.profile === profile)!;
+  const chosen = installableArtifact(candidate, profile);
+  if (!chosen.ok) { await rm(incoming, { recursive: true, force: true }); return refusal(`${chosen.error}.`); }
+  const artifact = chosen.artifact;
   await writeFile(join(incoming, 'candidate.json'), `${JSON.stringify({ schemaVersion: 1, id: candidate.id, artifacts: [{ profile, name: artifact.name, path: artifact.name, sha256: downloaded.sha256 }] }, null, 2)}\n`);
   // Replaced only after the new download verified, so an earlier interrupted run of this candidate can still be resumed if this fails.
   await rm(final, { recursive: true, force: true });

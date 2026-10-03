@@ -70,3 +70,19 @@ function readArtifact(c: Collector, value: unknown, path: string): Artifact | un
     actionsArtifactId: c.int(rec.actionsArtifactId, at(path, 'actionsArtifactId')),
   } as Artifact;
 }
+
+/**
+ * The file a run installs for one profile. The record does not mark it: preparation lists the installer together with
+ * updater metadata (`<installer>.blockmap`), which is not installable. So the choice is by that rule, never by order; a
+ * profile with no file or with more than one left after it is refused instead of guessed.
+ */
+export function installableArtifact(candidate: Candidate, profile: string): { ok: true; artifact: Artifact } | { ok: false; error: string } {
+  const ofProfile = candidate.artifacts.filter((item) => item.profile === profile);
+  if (ofProfile.length === 0) return { ok: false, error: `candidate ${candidate.id} has no artifact for profile ${profile}` };
+  const installable = ofProfile.filter((item) => !item.name.endsWith('.blockmap'));
+  const [only] = installable;
+  if (only === undefined || installable.length > 1) {
+    return { ok: false, error: `candidate ${candidate.id} has ${installable.length === 0 ? 'no installable' : 'more than one installable'} artifact for profile ${profile} (${ofProfile.map((item) => item.name).join(', ')}); it is ambiguous, so none is chosen` };
+  }
+  return { ok: true, artifact: only };
+}
