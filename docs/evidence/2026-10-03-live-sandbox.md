@@ -94,7 +94,7 @@ published releases with "QA recorded") and pull request #27.
 - Not covered: read-only account, many repositories, expired sign-in, SSO. The first live capture took 89 s end to end for one
   repository with one pull request.
 
-## E. Linux run through GitHub: RUN PROVEN, SYNC WAITING FOR THE TOKEN
+## E. Linux run through GitHub: PROVEN, STARTED FROM THE DASHBOARD
 
 At first the sandbox had no `workflows.run`, no `qa-run.yml` and no Linux requirement. Sandbox PR #28 (merged as
 `e318101`) added:
@@ -120,8 +120,35 @@ Live run, against sandbox release PR #29 (0.1.2, candidate `cand-37150948200-1` 
   `cannot read pull request: network-error`, which hid the cause; `gh`'s "set the GH_TOKEN environment variable" (and
   "gh auth login") are now classified as `logged-out`.
 
-Still to prove once the user has created `QA_SYNC_TOKEN` (a fine-grained token for the sandbox only): the upload, and that
-the gate counts it. The `qa-reconcile.yml` the tool dispatches after a sync is missing in the sandbox (see bug 1).
+### E.2, 2026-10-07: started from the dashboard, window closed while it ran, synced and counted
+
+The maintainer created `QA_SYNC_TOKEN` (a fine-grained token for the sandbox only). The run was then started from the
+dashboard itself: the app built from `main` at `74a9299`, driven over the Chrome DevTools Protocol by a scratch script that
+clicks the same buttons a person does and saves the window's pixels.
+
+1. Release PR #29 was brought up to date with `main` (head `c97a7a1`) and a new candidate prepared, `cand-37685224644-1`
+   (prepare run 37685224644).
+2. **Run on Linux…** showed the confirmation (`live-sandbox/linux-run-1-confirm.png`): candidate, profile `linux`, suite
+   `release`, exact head, and that the run keeps going if the window is closed. **Start run** dispatched qa-run
+   37685785107; the list showed it running within 20 s (`linux-run-2-started.png`).
+3. The window was closed. The app process ended (exit code 0; no Electron process left) while GitHub still reported the
+   run in progress.
+4. The app was started again: it listed the same run as running (`linux-run-3-reopened-while-running.png`).
+5. The run finished: `download`, `run` and `sync` all succeeded. `sync-run` uploaded 8 files as `Andreas-Froyland`
+   (release 402675636), with the expected notice that the sandbox has no `qa-reconcile.yml`.
+6. The gate, re-run by an edit of the pull request, no longer listed `linux/persistence`: only the two Windows manual
+   checks were missing. So a report uploaded by the workflow with a user's token counts.
+7. Reopened once more, the dashboard showed the run completed with success (`linux-run-4-reopened-finished.png`).
+
+The fine-grained token needed Contents read/write, Actions read/write and Pull requests read; whether Actions write is
+needed is still not shown, since the sandbox has no `qa-reconcile.yml` to dispatch.
+
+**Bug found on the way: the sandbox gate was blocked since PR #28.** `qa-gate.yml` and `qa-publish.yml` pinned
+release-qa `c94e528`, whose project parser rejects unknown fields and predates `workflows.run`, so every pull request
+failed with `invalid trusted QA project: workflows.run: unknown-field`. Because the gate runs on `pull_request_target`
+(the base branch's workflow and project), the fix could not pass its own gate: sandbox PR #30, which moves every pin to
+`74a9299`, was merged with an admin bypass, with the maintainer's agreement. Lesson for consumers, now in
+`docs/authoring-tests.md`: a field added to `qa/project.json` needs the gate's pinned tool to know it first.
 
 ## F. Packaged app: NOT DONE
 

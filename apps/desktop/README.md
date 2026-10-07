@@ -180,21 +180,22 @@ The Run page (from the release view) runs one suite for one environment against 
   tested with fake API responses shaped after GitHub's documented fields. Not observed: the real `run-name`/`display_title`
   after a dispatch, real job `status`/`runner_id`/`labels` values in each state (`waiting` for environment approval,
   `action_required`), how long real runners take to pick up a job, and rate use of polling.
-- **The Linux run has run up to the upload.** The sandbox's copy of `examples/tauri-smoke/.github/workflows/qa-run.yml`
-  (adapted for its Electron game) ran on GitHub-hosted runners: the download job fetched and verified the candidate, the
-  run job passed `linux/persistence` (see `docs/evidence/2026-10-03-live-sandbox.md`, section E). The sync job has not
-  succeeded yet, because the sandbox has no `QA_SYNC_TOKEN`. The Tauri example itself has not run.
+- **The Linux run is proven from the dashboard.** Started with **Run on Linux…** against the sandbox, the run kept going
+  after the window was closed, a reopened window found it again, and its synced report was counted by the gate
+  (`docs/evidence/2026-10-03-live-sandbox.md`, section E.2). The workflow is the sandbox's copy of
+  `examples/tauri-smoke/.github/workflows/qa-run.yml`, adapted for an Electron game; the Tauri example itself has not run.
 - **A Linux run needs a user's token to produce a QA result.** The merge gate counts a synced report only when its uploader
   is a user with write access who is also the report's actor. The workflow's `GITHUB_TOKEN` is the `github-actions[bot]`
   installation: it cannot tell `sync-run` who it is (`GET /user`), and a bot upload would be ignored by the gate. The
   example therefore uploads in a separate job with a repository secret, `QA_SYNC_TOKEN`, that a consumer creates from a
-  user (or machine user) with write access; the tool does not create or check it. Unproven: that GitHub accepts this on a
-  runner and which permissions that token needs (including dispatching `qa-reconcile.yml`). Reading the draft release's
+  user (or machine user) with write access; the tool does not create or check it. A fine-grained token with Contents
+  read/write, Actions read/write and Pull requests read worked live; whether Actions write is needed (to dispatch
+  `qa-reconcile.yml`) is not shown. Reading the draft release's
   assets needs a push-capable token, so the example's download job, which never runs the pull request's code, holds
   `contents: write`.
 - **Remote runs are not connected to results.** The window lists GitHub Actions runs; it does not yet show which
-  requirements a run's synced report satisfied. Resume, sync from the window and manual results are the rest of 5.2, as is
-  the live "another tester contributes a checkpoint" check.
+  requirements a run's synced report satisfied; the release view's checks do, once the gate has re-read the candidate.
+  The live "another tester contributes a checkpoint" check is still to do.
 - **Packaging** (an installer for the dashboard itself) is not done: there is no packaging script, so a packaged build has
   never been started against live GitHub. `npm start` runs it from a checkout.
 
