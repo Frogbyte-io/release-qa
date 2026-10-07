@@ -341,7 +341,7 @@ describe('resuming a run', () => {
     replace();
     const changed = await previewRun({ ...request, runId }, deps);
     expect(!changed.ok && changed.error).toContain('is not resumed');
-  }, 2 * CHILD_WAIT.timeout);
+  }, 4 * CHILD_WAIT.timeout); // both waits at their longest, with room for setup and cleanup
 
   test('a run id that does not exist here is refused', async () => {
     const { deps, request } = await setUp();
