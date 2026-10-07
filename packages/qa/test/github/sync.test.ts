@@ -179,6 +179,26 @@ describe('GitHub report synchronization', () => {
     expect(progress.ok && progress.value.claims).toEqual([claim]);
   });
 
+  test('a claim in a repository without a reconcile workflow is recorded, and any other dispatch failure is still reported', async () => {
+    const { recordScenarioClaim } = await import('../../src/github/sync.ts');
+    const api = new MemoryApi();
+    api.actor = 'tester-b';
+    const claim = { id: 'claim-no-reconcile', candidateId: 'cand-0001', requirement: 'windows/persistence', machineId: 'lab-2', actor: 'tester-b', action: 'claim' as const, recordedAt: '2026-10-07T21:46:00Z', staleAfterMs: 60_000 };
+    api.dispatchFailure = 'workflow-not-found';
+    expect(await recordScenarioClaim('team/app', 7, claim, api)).toEqual({ ok: true, value: true });
+    // The same claim again finds its own upload and is just as complete.
+    expect(await recordScenarioClaim('team/app', 7, claim, api)).toEqual({ ok: true, value: true });
+    const progress = await loadCandidateProgress('team/app', 7, 'cand-0001', api);
+    expect(progress.ok && progress.value.claims.map((item) => item.id)).toEqual(['claim-no-reconcile']);
+    api.dispatchFailure = 'repository-lookup-failed';
+    expect(await recordScenarioClaim('team/app', 7, { ...claim, id: 'claim-lookup' }, api)).toEqual({ ok: false, reason: 'repository-lookup-failed' });
+    // An existing claim that cannot be read right now is that failure, which can be retried, not a conflict.
+    api.dispatchFailure = undefined;
+    const unreadable = Object.assign(Object.create(api) as MemoryApi, { download: async () => ({ ok: false as const, reason: 'network-error' }) });
+    expect(await recordScenarioClaim('team/app', 7, claim, unreadable)).toEqual({ ok: false, reason: 'network-error' });
+    expect(await recordScenarioClaim('team/app', 7, { ...claim, machineId: 'other' }, api)).toEqual({ ok: false, reason: 'claim ID already exists with different content' });
+  });
+
   test('takeover status stays advisory and records stale ownership history', () => {
     const claims = [{ id: 'claim-a', candidateId: 'cand-0001', requirement: 'windows/persistence', machineId: 'old', actor: 'tester-a', action: 'claim' as const, recordedAt: '2026-09-28T10:00:00Z', staleAfterMs: 1000 }, { id: 'claim-b', candidateId: 'cand-0001', requirement: 'windows/persistence', machineId: 'new', actor: 'tester-b', action: 'takeover' as const, recordedAt: '2026-09-28T10:01:00Z', staleAfterMs: 1000 }];
     const status = claimStatus(claims, 'cand-0001', 'windows/persistence', Date.parse('2026-09-28T10:02:00Z'));

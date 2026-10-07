@@ -225,11 +225,17 @@ export async function recordScenarioClaim(repository: string, releaseId: number,
   const bytes = Buffer.from(JSON.stringify(claim));
   if (existing) {
     const prior = await readAsset(repository, existing, api);
-    return prior.ok && prior.value.equals(bytes) ? api.dispatchReconciliation(repository, releaseId) : { ok: false, reason: 'claim ID already exists with different content' };
+    // A failed read is reported as itself, so a caller can retry it; only a read that differs is a conflict.
+    if (!prior.ok) return prior;
+    if (!prior.value.equals(bytes)) return { ok: false, reason: 'claim ID already exists with different content' };
+  } else {
+    const uploaded = await api.upload(repository, releaseId, name, bytes);
+    if (!uploaded.ok) return uploaded;
   }
-  const uploaded = await api.upload(repository, releaseId, name, bytes);
-  if (!uploaded.ok) return uploaded;
-  return api.dispatchReconciliation(repository, releaseId);
+  const dispatched = await api.dispatchReconciliation(repository, releaseId);
+  // As for a synced run: the claim is read from its own asset, so a missing qa-reconcile.yml (a 404 to the dispatch itself)
+  // leaves nothing to retry. Any other failure, including a failed repository lookup, is still reported.
+  return !dispatched.ok && dispatched.reason === WORKFLOW_NOT_FOUND ? { ok: true, value: true } : dispatched;
 }
 
 /** Coordinator entry point: rebuilds every candidate from a fresh full release-asset listing. */
