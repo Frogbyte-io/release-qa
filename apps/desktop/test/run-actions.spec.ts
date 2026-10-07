@@ -141,6 +141,8 @@ async function setUp(options: { permissions?: Record<string, boolean>; git?: (ar
 }
 
 const finish = async (deps: RunDeps): Promise<void> => { await deps.session.settled(); };
+/** How long to wait for something a real child process does. */
+const CHILD_WAIT = { timeout: 15_000, interval: 50 };
 
 describe('choosing a checkout', () => {
   test('a folder that is this project is remembered, and one that is not is reported and dropped', async () => {
@@ -318,8 +320,10 @@ describe('resuming a run', () => {
   async function interrupted() {
     const ctx = await setUp({ scenarios: { startup: 'pass', slow: 'hang' } });
     await startRunAction(ctx.confirmation, ctx.deps);
-    await vi.waitFor(() => expect(ctx.deps.session.current).toMatchObject({ state: 'running' }));
-    await vi.waitFor(async () => expect(await readFile(ctx.consumer.logPath, 'utf8').catch(() => '')).toContain('steps:slow'));
+    // These wait on a real child process (Node starting, the tool loading, a first scenario passing). vi.waitFor gives up
+    // after 1 s by default, which a busy Windows runner has exceeded.
+    await vi.waitFor(() => expect(ctx.deps.session.current).toMatchObject({ state: 'running' }), CHILD_WAIT);
+    await vi.waitFor(async () => expect(await readFile(ctx.consumer.logPath, 'utf8').catch(() => '')).toContain('steps:slow'), CHILD_WAIT);
     await cancelRunAction(ctx.deps);
     await finish(ctx.deps);
     const listed = await listRunsAction({ repository: 'acme/app', candidateId: 'cand-0001' }, ctx.deps);
@@ -337,7 +341,7 @@ describe('resuming a run', () => {
     replace();
     const changed = await previewRun({ ...request, runId }, deps);
     expect(!changed.ok && changed.error).toContain('is not resumed');
-  });
+  }, 4 * CHILD_WAIT.timeout); // both waits at their longest, with room for setup and cleanup
 
   test('a run id that does not exist here is refused', async () => {
     const { deps, request } = await setUp();
