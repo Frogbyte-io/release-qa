@@ -53,7 +53,9 @@ Fields:
 - `workflows` and `markers` — GitHub-stage wiring; required by the schema, unused by local runs. `workflows.run` is optional: a workflow that runs one suite for the active candidate on a Linux runner, which the dashboard's "Run on Linux" dispatches. It receives `pr_number`, `candidate_id`, `profile`, `suite` and `expected_head`, and must set `run-name` to `qa-run PR #<pr_number> <candidate_id> <profile>/<suite> <expected_head>` so the dashboard can find the run again. See `examples/tauri-smoke/.github/workflows/qa-run.yml` (a template; an Electron copy of it has run on GitHub-hosted runners in the sandbox). It fetches the candidate with `download-candidate` and uploads the result with `sync-run`; the upload must be made as a user with write access (a repository secret holding that user's token), because the merge gate ignores reports uploaded by the workflow's `GITHUB_TOKEN`.
   Before adding `workflows.run` (or any newer field) to `qa/project.json`, move the release-qa commit pinned by your gate
   and publish workflows to one that knows that field. The project parser rejects unknown fields, and the gate reads the
-  project from the base branch, so an older pinned gate blocks every pull request, including the one that would fix the pin.
+  project from the base branch, so an older pinned gate blocks every pull request. A gate on `pull_request_target` (the
+  trusted design, which runs the base branch's workflow) also blocks the pull request that would fix the pin, so that one
+  then needs an admin bypass; move the pin first, in its own pull request, before the field is added.
 
 The file is parsed as data before any of your code runs. A malformed file is reported field by field (for example
 `projectId: missing-field`) and nothing is installed.
