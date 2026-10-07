@@ -192,6 +192,11 @@ describe('GitHub report synchronization', () => {
     expect(progress.ok && progress.value.claims.map((item) => item.id)).toEqual(['claim-no-reconcile']);
     api.dispatchFailure = 'repository-lookup-failed';
     expect(await recordScenarioClaim('team/app', 7, { ...claim, id: 'claim-lookup' }, api)).toEqual({ ok: false, reason: 'repository-lookup-failed' });
+    // An existing claim that cannot be read right now is that failure, which can be retried, not a conflict.
+    api.dispatchFailure = undefined;
+    const unreadable = Object.assign(Object.create(api) as MemoryApi, { download: async () => ({ ok: false as const, reason: 'network-error' }) });
+    expect(await recordScenarioClaim('team/app', 7, claim, unreadable)).toEqual({ ok: false, reason: 'network-error' });
+    expect(await recordScenarioClaim('team/app', 7, { ...claim, machineId: 'other' }, api)).toEqual({ ok: false, reason: 'claim ID already exists with different content' });
   });
 
   test('takeover status stays advisory and records stale ownership history', () => {
