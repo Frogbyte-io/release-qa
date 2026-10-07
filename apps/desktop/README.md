@@ -176,10 +176,10 @@ The Run page (from the release view) runs one suite for one environment against 
 - **If reconciliation dispatch fails after a successful upload** (other than 404), the result is marked synced (its acknowledgements are saved)
   while the upload reports an error to retry; the window then no longer offers Upload for it. A 404 (the repository has
   no `qa-reconcile.yml`, as the sandbox does not) is reported as a note and the upload counts as complete, found live.
-- **Linux runs have never touched a live GitHub runner.** `dispatchSuiteRun`, `remoteRunStatus` and the runs list are
-  tested with fake API responses shaped after GitHub's documented fields. Not observed: the real `run-name`/`display_title`
-  after a dispatch, real job `status`/`runner_id`/`labels` values in each state (`waiting` for environment approval,
-  `action_required`), how long real runners take to pick up a job, and rate use of polling.
+- **Only some Linux run states have been seen live.** `dispatchSuiteRun`, `remoteRunStatus` and the runs list ran against
+  live GitHub in E.2: the real `display_title` after a dispatch matched, and the running and completed (success and
+  failure) states showed correctly. Not observed: a queued job waiting for a runner, `waiting` for environment approval,
+  `action_required`, a runner that never comes, and rate use of polling over a long session.
 - **The Linux run is proven from the dashboard.** Started with **Run on Linux…** against the sandbox, the run kept going
   after the window was closed, a reopened window found it again, and its synced report was counted by the gate
   (`docs/evidence/2026-10-03-live-sandbox.md`, section E.2). The workflow is the sandbox's copy of
